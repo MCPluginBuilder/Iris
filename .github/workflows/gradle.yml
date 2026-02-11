@@ -1,0 +1,66 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "*"          # 推送任意 tag 都触发（你也可以改成 v* 等）
+  workflow_dispatch: # 允许手动触发
+
+permissions:
+  contents: write    # 创建/更新 Release 需要
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      # Iris 的 README 推荐命令：gradlew iris
+      - name: Build Iris
+        run: ./gradlew --no-daemon --stacktrace iris
+
+      - name: Locate artifact & checksum
+        id: prep
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # README 提示产物在 build/Iris-*.jar；这里做得更稳健：build 下两层都找一下
+          JAR_PATH="$(find build -maxdepth 2 -type f -name 'Iris-*.jar' | head -n 1)"
+
+          if [[ -z "${JAR_PATH}" ]]; then
+            echo "❌ Cannot find Iris-*.jar under build/"
+            echo "Contents of build/:"
+            ls -lah build || true
+            exit 1
+          fi
+
+          echo "✅ Found jar: ${JAR_PATH}"
+          sha256sum "${JAR_PATH}" > "${JAR_PATH}.sha256"
+
+          echo "jar_path=${JAR_PATH}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release & upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.prep.outputs.jar_path }}
+            ${{ steps.prep.outputs.jar_path }}.sha256
