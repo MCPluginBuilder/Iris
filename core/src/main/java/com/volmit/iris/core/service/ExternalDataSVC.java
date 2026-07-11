@@ -135,7 +135,8 @@ public class ExternalDataSVC implements IrisService {
     }
 
     public void processUpdate(Engine engine, Block block, Identifier blockId) {
-        Optional<ExternalDataProvider> provider = activeProviders.stream().filter(p -> p.isValidProvider(blockId, DataType.BLOCK)).findFirst();
+        Identifier mod = stripState(blockId);
+        Optional<ExternalDataProvider> provider = activeProviders.stream().filter(p -> p.isValidProvider(mod, DataType.BLOCK)).findFirst();
         if (provider.isEmpty()) {
             Iris.warn("No matching Provider found for modded material \"%s\"!", blockId);
             return;
@@ -181,6 +182,16 @@ public class ExternalDataSVC implements IrisService {
             Arrays.stream(state.split(",")).forEach(s -> stateMap.put(s.split("=")[0], s.split("=")[1]));
         }
         return new Pair<>(new Identifier(key.namespace(), key.key().split("\\Q[\\E")[0]), stateMap);
+    }
+
+    private static Identifier stripState(Identifier key) {
+        if (!key.key().contains("[") || !key.key().contains("]"))
+            return key;
+
+        return new Identifier(
+                key.namespace(),
+                key.key().split("\\Q[\\E")[0]
+        );
     }
 
     public static Identifier buildState(Identifier key, KMap<String, String> state) {

@@ -35,6 +35,7 @@ import com.volmit.iris.util.documentation.ChunkCoordinates;
 import com.volmit.iris.util.function.Function3;
 import com.volmit.iris.util.mantle.Mantle;
 import com.volmit.iris.util.mantle.MantleChunk;
+import com.volmit.iris.util.mantle.flag.MantleFlag;
 import com.volmit.iris.util.math.RNG;
 import com.volmit.iris.util.matter.Matter;
 import com.volmit.iris.util.matter.MatterCavern;
@@ -209,10 +210,10 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
 
     @Override
     public void set(int x, int y, int z, BlockData d) {
-        if (d instanceof IrisCustomData data) {
-            setData(x, y, z, data.getBase());
-            setData(x, y, z, data.getCustom());
-        } else setData(x, y, z, d);
+        setData(x, y, z, d);
+        if (d instanceof IrisCustomData) {
+            acquireChunk(x >> 4, z >> 4).flag(MantleFlag.CUSTOM_ACTIVE, true);
+        }
     }
 
     @Override

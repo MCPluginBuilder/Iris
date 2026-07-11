@@ -1,6 +1,8 @@
 import io.github.slimjar.func.slimjarHelper
 import io.github.slimjar.resolver.data.Mirror
 import org.ajoberstar.grgit.Grgit
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.net.URI
 
 /*
@@ -67,6 +69,9 @@ dependencies {
         isTransitive = false
     }
     compileOnly(libs.multiverseCore)
+    compileOnly(libs.craftengine.core)
+    compileOnly(libs.craftengine.bukkit)
+    //compileOnly(libs.sparrowNbt)
 
     // Shaded
     implementation(slimjarHelper("spigot"))
@@ -112,6 +117,16 @@ dependencies {
 
 java {
     disableAutoTargetJvm()
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
+kotlin {
+    jvmToolchain(21)
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_21)
+    }
 }
 
 sentry {

@@ -115,7 +115,7 @@ public class DataFixerV1217 extends DataFixerV1213 {
             attributes.put("minecraft:gameplay/fast_lava", true);
             attributes.put("minecraft:gameplay/snow_golem_melts", true);
             attributes.put("minecraft:visual/default_dripstone_particle", new JSONObject()
-                    .put("value", "minecraft:dripstone_drip_water_lava"));
+                    .put("type", "minecraft:dripping_dripstone_lava"));
         }
 
         if ((Boolean) json.remove("bed_works")) {

@@ -29,6 +29,7 @@ public interface IrisCustomData extends BlockData {
 							yield false;
 						yield base.matches(store.getBase()) && custom.equals(store.getCustom());
 					}
+					case "getAsString" -> custom.toString();
 					case "equals" -> {
 						if (!(args[0] instanceof IrisCustomData store))
 							yield false;
