@@ -32,6 +32,7 @@ import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
+import art.arcane.iris.core.runtime.ObjectStudioActivation;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioActivation;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioSession;
 import art.arcane.iris.core.service.StudioSVC;
@@ -51,6 +52,7 @@ import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.engine.object.StudioMode;
 import art.arcane.iris.engine.platform.studio.StudioGenerator;
 import art.arcane.iris.engine.platform.studio.generators.JigsawStudioGenerator;
+import art.arcane.iris.engine.platform.studio.generators.StudioEntryChunkGenerator;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -115,6 +117,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private final AtomicBoolean setup;
     private final boolean studio;
     private final AtomicBoolean studioEntryBootstrapActive;
+    private final StudioEntryChunkGenerator studioEntryChunkGenerator;
     private final AtomicInteger a = new AtomicInteger(0);
     private volatile long lastChunkGenTime = 0L;
     private final CompletableFuture<Integer> spawnChunks = new CompletableFuture<>();
@@ -143,6 +146,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         this.hotloadChecker = new ChronoLatch(1000, false);
         this.studio = studio;
         this.studioEntryBootstrapActive = new AtomicBoolean(studio);
+        this.studioEntryChunkGenerator = new StudioEntryChunkGenerator();
         this.dataLocation = dataLocation;
         this.dimensionKey = dimensionKey;
         this.folder = new ReactiveFolder(
@@ -221,9 +225,12 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     }
 
     public Location getInitialSpawnLocation(World world) {
-        int minY = world.getMinHeight() + 1;
-        int maxY = world.getMaxHeight() - 2;
-        int y = Math.max(minY, Math.min(maxY, 96));
+        int y = StudioEntryChunkGenerator.resolveEntryY(world.getMinHeight(), world.getMaxHeight());
+        if (isSyntheticStudioEntryChunk(
+                StudioEntryChunkGenerator.ENTRY_CHUNK_X,
+                StudioEntryChunkGenerator.ENTRY_CHUNK_Z)) {
+            return new Location(world, StudioEntryChunkGenerator.ENTRY_X, y, StudioEntryChunkGenerator.ENTRY_Z);
+        }
         return new Location(world, 0.5D, y, 0.5D);
     }
 
@@ -533,6 +540,42 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         return jigsawStudioActive;
     }
 
+    public boolean isSyntheticStudioEntryChunk(int x, int z) {
+        Engine activeEngine = engine;
+        if (activeEngine == null) {
+            return false;
+        }
+        String packKey = activeEngine.getDimension().getLoadKey();
+        return shouldGenerateSyntheticStudioEntry(
+                studio,
+                closing,
+                initializationFailure != null,
+                jigsawStudioActive,
+                ObjectStudioActivation.isActive(packKey),
+                activeEngine.getDimension().getStudioMode(),
+                x,
+                z);
+    }
+
+    static boolean shouldGenerateSyntheticStudioEntry(
+            boolean studio,
+            boolean closing,
+            boolean initializationFailed,
+            boolean jigsawStudio,
+            boolean objectStudio,
+            StudioMode studioMode,
+            int x,
+            int z
+    ) {
+        return studio
+                && !closing
+                && !initializationFailed
+                && !jigsawStudio
+                && !objectStudio
+                && (studioMode == null || studioMode == StudioMode.NORMAL)
+                && StudioEntryChunkGenerator.isBootstrapChunk(x, z);
+    }
+
     @Override
     public void hotload() {
         if (!shouldRunStudioHotload(isStudio(), closing, jigsawStudioActive)) {
@@ -780,7 +823,9 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             lastChunkGenTime = System.currentTimeMillis();
             computeStudioGenerator();
             TerrainChunk tc = TerrainChunk.create(d);
-            if (studioGenerator != null) {
+            if (isSyntheticStudioEntryChunk(x, z)) {
+                studioEntryChunkGenerator.generateChunk(engine, tc, x, z);
+            } else if (studioGenerator != null) {
                 studioGenerator.generateChunk(engine, tc, x, z);
             } else {
                 ChunkDataHunkHolder blocks = new ChunkDataHunkHolder(d);
@@ -868,6 +913,11 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
     @Override
     public int getBaseHeight(@NotNull WorldInfo worldInfo, @NotNull Random random, int x, int z, @NotNull HeightMap heightMap) {
+        if (isSyntheticStudioEntryChunk(x >> 4, z >> 4)) {
+            return StudioEntryChunkGenerator.resolveEntryY(
+                    worldInfo.getMinHeight(),
+                    worldInfo.getMaxHeight());
+        }
         Engine currentEngine = getEngine(worldInfo);
 
         boolean ignoreFluid = switch (heightMap) {
@@ -910,7 +960,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         StudioMode desired = studio
                 ? java.util.Optional.ofNullable(getEngine().getDimension().getStudioMode()).orElse(StudioMode.NORMAL)
                 : StudioMode.NORMAL;
-        if (studio && art.arcane.iris.core.runtime.ObjectStudioActivation.isActive(getEngine().getDimension().getLoadKey())) {
+        if (studio && ObjectStudioActivation.isActive(getEngine().getDimension().getLoadKey())) {
             desired = StudioMode.OBJECT_BUFFET;
         }
         if (!desired.equals(lastMode)) {

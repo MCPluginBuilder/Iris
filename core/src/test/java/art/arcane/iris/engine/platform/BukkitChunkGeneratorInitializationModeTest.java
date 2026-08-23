@@ -1,6 +1,7 @@
 package art.arcane.iris.engine.platform;
 
 import art.arcane.iris.engine.IrisEngine;
+import art.arcane.iris.engine.object.StudioMode;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -54,5 +55,41 @@ public class BukkitChunkGeneratorInitializationModeTest {
     public void transientStudioWorldsAreNotPersisted() {
         assertFalse(BukkitChunkGenerator.shouldPersistWorldRegistration(true));
         assertTrue(BukkitChunkGenerator.shouldPersistWorldRegistration(false));
+    }
+
+    @Test
+    public void syntheticEntryCoversOnlyTheNormalStudioRadiusTwoLobby() {
+        assertTrue(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.NORMAL, 0, 0));
+        assertTrue(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, null, 0, 0));
+        assertTrue(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.NORMAL, 2, 2));
+        assertTrue(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.NORMAL, -2, -2));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                false, false, false, false, false, StudioMode.NORMAL, 0, 0));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, true, false, false, false, StudioMode.NORMAL, 0, 0));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, true, false, false, StudioMode.NORMAL, 0, 0));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, true, false, StudioMode.NORMAL, 0, 0));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, true, StudioMode.NORMAL, 0, 0));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.BIOME_BUFFET_1x1, 0, 0));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.OBJECT_BUFFET, 0, 0));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.REGION_BUFFET, 0, 0));
+        assertTrue(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.NORMAL, 1, 0));
+        assertTrue(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.NORMAL, 0, -1));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.NORMAL, 3, 0));
+        assertFalse(BukkitChunkGenerator.shouldGenerateSyntheticStudioEntry(
+                true, false, false, false, false, StudioMode.NORMAL, 0, -3));
     }
 }

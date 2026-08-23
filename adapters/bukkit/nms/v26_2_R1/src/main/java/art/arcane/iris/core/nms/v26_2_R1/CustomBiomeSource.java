@@ -11,6 +11,8 @@ import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.platform.BukkitChunkGenerator;
+import art.arcane.iris.engine.platform.studio.generators.StudioEntryChunkGenerator;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.RNG;
@@ -56,11 +58,14 @@ public class CustomBiomeSource extends BiomeSource {
     private final Engine engine;
     private final Registry<Biome> biomeCustomRegistry;
     private final Registry<Biome> biomeRegistry;
+    private final BukkitChunkGenerator platformGenerator;
     private final AtomicCache<RegistryAccess> registryAccess = new AtomicCache<>();
     private final Holder<Biome> fallbackBiome;
     private final ConcurrentHashMap<Long, Holder<Biome>> noiseBiomeCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Holder<Biome>> studioBootstrapNoiseBiomeCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Holder<Biome>> structureBiomeCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Holder<Biome>> surfaceStructureBiomeCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Holder<Biome>> studioBootstrapSurfaceStructureBiomeCache = new ConcurrentHashMap<>();
     private volatile KMap<String, Holder<Biome>> customBiomes;
     private volatile Map<Biome, Holder<Biome>> vanillaSpawnBiomes;
     private volatile IrisDimension cacheDimension;
@@ -69,6 +74,9 @@ public class CustomBiomeSource extends BiomeSource {
     public CustomBiomeSource(long seed, Engine engine, World world) {
         this.engine = engine;
         this.seed = seed;
+        this.platformGenerator = world.getGenerator() instanceof BukkitChunkGenerator bukkitGenerator
+                ? bukkitGenerator
+                : null;
         this.biomeCustomRegistry = registry().lookup(Registries.BIOME).orElse(null);
         this.biomeRegistry = ((RegistryAccess) getFor(RegistryAccess.Frozen.class, ((CraftServer) Bukkit.getServer()).getHandle().getServer())).lookup(Registries.BIOME).orElse(null);
         this.fallbackBiome = resolveFallbackBiome(this.biomeRegistry, this.biomeCustomRegistry);
@@ -373,20 +381,32 @@ public class CustomBiomeSource extends BiomeSource {
     }
 
     private Holder<Biome> getSurfaceStructureBiomeHolder(int x, int z) {
+        boolean studioEntryBootstrap = isStandardStudioEntryBootstrapActive();
+        ConcurrentHashMap<Long, Holder<Biome>> surfaceCache = studioEntryBootstrap
+                ? studioBootstrapSurfaceStructureBiomeCache
+                : surfaceStructureBiomeCache;
         long columnKey = packColumnKey(x, z);
-        Holder<Biome> surfaceHolder = surfaceStructureBiomeCache.get(columnKey);
+        Holder<Biome> surfaceHolder = surfaceCache.get(columnKey);
         if (surfaceHolder != null) {
             return surfaceHolder;
         }
-        Holder<Biome> resolvedSurfaceHolder = resolveSurfaceStructureBiomeHolder(x, z);
-        Holder<Biome> existingSurfaceHolder = surfaceStructureBiomeCache.putIfAbsent(columnKey, resolvedSurfaceHolder);
+        Holder<Biome> resolvedSurfaceHolder = resolveSurfaceStructureBiomeHolder(x, z, studioEntryBootstrap);
+        Holder<Biome> existingSurfaceHolder = surfaceCache.putIfAbsent(columnKey, resolvedSurfaceHolder);
         if (existingSurfaceHolder != null) {
             return existingSurfaceHolder;
         }
-        if (surfaceStructureBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
-            surfaceStructureBiomeCache.clear();
+        if (surfaceCache.size() > NOISE_BIOME_CACHE_MAX) {
+            surfaceCache.clear();
         }
         return resolvedSurfaceHolder;
+    }
+
+    private boolean isStandardStudioEntryBootstrapActive() {
+        return platformGenerator != null
+                && platformGenerator.isStudioEntryBootstrapActive()
+                && platformGenerator.isSyntheticStudioEntryChunk(
+                        StudioEntryChunkGenerator.ENTRY_CHUNK_X,
+                        StudioEntryChunkGenerator.ENTRY_CHUNK_Z);
     }
 
     private boolean isGuaranteedSurfaceBiome(int quartY) {
@@ -399,10 +419,12 @@ public class CustomBiomeSource extends BiomeSource {
         return internalY > caveSwitchInternalY;
     }
 
-    private Holder<Biome> resolveSurfaceStructureBiomeHolder(int x, int z) {
+    private Holder<Biome> resolveSurfaceStructureBiomeHolder(int x, int z, boolean studioEntryBootstrap) {
         int blockX = x << 2;
         int blockZ = z << 2;
-        IrisBiome irisBiome = engine.getComplex().getTrueBiomeStream().get(blockX, blockZ);
+        IrisBiome irisBiome = studioEntryBootstrap
+                ? engine.getComplex().getNaturalTrueBiomeStream().get(blockX, blockZ)
+                : engine.getComplex().getTrueBiomeStream().get(blockX, blockZ);
         if (irisBiome == null) {
             throw new IllegalStateException("Iris returned no surface structure biome at block "
                     + blockX + "," + blockZ);
@@ -426,20 +448,24 @@ public class CustomBiomeSource extends BiomeSource {
                 throw new IllegalStateException("Iris visible biome lookup has no active engine runtime");
             }
             ensureCachesCurrent();
+            boolean studioEntryBootstrap = isStandardStudioEntryBootstrapActive();
+            ConcurrentHashMap<Long, Holder<Biome>> visibleCache = studioEntryBootstrap
+                    ? studioBootstrapNoiseBiomeCache
+                    : noiseBiomeCache;
             long cacheKey = packNoiseKey(x, y, z);
-            Holder<Biome> cachedHolder = noiseBiomeCache.get(cacheKey);
+            Holder<Biome> cachedHolder = visibleCache.get(cacheKey);
             if (cachedHolder != null) {
                 return cachedHolder;
             }
 
-            Holder<Biome> resolvedHolder = resolveVisibleBiomeHolder(x, y, z);
-            Holder<Biome> existingHolder = noiseBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
+            Holder<Biome> resolvedHolder = resolveVisibleBiomeHolder(x, y, z, studioEntryBootstrap);
+            Holder<Biome> existingHolder = visibleCache.putIfAbsent(cacheKey, resolvedHolder);
             if (existingHolder != null) {
                 return existingHolder;
             }
 
-            if (noiseBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
-                noiseBiomeCache.clear();
+            if (visibleCache.size() > NOISE_BIOME_CACHE_MAX) {
+                visibleCache.clear();
             }
 
             return resolvedHolder;
@@ -480,8 +506,10 @@ public class CustomBiomeSource extends BiomeSource {
             Map<Biome, Holder<Biome>> refreshedSpawnBiomes = fillVanillaSpawnBiomes(
                     biomeCustomRegistry, biomeRegistry, engine);
             noiseBiomeCache.clear();
+            studioBootstrapNoiseBiomeCache.clear();
             structureBiomeCache.clear();
             surfaceStructureBiomeCache.clear();
+            studioBootstrapSurfaceStructureBiomeCache.clear();
             customBiomes = refreshedCustomBiomes;
             vanillaSpawnBiomes = refreshedSpawnBiomes;
             cacheDimension = dimension;
@@ -506,8 +534,8 @@ public class CustomBiomeSource extends BiomeSource {
         return holder;
     }
 
-    private Holder<Biome> resolveVisibleBiomeHolder(int x, int y, int z) {
-        BiomeResolution resolution = resolveBiomeResolution(x, y, z);
+    private Holder<Biome> resolveVisibleBiomeHolder(int x, int y, int z, boolean studioEntryBootstrap) {
+        BiomeResolution resolution = resolveBiomeResolution(x, y, z, studioEntryBootstrap);
         if (resolution == null) {
             return getFallbackBiome();
         }
@@ -540,6 +568,10 @@ public class CustomBiomeSource extends BiomeSource {
     }
 
     private BiomeResolution resolveBiomeResolution(int x, int y, int z) {
+        return resolveBiomeResolution(x, y, z, false);
+    }
+
+    private BiomeResolution resolveBiomeResolution(int x, int y, int z, boolean studioEntryBootstrap) {
         if (engine == null || engine.isClosed()) {
             return null;
         }
@@ -551,6 +583,9 @@ public class CustomBiomeSource extends BiomeSource {
         int blockX = x << 2;
         int blockZ = z << 2;
         int blockY = y << 2;
+        if (studioEntryBootstrap) {
+            return resolveNaturalVisibleBiomeResolution(blockX, blockY, blockZ);
+        }
         int worldMinHeight = engine.getWorld().minHeight();
         int internalY = blockY - worldMinHeight;
         int caveSwitchInternalY = Math.max(-8 - worldMinHeight, 40);
@@ -573,11 +608,27 @@ public class CustomBiomeSource extends BiomeSource {
             return null;
         }
 
+        return createBiomeResolution(irisBiome, underground, blockX, blockY, blockZ);
+    }
+
+    private BiomeResolution resolveNaturalVisibleBiomeResolution(int blockX, int blockY, int blockZ) {
+        IrisBiome irisBiome = engine.getComplex().getNaturalTrueBiomeStream().get(blockX, blockZ);
+        return irisBiome == null
+                ? null
+                : createBiomeResolution(irisBiome, false, blockX, blockY, blockZ);
+    }
+
+    private BiomeResolution createBiomeResolution(
+            IrisBiome irisBiome,
+            boolean underground,
+            int blockX,
+            int blockY,
+            int blockZ
+    ) {
         RNG noiseRng = new RNG(seed
                 ^ (((long) blockX) * 341873128712L)
                 ^ (((long) blockY) * 132897987541L)
                 ^ (((long) blockZ) * 42317861L));
-
         return new BiomeResolution(irisBiome, underground, blockX, blockY, blockZ, noiseRng);
     }
 

@@ -211,7 +211,7 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(decorations.contains("primeWorldgenHeightmaps"));
         assertFalse(decorations.contains("Heightmap.Types.WORLD_SURFACE_WG"));
         assertFalse(decorations.contains("Heightmap.Types.OCEAN_FLOOR_WG"));
-        assertEquals(1, occurrences(source, "WorldgenTerrainHeightmaps.primeTerrain("));
+        assertEquals(2, occurrences(source, "WorldgenTerrainHeightmaps.primeTerrain("));
         assertTrue(placement.contains("WorldgenTerrainHeightmaps.primeStructurePlacement("));
         assertTrue(placement.indexOf("WorldgenTerrainHeightmaps.primeStructurePlacement(")
                 < placement.indexOf("prepareSurfaceStructures"));
@@ -220,29 +220,96 @@ public class IrisChunkGeneratorFailureContractTest {
     }
 
     @Test
+    public void syntheticStudioEntryBypassesEnginePassesInsideGenerationStages() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")))
+                .replace("\r\n", "\n");
+        String createBiomes = method(
+                source,
+                "public CompletableFuture<ChunkAccess> createBiomes",
+                "public void buildSurface");
+        String buildSurface = method(
+                source,
+                "public void buildSurface",
+                "public void applyCarvers");
+        String carvers = method(
+                source,
+                "public void applyCarvers",
+                "public CompletableFuture<ChunkAccess> fillFromNoise");
+        String noise = method(
+                source,
+                "public CompletableFuture<ChunkAccess> fillFromNoise",
+                "private static boolean isCancellationFailure");
+        String decoration = method(
+                source,
+                "public void applyBiomeDecoration(WorldGenLevel generatoraccessseed, ChunkAccess ichunkaccess, StructureManager structuremanager, boolean vanilla)",
+                "public BiomeGenerationSettings getBiomeGenerationSettings");
+        String syntheticHeightmaps = method(
+                source,
+                "private ChunkAccess primeSyntheticStudioEntryHeightmaps",
+                "private IntBinaryOperator worldgenSurfaceHeight");
+        String spawning = method(
+                source,
+                "public void spawnOriginalMobs",
+                "private static WeightedList<MobSpawnSettings.SpawnerData> mergeSpawnTables");
+        String baseHeight = method(
+                source,
+                "public int getBaseHeight",
+                "public NoiseColumn getBaseColumn");
+        String baseColumn = method(
+                source,
+                "public NoiseColumn getBaseColumn",
+                "private GenerationSessionLease requireGenerationLease");
+
+        assertBefore(createBiomes,
+                "isSyntheticStudioEntryChunk(ichunkaccess)",
+                "requireGenerationStage(\"bukkit_nms_synthetic_entry_biomes\")");
+        assertTrue(createBiomes.contains("getOrThrow(Biomes.PLAINS)"));
+        assertTrue(buildSurface.contains("requireGenerationStage(\"bukkit_nms_synthetic_entry_surface\")"));
+        assertTrue(carvers.contains("requireGenerationStage(\"bukkit_nms_synthetic_entry_carvers\")"));
+        assertTrue(noise.contains("requireNoiseGenerationStage("));
+        assertTrue(noise.contains("\"bukkit_nms_synthetic_entry_noise\""));
+        assertTrue(noise.contains("stage.close()"));
+        assertTrue(noise.contains("completion.cancel(false)"));
+        assertTrue(decoration.contains("requireGenerationStage(\"bukkit_nms_synthetic_entry_decoration\")"));
+        assertTrue(spawning.contains("isSyntheticStudioEntryChunk(center.x(), center.z())"));
+        assertTrue(baseHeight.contains("isSyntheticStudioEntryBlock(i, j)"));
+        assertTrue(baseColumn.contains("isSyntheticStudioEntryBlock(i, j)"));
+        assertTrue(syntheticHeightmaps.contains("StudioEntryChunkGenerator.resolveEntryY("));
+        assertTrue(syntheticHeightmaps.contains("runtimeMinY + runtimeHeight"));
+        assertFalse(syntheticHeightmaps.contains("engine."));
+        assertEquals(2, occurrences(source,
+                "levelheightaccessor.getMinY() + levelheightaccessor.getHeight()"));
+    }
+
+    @Test
     public void fillFromNoiseLeaseSpansTheDelegateAndHeightmapPipeline() throws IOException {
         String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int fillStart = source.indexOf("public CompletableFuture<ChunkAccess> fillFromNoise");
         int fillEnd = source.indexOf("private static boolean isCancellationFailure", fillStart);
         String fill = source.substring(fillStart, fillEnd);
-        int completionStart = fill.indexOf("pipeline.whenComplete(");
-        int completionEnd = fill.indexOf("            return completion;", completionStart);
+        int productionStart = fill.indexOf(
+                "        BukkitChunkGenerator.GenerationStagePermit stage = requireNoiseGenerationStage(",
+                fill.indexOf("\"bukkit_nms_synthetic_entry_noise\""));
+        assertTrue(productionStart >= 0);
+        String productionFill = fill.substring(productionStart);
+        int completionStart = productionFill.indexOf("pipeline.whenComplete(");
+        int completionEnd = productionFill.indexOf("            return completion;", completionStart);
         assertTrue(completionStart >= 0);
         assertTrue(completionEnd > completionStart);
-        String completion = fill.substring(completionStart, completionEnd);
+        String completion = productionFill.substring(completionStart, completionEnd);
 
-        assertBefore(fill,
+        assertBefore(productionFill,
                 "BukkitChunkGenerator.GenerationStagePermit stage = requireNoiseGenerationStage(",
                 "GenerationSessionLease lease");
-        assertBefore(fill,
+        assertBefore(productionFill,
                 "requireNoiseGenerationStage(",
                 "\"bukkit_nms_chunk_pipeline\")");
-        assertBefore(fill,
+        assertBefore(productionFill,
                 "lease = requireGenerationLease(\"bukkit_nms_chunk_pipeline\")",
                 ".fillFromNoise(blender, randomstate, structuremanager, ichunkaccess)");
-        assertTrue(fill.contains("IrisContext.open(engine, lease.sessionId(), null)"));
-        assertBefore(fill, "primeWorldgenHeightmaps(filled)", "pipeline.whenComplete(");
-        assertTrue(fill.contains("CompletableFuture<ChunkAccess> completion = new CompletableFuture<>()"));
+        assertTrue(productionFill.contains("IrisContext.open(engine, lease.sessionId(), null)"));
+        assertBefore(productionFill, "primeWorldgenHeightmaps(filled)", "pipeline.whenComplete(");
+        assertTrue(productionFill.contains("CompletableFuture<ChunkAccess> completion = new CompletableFuture<>()"));
         assertBefore(completion, "boolean cancelled = isCancellationFailure(failure);", "lease.close();");
         assertBefore(completion, "lease.close();", "stage.close();");
         assertBefore(completion, "stage.close();", "completion.complete(filled)");
@@ -251,12 +318,12 @@ public class IrisChunkGeneratorFailureContractTest {
         assertTrue(completion.contains("else if (cancelled)"));
         assertFalse(completion.contains("pipeline.isCancelled()"));
         assertFalse(completion.contains("finally"));
-        assertTrue(fill.contains("catch (RuntimeException | Error failure)"));
-        assertTrue(fill.contains("lease.close();\n            stage.close();\n            throw failure;"));
-        assertTrue(fill.contains("return completion;"));
-        assertFalse(fill.contains("return pipeline;"));
-        assertFalse(fill.contains("pipeline.cancel("));
-        assertFalse(fill.contains("bukkit_nms_worldgen_heightmaps"));
+        assertTrue(productionFill.contains("catch (RuntimeException | Error failure)"));
+        assertTrue(productionFill.contains("lease.close();\n            stage.close();\n            throw failure;"));
+        assertTrue(productionFill.contains("return completion;"));
+        assertFalse(productionFill.contains("return pipeline;"));
+        assertFalse(productionFill.contains("pipeline.cancel("));
+        assertFalse(productionFill.contains("bukkit_nms_worldgen_heightmaps"));
     }
 
     @Test
@@ -375,8 +442,8 @@ public class IrisChunkGeneratorFailureContractTest {
         assertBefore(decoration,
                 "requireGenerationLease(\"bukkit_nms_biome_decoration\")",
                 "importedFeatures.prepare(generatoraccessseed)");
-        assertEquals(4, occurrences(source, "requireGenerationStage(\"bukkit_nms_"));
-        assertEquals(2, occurrences(source, "requireNoiseGenerationStage("));
+        assertEquals(8, occurrences(source, "requireGenerationStage(\"bukkit_nms_"));
+        assertEquals(3, occurrences(source, "requireNoiseGenerationStage("));
         assertFalse(source.contains("GenerationSessionManager"));
     }
 

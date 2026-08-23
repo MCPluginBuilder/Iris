@@ -63,6 +63,90 @@ public class StudioOpenCoordinatorOpenKindTest {
     }
 
     @Test
+    public void onlyAStandardPlayerOpenLoadsTheEntry() {
+        assertTrue(StudioOpenCoordinator.requiresLoadedEntry(request(
+                StudioOpenCoordinator.StudioOpenKind.STANDARD,
+                "Magic_Psycho")));
+        assertFalse(StudioOpenCoordinator.requiresLoadedEntry(request(
+                StudioOpenCoordinator.StudioOpenKind.STANDARD,
+                null)));
+        assertFalse(StudioOpenCoordinator.requiresLoadedEntry(request(
+                StudioOpenCoordinator.StudioOpenKind.STANDARD,
+                "   ")));
+        assertFalse(StudioOpenCoordinator.requiresLoadedEntry(request(
+                StudioOpenCoordinator.StudioOpenKind.JIGSAW,
+                "Magic_Psycho")));
+    }
+
+    @Test
+    public void activeStudioTeleportIsSerializedAndBoundedBeforeNativeDelegation() throws Exception {
+        String coordinator = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"))
+                .replace("\r\n", "\n");
+        String service = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/service/StudioSVC.java"))
+                .replace("\r\n", "\n");
+        int coordinatorStart = coordinator.indexOf(
+                "public CompletableFuture<Boolean> teleportPlayerToProject(");
+        int coordinatorEnd = coordinator.indexOf("private void executeOpen", coordinatorStart);
+        String coordinatorMethod = coordinator.substring(coordinatorStart, coordinatorEnd);
+        int serviceStart = service.indexOf(
+                "public CompletableFuture<Boolean> teleportToActiveProject(Player player)");
+        int serviceEnd = service.indexOf("public void open(VolmitSender", serviceStart);
+        String serviceMethod = service.substring(serviceStart, serviceEnd);
+        int transitionAdmission = serviceMethod.indexOf("studioTransitions.submit(() ->");
+        int projectCapture = serviceMethod.indexOf("IrisProject project = activeProject");
+        int publicDeadline = serviceMethod.indexOf(
+                "transition.orTimeout(STUDIO_PLAYER_TELEPORT_TIMEOUT_SECONDS");
+        int admissionClose = serviceMethod.indexOf(
+                "transition.whenComplete((ignored, failure) -> admission.set(false))");
+        int nativeClaim = coordinatorMethod.indexOf(
+                "activeAdmission.compareAndSet(true, false)");
+        int nativeDelegation = coordinatorMethod.indexOf(
+                "WorldRuntimeControlService.get().teleport(player, entry)");
+
+        assertTrue(transitionAdmission >= 0);
+        assertTrue(projectCapture > transitionAdmission);
+        assertTrue(publicDeadline > projectCapture);
+        assertTrue(admissionClose > publicDeadline);
+        assertTrue(serviceMethod.contains("deadlineNanos"));
+        assertTrue(coordinatorMethod.contains("beforeStudioTeleportDeadline("));
+        assertTrue(coordinatorMethod.contains("CompletableFuture<T> bounded = new CompletableFuture<>()"));
+        assertTrue(coordinatorMethod.contains(
+                "CompletableFuture.delayedExecutor(remainingNanos, TimeUnit.NANOSECONDS)"));
+        assertFalse(coordinatorMethod.contains("stage.orTimeout("));
+        assertTrue(coordinatorMethod.contains("CompletableFuture<EntryChunkLease> entryLease"));
+        assertTrue(coordinatorMethod.contains("releaseLeaseAfterSettlement("));
+        assertTrue(nativeClaim >= 0);
+        assertTrue(nativeDelegation > nativeClaim);
+    }
+
+    @Test
+    public void entryTicketLeaseIsReleasedThroughTheSchedulerBeforeFailureCleanup() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java"))
+                .replace("\r\n", "\n");
+        int leaseStart = source.indexOf("private static final class EntryChunkLease");
+        int registryStart = source.indexOf("static final class EntryLoadRegistry", leaseStart);
+        String lease = source.substring(leaseStart, registryStart);
+        int executeStart = source.indexOf("private void executeOpen(");
+        int executeEnd = source.indexOf("static boolean requiresLoadedEntry", executeStart);
+        String execute = source.substring(executeStart, executeEnd);
+        int catchStart = execute.indexOf("} catch (Throwable e) {");
+        int settleUse = execute.indexOf(
+                "settleEntryUseAfterOperation(entryUseFuture, nativeTeleportFuture)",
+                catchStart);
+        int cleanup = execute.indexOf("updateStage(request, \"cleanup\", 1.00D)", catchStart);
+
+        assertTrue(source.contains("boolean acquired = world.addPluginChunkTicket("));
+        assertTrue(source.contains("if (!acquired)"));
+        assertTrue(lease.contains("CompletableFuture<Void> scheduledRelease = J.sfut("));
+        assertTrue(lease.contains("world.removePluginChunkTicket("));
+        assertTrue(settleUse > catchStart);
+        assertTrue(cleanup > settleUse);
+    }
+
+    @Test
     public void studioTimingSeparatesOrderedLifecyclePhases() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
@@ -89,7 +173,7 @@ public class StudioOpenCoordinatorOpenKindTest {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java")).replace("\r\n", "\n");
         int entryReady = source.indexOf(
-                "entryLoadFuture.get(STUDIO_ENTRY_LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)");
+                "entryLeaseFuture.get(STUDIO_ENTRY_LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)");
         int teleport = source.indexOf(
                 "WorldRuntimeControlService.get().teleport(player, safeEntry)", entryReady);
         int completionCall = source.indexOf("endStudioEntryBootstrap(world, provider)", teleport);
@@ -104,7 +188,7 @@ public class StudioOpenCoordinatorOpenKindTest {
         int scheduled = method.indexOf("J.sfut(() ->");
         int claim = method.indexOf("activationClaim.compareAndSet(true, false)");
         int activation = method.indexOf("INMS.get().completeStudioStructureBootstrap(world)");
-        int gateRelease = method.indexOf("bukkitGenerator.endStudioEntryBootstrap()");
+        int gateRelease = method.indexOf("bukkitGenerator::endStudioEntryBootstrap");
 
         assertTrue(entryReady >= 0);
         assertTrue(teleport > entryReady);
@@ -175,5 +259,22 @@ public class StudioOpenCoordinatorOpenKindTest {
         assertTrue(method.contains("J.sfut(() -> finalizer.accept(world))"));
         assertTrue(method.contains(
                 "completion.get(STUDIO_STRUCTURE_ACTIVATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)"));
+    }
+
+    private static StudioOpenCoordinator.StudioOpenRequest request(
+            StudioOpenCoordinator.StudioOpenKind openKind,
+            String playerName
+    ) {
+        return new StudioOpenCoordinator.StudioOpenRequest(
+                "overworld",
+                null,
+                null,
+                1337L,
+                "iris-test",
+                playerName,
+                openKind,
+                false,
+                null,
+                null);
     }
 }

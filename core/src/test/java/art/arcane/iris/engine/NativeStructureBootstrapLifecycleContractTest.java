@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class NativeStructureBootstrapLifecycleContractTest {
@@ -82,6 +83,9 @@ public class NativeStructureBootstrapLifecycleContractTest {
         int releaseEnd = generatorSource.indexOf(
                 "public boolean isStudioEntryBootstrapActive()", releaseStart);
         String release = generatorSource.substring(releaseStart, releaseEnd);
+        int lobbyStart = generatorSource.indexOf("public boolean isSyntheticStudioEntryChunk(");
+        int lobbyEnd = generatorSource.indexOf("public void hotload()", lobbyStart);
+        String lobbyIdentity = generatorSource.substring(lobbyStart, lobbyEnd);
 
         assertTrue(engineSource.contains(
                 "new AtomicBoolean(!requiredMode.studio())"));
@@ -94,6 +98,8 @@ public class NativeStructureBootstrapLifecycleContractTest {
         assertBefore(release,
                 "irisEngine.setNativeStructureVolumeQueriesEnabled(shouldGenerateNativeStructures(",
                 "studioEntryBootstrapActive.set(false)");
+        assertTrue(lobbyIdentity.contains("shouldGenerateSyntheticStudioEntry("));
+        assertFalse(lobbyIdentity.contains("studioEntryBootstrapActive"));
     }
 
     private static void assertBefore(String source, String first, String second) {

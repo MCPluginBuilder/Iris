@@ -9,6 +9,7 @@ import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
+import art.arcane.iris.engine.platform.studio.generators.StudioEntryChunkGenerator;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
@@ -62,6 +63,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeGenerationSettings;
 import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.biome.BiomeSource;
+import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.biome.MobSpawnSettings;
 import net.minecraft.world.level.levelgen.GenerationStep;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -639,6 +641,18 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public CompletableFuture<ChunkAccess> createBiomes(RandomState randomstate, Blender blender, StructureManager structuremanager, ChunkAccess ichunkaccess) {
+        if (isSyntheticStudioEntryChunk(ichunkaccess)) {
+            try (BukkitChunkGenerator.GenerationStagePermit stage =
+                         requireGenerationStage("bukkit_nms_synthetic_entry_biomes")) {
+                Holder<Biome> entryBiome = runtimeLevel.registryAccess()
+                        .lookupOrThrow(Registries.BIOME)
+                        .getOrThrow(Biomes.PLAINS);
+                ichunkaccess.fillBiomesFromNoise(
+                        (quartX, quartY, quartZ, sampler) -> entryBiome,
+                        randomstate.sampler());
+                return CompletableFuture.completedFuture(ichunkaccess);
+            }
+        }
         try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_create_biomes");
              GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_biomes");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
@@ -649,16 +663,54 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void buildSurface(WorldGenRegion regionlimitedworldaccess, StructureManager structuremanager, RandomState randomstate, ChunkAccess ichunkaccess) {
+        if (isSyntheticStudioEntryChunk(ichunkaccess)) {
+            try (BukkitChunkGenerator.GenerationStagePermit stage =
+                         requireGenerationStage("bukkit_nms_synthetic_entry_surface")) {
+                return;
+            }
+        }
         delegate.buildSurface(regionlimitedworldaccess, structuremanager, randomstate, ichunkaccess);
     }
 
     @Override
     public void applyCarvers(WorldGenRegion regionlimitedworldaccess, long seed, RandomState randomstate, BiomeManager biomemanager, StructureManager structuremanager, ChunkAccess ichunkaccess) {
+        if (isSyntheticStudioEntryChunk(ichunkaccess)) {
+            try (BukkitChunkGenerator.GenerationStagePermit stage =
+                         requireGenerationStage("bukkit_nms_synthetic_entry_carvers")) {
+                return;
+            }
+        }
         delegate.applyCarvers(regionlimitedworldaccess, seed, randomstate, biomemanager, structuremanager, ichunkaccess);
     }
 
     @Override
     public CompletableFuture<ChunkAccess> fillFromNoise(Blender blender, RandomState randomstate, StructureManager structuremanager, ChunkAccess ichunkaccess) {
+        if (isSyntheticStudioEntryChunk(ichunkaccess)) {
+            BukkitChunkGenerator.GenerationStagePermit stage = requireNoiseGenerationStage(
+                    ichunkaccess.getPos(),
+                    "bukkit_nms_synthetic_entry_noise");
+            try {
+                CompletableFuture<ChunkAccess> pipeline = delegate
+                        .fillFromNoise(blender, randomstate, structuremanager, ichunkaccess)
+                        .thenApply(this::primeSyntheticStudioEntryHeightmaps);
+                CompletableFuture<ChunkAccess> completion = new CompletableFuture<>();
+                pipeline.whenComplete((filled, failure) -> {
+                    boolean cancelled = isCancellationFailure(failure);
+                    stage.close();
+                    if (failure == null) {
+                        completion.complete(filled);
+                    } else if (cancelled) {
+                        completion.cancel(false);
+                    } else {
+                        completion.completeExceptionally(failure);
+                    }
+                });
+                return completion;
+            } catch (RuntimeException | Error failure) {
+                stage.close();
+                throw failure;
+            }
+        }
         BukkitChunkGenerator.GenerationStagePermit stage = requireNoiseGenerationStage(
                 ichunkaccess.getPos(),
                 "bukkit_nms_chunk_pipeline");
@@ -711,6 +763,13 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         WorldgenTerrainHeightmaps.primeTerrain(chunkAccess, worldgenSurfaceHeight(), worldgenFloorHeight());
     }
 
+    private ChunkAccess primeSyntheticStudioEntryHeightmaps(ChunkAccess chunkAccess) {
+        int entryY = StudioEntryChunkGenerator.resolveEntryY(runtimeMinY, runtimeMinY + runtimeHeight);
+        IntBinaryOperator height = (x, z) -> entryY;
+        WorldgenTerrainHeightmaps.primeTerrain(chunkAccess, height, height);
+        return chunkAccess;
+    }
+
     private IntBinaryOperator worldgenSurfaceHeight() {
         return (x, z) -> engine.getHeight(x, z, false) + runtimeMinY + 1;
     }
@@ -721,6 +780,9 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public WeightedList<MobSpawnSettings.SpawnerData> getMobsAt(Holder<Biome> holder, StructureManager structuremanager, MobCategory enumcreaturetype, BlockPos blockposition) {
+        if (isSyntheticStudioEntryBlock(blockposition.getX(), blockposition.getZ())) {
+            return delegate.getMobsAt(holder, structuremanager, enumcreaturetype, blockposition);
+        }
         Holder<Biome> vanillaSpawnBiome = customBiomeSource.getVanillaSpawnBiome(holder);
         if (vanillaSpawnBiome == null) {
             return delegate.getMobsAt(holder, structuremanager, enumcreaturetype, blockposition);
@@ -768,6 +830,12 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void applyBiomeDecoration(WorldGenLevel generatoraccessseed, ChunkAccess ichunkaccess, StructureManager structuremanager, boolean vanilla) {
+        if (isSyntheticStudioEntryChunk(ichunkaccess)) {
+            try (BukkitChunkGenerator.GenerationStagePermit stage =
+                         requireGenerationStage("bukkit_nms_synthetic_entry_decoration")) {
+                return;
+            }
+        }
         try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_biome_decoration");
              GenerationSessionLease lease = requireGenerationLease("bukkit_nms_biome_decoration");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
@@ -1029,6 +1097,9 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     @Override
     public void spawnOriginalMobs(WorldGenRegion region) {
         ChunkPos center = region.getCenter();
+        if (isSyntheticStudioEntryChunk(center.x(), center.z())) {
+            return;
+        }
         Holder<Biome> visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
         Holder<Biome> vanillaBiome = customBiomeSource.getVanillaSpawnBiome(visibleBiome);
         WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
@@ -1067,6 +1138,11 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public int getBaseHeight(int i, int j, Heightmap.Types heightmap_type, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
+        if (isSyntheticStudioEntryBlock(i, j)) {
+            return StudioEntryChunkGenerator.resolveEntryY(
+                    levelheightaccessor.getMinY(),
+                    levelheightaccessor.getMinY() + levelheightaccessor.getHeight());
+        }
         try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_height");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             return levelheightaccessor.getMinY()
@@ -1079,6 +1155,15 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public NoiseColumn getBaseColumn(int i, int j, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
+        if (isSyntheticStudioEntryBlock(i, j)) {
+            BlockState[] column = new BlockState[levelheightaccessor.getHeight()];
+            Arrays.fill(column, Blocks.AIR.defaultBlockState());
+            int platformY = StudioEntryChunkGenerator.resolvePlatformY(
+                    levelheightaccessor.getMinY(),
+                    levelheightaccessor.getMinY() + levelheightaccessor.getHeight());
+            column[platformY - levelheightaccessor.getMinY()] = Blocks.SMOOTH_STONE.defaultBlockState();
+            return new NoiseColumn(levelheightaccessor.getMinY(), column);
+        }
         try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_column");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             int block = engine.getHeight(i, j, true);
@@ -1105,6 +1190,22 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         } catch (GenerationSessionException exception) {
             throw new IllegalStateException("Iris " + operation + " could not acquire its engine runtime.", exception);
         }
+    }
+
+    private boolean isSyntheticStudioEntryChunk(ChunkAccess chunkAccess) {
+        ChunkPos chunkPos = chunkAccess.getPos();
+        return isSyntheticStudioEntryChunk(chunkPos.x(), chunkPos.z());
+    }
+
+    private boolean isSyntheticStudioEntryChunk(int chunkX, int chunkZ) {
+        return platformGenerator != null
+                && platformGenerator.isSyntheticStudioEntryChunk(chunkX, chunkZ);
+    }
+
+    private boolean isSyntheticStudioEntryBlock(int blockX, int blockZ) {
+        return isSyntheticStudioEntryChunk(
+                SectionPos.blockToSectionCoord(blockX),
+                SectionPos.blockToSectionCoord(blockZ));
     }
 
     private BukkitChunkGenerator.GenerationStagePermit requireGenerationStage(String operation) {
