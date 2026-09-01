@@ -16,15 +16,15 @@ public class IrisSurfaceRiverConfig {
     @Desc("Surface-river source allocation.")
     private IrisSurfaceRiverSourceConfig sources = new IrisSurfaceRiverSourceConfig();
 
-    @Desc("Surface channel and surrounding terrain footprint.")
+    @Desc("Wet channel width, depth, inset and roughness.")
     private IrisSurfaceRiverChannelConfig channel = new IrisSurfaceRiverChannelConfig();
 
-    @Desc("Pool, riffle, cascade, and waterfall classification thresholds.")
-    private IrisRiverHydraulicsConfig hydraulics = new IrisRiverHydraulicsConfig();
+    @Desc("Lip, shore band and eroded valley around the channel.")
+    private IrisSurfaceRiverBankConfig banks = new IrisSurfaceRiverBankConfig();
 
-    @Desc("Short ridge-bore configuration for otherwise viable surface routes.")
-    private IrisRiverRidgeTunnelConfig ridgeTunnels = new IrisRiverRidgeTunnelConfig();
+    @Desc("Cascade and waterfall thresholds.")
+    private IrisSurfaceRiverFlowConfig flow = new IrisSurfaceRiverFlowConfig();
 
-    @Desc("Coastal mouth leveling and ocean-apron limits.")
+    @Desc("Coastal mouth flare and ocean-apron limits.")
     private IrisRiverMouthConfig mouths = new IrisRiverMouthConfig();
 }

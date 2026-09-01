@@ -1541,7 +1541,8 @@ public class MantleHydrologyComponentTest {
                         false,
                         0,
                         0
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(8, 16, 1, 3, 8, 4),
                 new HydrologyPlannerSettings.Underground(
                         false,
@@ -1593,6 +1594,7 @@ public class MantleHydrologyComponentTest {
                 0D,
                 source ? 1D : 0D,
                 0D,
+                1D,
                 1D,
                 1D,
                 1D,

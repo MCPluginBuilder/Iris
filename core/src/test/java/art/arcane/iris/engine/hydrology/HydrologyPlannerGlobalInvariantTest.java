@@ -687,7 +687,8 @@ public class HydrologyPlannerGlobalInvariantTest {
                         false,
                         0,
                         0
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(8, 16, 1, 3, 8, 4),
                 new HydrologyPlannerSettings.Underground(
                         undergroundEnabled,
@@ -752,7 +753,8 @@ public class HydrologyPlannerGlobalInvariantTest {
                         surface.ridgeTunnelsEnabled(),
                         surface.maximumRidgeTunnelLength(),
                         surface.ridgeTunnelHeadroom()
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 base.hydraulics(),
                 new HydrologyPlannerSettings.Underground(
                         underground.enabled(),
@@ -935,6 +937,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                 1D,
                 1D,
                 1D,
+                1D,
                 ocean ? "ocean" : "land",
                 "surface",
                 "mouth",
@@ -985,6 +988,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                 1D,
                 1D,
                 1D,
+                1D,
                 "land",
                 "surface",
                 "mouth",
@@ -1029,6 +1033,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                 0D,
                 0D,
                 source ? weight : 0D,
+                1D,
                 1D,
                 1D,
                 1D,
@@ -1157,7 +1162,7 @@ public class HydrologyPlannerGlobalInvariantTest {
             addString(terrain.surfaceBiomeKey());
             addString(terrain.mouthBiomeKey());
             addString(terrain.shoreBiomeKey());
-            addString(terrain.dryBiomeKey());
+            addString(terrain.bankBiomeKey());
             addString(terrain.floodedCaveBiomeKey());
             addInt(terrain.preferredProfileKeys().size());
             for (String profile : terrain.preferredProfileKeys()) {
@@ -1287,7 +1292,7 @@ public class HydrologyPlannerGlobalInvariantTest {
             addString(layer.surfaceBiomeKey());
             addString(layer.mouthBiomeKey());
             addString(layer.shoreBiomeKey());
-            addString(layer.dryBiomeKey());
+            addString(layer.bankBiomeKey());
             addString(layer.floodedCaveBiomeKey());
         }
 

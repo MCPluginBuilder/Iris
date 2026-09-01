@@ -70,6 +70,7 @@ public final class HydrologyTerrainSampleTest {
                 1D,
                 1D,
                 1D,
+                1D,
                 "parent",
                 "surface",
                 "mouth",

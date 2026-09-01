@@ -788,7 +788,7 @@ final class HydrologyFootprintCompiler {
                 layer.surfaceBiomeKey(),
                 layer.mouthBiomeKey(),
                 layer.shoreBiomeKey(),
-                layer.dryBiomeKey(),
+                layer.bankBiomeKey(),
                 layer.floodedCaveBiomeKey()
         );
     }
@@ -2121,7 +2121,7 @@ final class HydrologyFootprintCompiler {
                 layer.surfaceBiomeKey(),
                 layer.mouthBiomeKey(),
                 layer.shoreBiomeKey(),
-                layer.dryBiomeKey(),
+                layer.bankBiomeKey(),
                 layer.floodedCaveBiomeKey()
         );
     }
@@ -2232,7 +2232,7 @@ final class HydrologyFootprintCompiler {
                 terrain.surfaceBiomeKey(),
                 terrain.mouthBiomeKey(),
                 terrain.shoreBiomeKey(),
-                terrain.dryBiomeKey(),
+                terrain.bankBiomeKey(),
                 terrain.floodedCaveBiomeKey()
         );
     }
@@ -2443,7 +2443,7 @@ final class HydrologyFootprintCompiler {
                 terrain.surfaceBiomeKey(),
                 terrain.mouthBiomeKey(),
                 terrain.shoreBiomeKey(),
-                terrain.dryBiomeKey(),
+                terrain.bankBiomeKey(),
                 terrain.floodedCaveBiomeKey()
         );
         addLayer(columns, x, z, terrain, layer);
@@ -3655,7 +3655,7 @@ final class HydrologyFootprintCompiler {
                     first.surfaceBiomeKey(),
                     first.mouthBiomeKey(),
                     first.shoreBiomeKey(),
-                    first.dryBiomeKey(),
+                    first.bankBiomeKey(),
                     first.floodedCaveBiomeKey()
             );
         }

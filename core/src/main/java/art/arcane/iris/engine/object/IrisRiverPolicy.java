@@ -47,7 +47,7 @@ public class IrisRiverPolicy {
     @RegistryListResource(IrisBiome.class)
     @ArrayType(type = String.class)
     @Desc("Dry river footprint biome selection. An empty list explicitly clears the inherited selection.")
-    private KList<String> dryBiomes = null;
+    private KList<String> bankBiomes = null;
 
     @RegistryListResource(IrisBiome.class)
     @ArrayType(type = String.class)
@@ -74,12 +74,17 @@ public class IrisRiverPolicy {
     @Desc("Multiplier applied to terrain-guided routing cost.")
     private Double routingMultiplier = null;
 
+    @MinNumber(0.0001)
+    @MaxNumber(16)
+    @Desc("Multiplier applied to the eroded bank width outside the shore band.")
+    private Double bankMultiplier = null;
+
     public KSet<String> getAllBiomeIds() {
         KSet<String> biomeIds = new KSet<>();
         addAll(biomeIds, surfaceBiomes);
         addAll(biomeIds, mouthBiomes);
         addAll(biomeIds, shoreBiomes);
-        addAll(biomeIds, dryBiomes);
+        addAll(biomeIds, bankBiomes);
         addAll(biomeIds, floodedCaveBiomes);
         return biomeIds;
     }

@@ -164,7 +164,7 @@ public class IrisRiverSchemaTest {
         assertEquals("array", properties.getJSONObject("surfaceBiomes").getString("type"));
         assertEquals("array", properties.getJSONObject("mouthBiomes").getString("type"));
         assertEquals("array", properties.getJSONObject("shoreBiomes").getString("type"));
-        assertEquals("array", properties.getJSONObject("dryBiomes").getString("type"));
+        assertEquals("array", properties.getJSONObject("bankBiomes").getString("type"));
         assertEquals("array", properties.getJSONObject("floodedCaveBiomes").getString("type"));
         assertEquals(16D, properties.getJSONObject("widthMultiplier").getDouble("maximum"), 0D);
         assertEquals(0D, properties.getJSONObject("incisionMultiplier").getDouble("minimum"), 0D);

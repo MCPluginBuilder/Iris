@@ -12,7 +12,7 @@ public record HydrologyPlannerSettings(
         Geometry geometry,
         List<DeepFluid> deepFluids
 ) {
-    private static final long PLAN_FORMAT_REVISION = 5L;
+    private static final long PLAN_FORMAT_REVISION = 6L;
     private static final int MAXIMUM_CROSS_TILE_COLOR_PERIOD = 4;
 
     public HydrologyPlannerSettings {
@@ -36,7 +36,7 @@ public record HydrologyPlannerSettings(
         return new HydrologyPlannerSettings(
                 63,
                 new Routing(2048, 64, 8, 8192, 8192, new Branching(384, 192), 1.5D, 24D, 2D, 0.2D),
-                new Surface(true, surfaceSources, 4, 8, 1, 4, 3, 7, 6, 2, 10, 24, true, 192, 10),
+                new Surface(true, surfaceSources, 4, 8, 2, 4, 1, 1, 10, 1.5D, 4, 32, false, 1, 1, Banks.defaults()),
                 new Hydraulics(80, 180, 1, 7, 24, 8),
                 new Underground(true, undergroundSources, -48, 72, 3, 8, 1, 3, 6, 14, true),
                 new Outlets(
@@ -97,8 +97,9 @@ public record HydrologyPlannerSettings(
         int radius = 0;
         int routeDisplacement = Math.multiplyExact(routing.sampleSpacing(), 3);
         if (surface.enabled() && surface.sources().enabled()) {
+            int blendWidth = Math.max(surface.maximumTerrainBlendWidth(), surface.banks().maximumBlendWidth());
             int surfaceRadius = (int) StrictMath.ceil(
-                    surface.maximumWidth() / 2D + surface.shoreWidth() + surface.maximumTerrainBlendWidth()
+                    surface.maximumWidth() / 2D + surface.shoreWidth() + blendWidth
             );
             surfaceRadius = Math.max(
                     surfaceRadius,
@@ -228,11 +229,12 @@ public record HydrologyPlannerSettings(
             int maximumTerrainBlendWidth,
             boolean ridgeTunnelsEnabled,
             int maximumRidgeTunnelLength,
-            int ridgeTunnelHeadroom
+            int ridgeTunnelHeadroom,
+            Banks banks
     ) {
         public Surface {
-            if (sources == null) {
-                throw new IllegalArgumentException("Surface source settings are required.");
+            if (sources == null || banks == null) {
+                throw new IllegalArgumentException("Surface source and bank settings are required.");
             }
             requireRange(minimumWidth, maximumWidth, 1, 256, "surface width");
             requireRange(minimumDepth, maximumDepth, 1, 64, "surface depth");
@@ -244,6 +246,37 @@ public record HydrologyPlannerSettings(
             if (maximumRidgeTunnelLength < 0 || ridgeTunnelHeadroom < 0) {
                 throw new IllegalArgumentException("Ridge tunnel bounds cannot be negative.");
             }
+        }
+    }
+
+    public record Banks(
+            int inset,
+            int freeboard,
+            double blendSlope,
+            int minimumBlendWidth,
+            int maximumBlendWidth,
+            double roughness,
+            int roughnessWavelength,
+            int cascadeRun,
+            int waterfallMinimumDrop,
+            double mouthFlareRatio,
+            boolean exposeCutStrata
+    ) {
+        public Banks {
+            if (inset < 1 || inset > 16 || freeboard < 1 || freeboard > 8
+                    || !Double.isFinite(blendSlope) || blendSlope < 1D || blendSlope > 16D
+                    || minimumBlendWidth < 1 || maximumBlendWidth < minimumBlendWidth || maximumBlendWidth > 128
+                    || !Double.isFinite(roughness) || roughness < 0D || roughness > 1D
+                    || roughnessWavelength < 3 || roughnessWavelength > 128
+                    || cascadeRun < 1 || cascadeRun > 16
+                    || waterfallMinimumDrop < 2 || waterfallMinimumDrop > 24
+                    || !Double.isFinite(mouthFlareRatio) || mouthFlareRatio < 1D || mouthFlareRatio > 4D) {
+                throw new IllegalArgumentException("Surface bank settings are invalid.");
+            }
+        }
+
+        public static Banks defaults() {
+            return new Banks(1, 1, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, true);
         }
     }
 

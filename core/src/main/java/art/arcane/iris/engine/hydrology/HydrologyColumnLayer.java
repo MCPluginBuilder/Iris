@@ -20,7 +20,7 @@ public record HydrologyColumnLayer(
         String surfaceBiomeKey,
         String mouthBiomeKey,
         String shoreBiomeKey,
-        String dryBiomeKey,
+        String bankBiomeKey,
         String floodedCaveBiomeKey
 ) {
     public HydrologyColumnLayer {
@@ -29,7 +29,7 @@ public record HydrologyColumnLayer(
         surfaceBiomeKey = requireKey(surfaceBiomeKey, "surfaceBiomeKey");
         mouthBiomeKey = requireKey(mouthBiomeKey, "mouthBiomeKey");
         shoreBiomeKey = requireKey(shoreBiomeKey, "shoreBiomeKey");
-        dryBiomeKey = requireKey(dryBiomeKey, "dryBiomeKey");
+        bankBiomeKey = requireKey(bankBiomeKey, "bankBiomeKey");
         floodedCaveBiomeKey = requireKey(floodedCaveBiomeKey, "floodedCaveBiomeKey");
         if (channel && bedY > fluidHeadY) {
             throw new IllegalArgumentException("A channel bed cannot be above its fluid head.");

@@ -270,7 +270,8 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         true,
                         96,
                         10
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(12, 40, 1, 3, 8, 4),
                 new HydrologyPlannerSettings.Underground(
                         true,
@@ -351,7 +352,8 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         baseSurface.ridgeTunnelsEnabled(),
                         baseSurface.maximumRidgeTunnelLength(),
                         baseSurface.ridgeTunnelHeadroom()
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 base.hydraulics(),
                 new HydrologyPlannerSettings.Underground(
                         false,
@@ -412,6 +414,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                     1D,
                     1D,
                     1D,
+                    1D,
                     "parent",
                     "surface",
                     "mouth",
@@ -452,11 +455,12 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                     sample.depthMultiplier(),
                     sample.incisionMultiplier(),
                     sample.routingMultiplier(),
+                    1D,
                     sample.parentBiomeKey(),
                     sample.surfaceBiomeKey(),
                     sample.mouthBiomeKey(),
                     sample.shoreBiomeKey(),
-                    sample.dryBiomeKey(),
+                    sample.bankBiomeKey(),
                     sample.floodedCaveBiomeKey(),
                     sample.preferredProfileKeys()
             );
@@ -480,6 +484,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                 0D,
                 0D,
                 0D,
+                1D,
                 1D,
                 1D,
                 1D,

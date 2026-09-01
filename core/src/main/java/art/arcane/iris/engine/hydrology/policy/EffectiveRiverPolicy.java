@@ -14,12 +14,13 @@ public record EffectiveRiverPolicy(
         List<String> surfaceBiomes,
         List<String> mouthBiomes,
         List<String> shoreBiomes,
-        List<String> dryBiomes,
+        List<String> bankBiomes,
         List<String> floodedCaveBiomes,
         double widthMultiplier,
         double depthMultiplier,
         double incisionMultiplier,
-        double routingMultiplier
+        double routingMultiplier,
+        double bankMultiplier
 ) {
     public EffectiveRiverPolicy {
         placement = Objects.requireNonNull(placement);
@@ -28,7 +29,7 @@ public record EffectiveRiverPolicy(
         surfaceBiomes = List.copyOf(surfaceBiomes);
         mouthBiomes = List.copyOf(mouthBiomes);
         shoreBiomes = List.copyOf(shoreBiomes);
-        dryBiomes = List.copyOf(dryBiomes);
+        bankBiomes = List.copyOf(bankBiomes);
         floodedCaveBiomes = List.copyOf(floodedCaveBiomes);
     }
 

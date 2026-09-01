@@ -50,7 +50,7 @@ public class PackHydrologyValidatorTest {
                   "derivative": "minecraft:river",
                   "riverPolicy": {
                     "profiles": ["default"],
-                    "dryBiomes": ["river_dry"]
+                    "bankBiomes": ["river_dry"]
                   }
                 }
                 """);
@@ -267,7 +267,7 @@ public class PackHydrologyValidatorTest {
                     "surfaceBiomes": ["missing"],
                     "mouthBiomes": "river",
                     "shoreBiomes": ["biome", "biome"],
-                    "dryBiomes": [17],
+                    "bankBiomes": [17],
                     "floodedCaveBiomes": ["../escape"],
                     "widthMultiplier": 0,
                     "depthMultiplier": 17,
@@ -286,7 +286,7 @@ public class PackHydrologyValidatorTest {
         assertContains(result.errors(), "surfaceBiomes[0] references missing biome 'missing'");
         assertContains(result.errors(), ".mouthBiomes must be an array or null");
         assertContains(result.errors(), "shoreBiomes[1] duplicates biome 'biome'");
-        assertContains(result.errors(), "dryBiomes[0] must name a biome resource");
+        assertContains(result.errors(), "bankBiomes[0] must name a biome resource");
         assertContains(result.errors(), "floodedCaveBiomes[0] must name a biome resource");
         assertContains(result.errors(), "widthMultiplier must be at least");
         assertContains(result.errors(), "depthMultiplier must be at most");
@@ -859,7 +859,7 @@ public class PackHydrologyValidatorTest {
                     "surfaceBiomes": ["river_surface"],
                     "mouthBiomes": ["river_surface"],
                     "shoreBiomes": ["river_shore"],
-                    "dryBiomes": ["river_dry"],
+                    "bankBiomes": ["river_dry"],
                     "floodedCaveBiomes": ["river_dry"],
                     "widthMultiplier": 1,
                     "depthMultiplier": 1,

@@ -48,7 +48,7 @@ final class PackHydrologyValidator {
             "surfaceBiomes",
             "mouthBiomes",
             "shoreBiomes",
-            "dryBiomes",
+            "bankBiomes",
             "floodedCaveBiomes"
     );
     private static final List<String> REGION_BIOME_FIELDS = List.of(

@@ -30,7 +30,6 @@ import art.arcane.iris.engine.object.IrisRiverGrottoConfig;
 import art.arcane.iris.engine.object.IrisRiverChannelShapeConfig;
 import art.arcane.iris.engine.object.IrisRiverDropShapeConfig;
 import art.arcane.iris.engine.object.IrisRiverGeometryConfig;
-import art.arcane.iris.engine.object.IrisRiverHydraulicsConfig;
 import art.arcane.iris.engine.object.IrisRiverHydrology;
 import art.arcane.iris.engine.object.IrisRiverInlandOutlet;
 import art.arcane.iris.engine.object.IrisRiverMeanderConfig;
@@ -38,7 +37,9 @@ import art.arcane.iris.engine.object.IrisRiverProfile;
 import art.arcane.iris.engine.object.IrisRiverRoutingConfig;
 import art.arcane.iris.engine.object.IrisRiverRoutingMode;
 import art.arcane.iris.engine.object.IrisStyledRange;
+import art.arcane.iris.engine.object.IrisSurfaceRiverBankConfig;
 import art.arcane.iris.engine.object.IrisSurfaceRiverChannelConfig;
+import art.arcane.iris.engine.object.IrisSurfaceRiverFlowConfig;
 import art.arcane.iris.engine.object.IrisSurfaceRiverConfig;
 import art.arcane.iris.engine.object.IrisSurfaceRiverSourceConfig;
 import art.arcane.iris.engine.object.IrisUndergroundRiverConfig;
@@ -463,11 +464,12 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 policy.depthMultiplier(),
                 policy.incisionMultiplier(),
                 policy.routingMultiplier() * routingPreference,
+                policy.bankMultiplier(),
                 parentBiomeKey,
                 selectKey(policy.surfaceBiomes(), parentBiomeKey, biomePatchNoise, 1),
                 selectKey(policy.mouthBiomes(), parentBiomeKey, biomePatchNoise, 2),
                 selectKey(policy.shoreBiomes(), parentBiomeKey, biomePatchNoise, 3),
-                selectKey(policy.dryBiomes(), parentBiomeKey, biomePatchNoise, 4),
+                selectKey(policy.bankBiomes(), parentBiomeKey, biomePatchNoise, 4),
                 selectKey(policy.floodedCaveBiomes(), parentBiomeKey, biomePatchNoise, 5),
                 profiles
         );
@@ -556,21 +558,13 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         IrisRiverHydrology rivers = hydrology.getRivers();
         IrisSurfaceRiverConfig surface = rivers.getSurface();
         IrisSurfaceRiverChannelConfig channel = surface.getChannel();
-        IrisRiverHydraulicsConfig hydraulics = surface.getHydraulics();
+        IrisSurfaceRiverBankConfig banks = surface.getBanks();
         IrisUndergroundRiverConfig underground = rivers.getUnderground();
         ProceduralStream<Double> surfaceWidth = styledStream(context, channel.getWidth(), SURFACE_WIDTH_SALT);
         ProceduralStream<Double> surfaceDepth = styledStream(context, channel.getDepth(), SURFACE_DEPTH_SALT);
-        ProceduralStream<Double> surfaceInset = styledStream(context, channel.getSurfaceInset(), SURFACE_INSET_SALT);
-        ProceduralStream<Double> surfaceBlend = styledStream(
-                context,
-                channel.getTerrainBlendWidth(),
-                SURFACE_BLEND_SALT
-        );
-        ProceduralStream<Double> targetPool = styledStream(
-                context,
-                hydraulics.getTargetPoolLength(),
-                TARGET_POOL_SALT
-        );
+        ProceduralStream<Double> surfaceInset = ProceduralStream.ofDouble((x, z) -> (double) channel.getInset());
+        ProceduralStream<Double> surfaceBlend = ProceduralStream.ofDouble((x, z) -> (double) banks.getMaximumBlendWidth());
+        ProceduralStream<Double> targetPool = ProceduralStream.ofDouble((x, z) -> 128D);
         ProceduralStream<Double> undergroundLevel = styledStream(
                 context,
                 underground.getFluidLevel(),
@@ -646,10 +640,12 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         IrisSurfaceRiverConfig surface = rivers.getSurface();
         IrisSurfaceRiverSourceConfig surfaceSources = surface.getSources();
         IrisSurfaceRiverChannelConfig channel = surface.getChannel();
-        IrisRiverHydraulicsConfig hydraulics = surface.getHydraulics();
+        IrisSurfaceRiverBankConfig banks = surface.getBanks();
+        IrisSurfaceRiverFlowConfig flow = surface.getFlow();
         IrisUndergroundRiverConfig underground = rivers.getUnderground();
         IrisUndergroundRiverSourceConfig undergroundSources = underground.getSources();
         int routeNodes = maximumRouteNodes(routing);
+        int refinementSpacing = refinementSpacing(routing.getSampleSpacing());
         int minimumWorldY = dimension.getMinHeight();
         boolean riversEnabled = rivers.isEnabled();
         boolean surfaceEnabled = riversEnabled && surface.isEnabled();
@@ -657,17 +653,17 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         HydrologyPlannerSettings.Routing plannerRouting = new HydrologyPlannerSettings.Routing(
                 routing.getTileSize(),
                 routing.getSampleSpacing(),
-                routing.getRefinementSpacing(),
+                refinementSpacing,
                 routeNodes,
                 routing.getMaximumRouteLength(),
                 new HydrologyPlannerSettings.Branching(
-                        routing.getBranching().getMinimumSurfaceCourseLength(),
-                        routing.getBranching().getMinimumUndergroundCourseLength()
+                        routing.getMinimumSurfaceCourseLength(),
+                        routing.getMinimumUndergroundCourseLength()
                 ),
-                1.5D,
-                24D,
-                2D,
-                0.2D
+                routing.getValleyPreference(),
+                routing.getUphillPenalty(),
+                routing.getSlopePenalty(),
+                routing.getConfluenceAttraction()
         );
         HydrologyPlannerSettings.Source plannerSurfaceSources = new HydrologyPlannerSettings.Source(
                 surfaceEnabled,
@@ -684,23 +680,36 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 maximumInt(channel.getWidth()),
                 minimumInt(channel.getDepth()),
                 maximumInt(channel.getDepth()),
-                minimumInt(channel.getSurfaceInset()),
-                maximumInt(channel.getSurfaceInset()),
+                channel.getInset(),
+                channel.getInset(),
                 channel.getMaximumIncision(),
-                channel.getShoreWidth(),
-                minimumInt(channel.getTerrainBlendWidth()),
-                maximumInt(channel.getTerrainBlendWidth()),
-                surface.getRidgeTunnels().isEnabled(),
-                surface.getRidgeTunnels().getMaximumLength(),
-                surface.getRidgeTunnels().getHeadroom()
+                banks.getShoreWidth(),
+                banks.getMinimumBlendWidth(),
+                banks.getMaximumBlendWidth(),
+                false,
+                1,
+                1,
+                new HydrologyPlannerSettings.Banks(
+                        channel.getInset(),
+                        banks.getFreeboard(),
+                        banks.getBlendSlope(),
+                        banks.getMinimumBlendWidth(),
+                        banks.getMaximumBlendWidth(),
+                        channel.getRoughness(),
+                        channel.getRoughnessWavelength(),
+                        flow.getCascadeRun(),
+                        flow.getWaterfallMinimumDrop(),
+                        surface.getMouths().getFlareRatio(),
+                        banks.isExposeCutStrata()
+                )
         );
         HydrologyPlannerSettings.Hydraulics plannerHydraulics = new HydrologyPlannerSettings.Hydraulics(
-                minimumInt(hydraulics.getTargetPoolLength()),
-                maximumInt(hydraulics.getTargetPoolLength()),
-                hydraulics.getRiffleDrop(),
-                hydraulics.getMaximumGradualDrop(),
-                hydraulics.getMaximumGradualLength(),
-                hydraulics.getWaterfallMinimumDrop()
+                80,
+                180,
+                1,
+                flow.getWaterfallMinimumDrop() - 1,
+                24,
+                flow.getWaterfallMinimumDrop()
         );
         HydrologyPlannerSettings.Source plannerUndergroundSources = new HydrologyPlannerSettings.Source(
                 undergroundEnabled,
@@ -736,11 +745,19 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                         inland.getHeadroom(), inland.getMaximumVolume()),
                 inlandEnabled && inland.isConnectSurfaceRivers(),
                 Math.max(4, coastal.getVerticalRadius()),
-                surface.getMouths().getLevelingDistance(),
+                underground.getMouthLevelingDistance(),
                 surface.getMouths().getMaximumOceanApron(),
                 routing.getMaximumOutletsPerTile()
         );
-        HydrologyPlannerSettings.Geometry plannerGeometry = geometry(rivers.getGeometry());
+        HydrologyPlannerSettings.Geometry plannerGeometry = geometry(
+                rivers.getGeometry(),
+                new HydrologyPlannerSettings.ChannelShape(
+                        2D,
+                        channel.getRoughness(),
+                        channel.getRoughness(),
+                        channel.getRoughnessWavelength()
+                )
+        );
         return new HydrologyPlannerSettings(
                 dimension.getFluidHeight(),
                 plannerRouting,
@@ -749,11 +766,21 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 plannerUnderground,
                 plannerOutlets,
                 plannerGeometry,
-                deepFluids(hydrology.getDeepFluids(), minimumWorldY, routing)
+                deepFluids(hydrology.getDeepFluids(), minimumWorldY, routing, refinementSpacing)
         );
     }
 
-    private static HydrologyPlannerSettings.Geometry geometry(IrisRiverGeometryConfig geometry) {
+    static int refinementSpacing(int sampleSpacing) {
+        if (sampleSpacing % 4 == 0) {
+            return 4;
+        }
+        return sampleSpacing % 2 == 0 ? 2 : 1;
+    }
+
+    private static HydrologyPlannerSettings.Geometry geometry(
+            IrisRiverGeometryConfig geometry,
+            HydrologyPlannerSettings.ChannelShape surfaceShape
+    ) {
         IrisRiverMeanderConfig meanders = geometry.getMeanders();
         IrisRiverDropShapeConfig drops = geometry.getDrops();
         return new HydrologyPlannerSettings.Geometry(
@@ -766,7 +793,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                         meanders.getSmoothingPasses(),
                         meanders.getMaximumTurnDegrees()
                 ),
-                channelShape(geometry.getSurface()),
+                surfaceShape,
                 channelShape(geometry.getUnderground()),
                 channelShape(geometry.getGrottos()),
                 new HydrologyPlannerSettings.Drops(
@@ -809,7 +836,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
     private static List<HydrologyPlannerSettings.DeepFluid> deepFluids(
             List<IrisDeepFluidConfig> configurations,
             int minimumWorldY,
-            IrisRiverRoutingConfig routing
+            IrisRiverRoutingConfig routing,
+            int refinementSpacing
     ) {
         ArrayList<HydrologyPlannerSettings.DeepFluid> deepFluids = new ArrayList<>();
         for (IrisDeepFluidConfig configuration : configurations) {
@@ -820,7 +848,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
             int maximumChannelLength = maximumDeepChannelLength(configuration, routing);
             int minimumChannelLength = maximumChannelLength == 0
                     ? 0
-                    : Math.min(maximumChannelLength, Math.max(routing.getRefinementSpacing(), radius));
+                    : Math.min(maximumChannelLength, Math.max(refinementSpacing, radius));
             deepFluids.add(new HydrologyPlannerSettings.DeepFluid(
                     configuration.getId(),
                     configuration.getDensity() > 0D
@@ -855,7 +883,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
             return 0;
         }
         int configuredLength = Math.max(
-                routing.getRefinementSpacing(), configuration.getSpacing() / 3);
+                refinementSpacing(routing.getSampleSpacing()), configuration.getSpacing() / 3);
         return Math.min(configuredLength, routing.getTileSize() / 2);
     }
 

@@ -41,12 +41,13 @@ public final class RiverPolicyResolver {
         private List<String> surfaceBiomes = List.of();
         private List<String> mouthBiomes = List.of();
         private List<String> shoreBiomes = List.of();
-        private List<String> dryBiomes = List.of();
+        private List<String> bankBiomes = List.of();
         private List<String> floodedCaveBiomes = List.of();
         private double widthMultiplier = 1D;
         private double depthMultiplier = 1D;
         private double incisionMultiplier = 1D;
         private double routingMultiplier = 1D;
+        private double bankMultiplier = 1D;
 
         private void apply(IrisRiverPolicy policy) {
             if (policy == null) {
@@ -73,8 +74,8 @@ public final class RiverPolicyResolver {
             if (policy.getShoreBiomes() != null) {
                 shoreBiomes = List.copyOf(policy.getShoreBiomes());
             }
-            if (policy.getDryBiomes() != null) {
-                dryBiomes = List.copyOf(policy.getDryBiomes());
+            if (policy.getBankBiomes() != null) {
+                bankBiomes = List.copyOf(policy.getBankBiomes());
             }
             if (policy.getFloodedCaveBiomes() != null) {
                 floodedCaveBiomes = List.copyOf(policy.getFloodedCaveBiomes());
@@ -91,6 +92,9 @@ public final class RiverPolicyResolver {
             if (policy.getRoutingMultiplier() != null) {
                 routingMultiplier = policy.getRoutingMultiplier();
             }
+            if (policy.getBankMultiplier() != null) {
+                bankMultiplier = policy.getBankMultiplier();
+            }
         }
 
         private EffectiveRiverPolicy build() {
@@ -102,12 +106,13 @@ public final class RiverPolicyResolver {
                     surfaceBiomes,
                     mouthBiomes,
                     shoreBiomes,
-                    dryBiomes,
+                    bankBiomes,
                     floodedCaveBiomes,
                     widthMultiplier,
                     depthMultiplier,
                     incisionMultiplier,
-                    routingMultiplier
+                    routingMultiplier,
+                    bankMultiplier
             );
         }
     }

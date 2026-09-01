@@ -9,39 +9,37 @@ import lombok.experimental.Accessors;
 
 @Accessors(chain = true)
 @NoArgsConstructor
-@Desc("Controls the accepted surface-river terrain and biome footprint.")
+@Desc("Controls the wet channel of a surface river.")
 @Data
 public class IrisSurfaceRiverChannelConfig {
     @Desc("Wet channel width in blocks.")
     private IrisStyledRange width = range(4D, 8D, 1024D);
 
-    @Desc("Wet bed depth in blocks.")
-    private IrisStyledRange depth = range(1D, 4D, 768D, 2D);
+    @Desc("Wet bed depth in blocks at the channel center.")
+    private IrisStyledRange depth = range(2D, 4D, 768D);
 
-    @Desc("Vertical distance from the natural terrain corridor to the solved water surface.")
-    private IrisStyledRange surfaceInset = range(3D, 7D, 768D, 2D);
+    @MinNumber(1)
+    @MaxNumber(16)
+    @Desc("Blocks the water surface sits below the lowest natural bank beside the channel.")
+    private int inset = 1;
 
     @MinNumber(0)
     @MaxNumber(64)
-    @Desc("Maximum permitted channel incision below natural terrain.")
-    private int maximumIncision = 6;
+    @Desc("Maximum cut below natural terrain at the channel center before a course is rejected.")
+    private int maximumIncision = 10;
 
-    @MinNumber(1)
-    @MaxNumber(2)
-    @Desc("Narrow biome-selection band immediately outside the wet channel.")
-    private double shoreWidth = 2D;
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("Coherent variation of the wet outline and bed as a fraction of the channel size.")
+    private double roughness = 0.25D;
 
-    @Desc("Wider terrain-grading distance outside the shore band.")
-    private IrisStyledRange terrainBlendWidth = range(10D, 24D, 1024D);
+    @MinNumber(3)
+    @MaxNumber(128)
+    @Desc("Wavelength in blocks of the outline and bed variation.")
+    private int roughnessWavelength = 16;
 
     private static IrisStyledRange range(double min, double max, double zoom) {
-        return range(min, max, zoom, 1D);
-    }
-
-    private static IrisStyledRange range(double min, double max, double zoom, double exponent) {
-        IrisGeneratorStyle style = new IrisGeneratorStyle(NoiseStyle.IRIS)
-                .zoomed(zoom)
-                .setExponent(exponent);
+        IrisGeneratorStyle style = new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(zoom);
         return new IrisStyledRange(min, max, style);
     }
 }

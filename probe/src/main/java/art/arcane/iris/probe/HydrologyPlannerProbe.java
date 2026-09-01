@@ -231,7 +231,8 @@ public final class HydrologyPlannerProbe {
                         true,
                         96,
                         8
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(12, 28, 1, 3, 8, 4),
                 new HydrologyPlannerSettings.Underground(
                         undergroundDensity > 0D,
@@ -285,6 +286,7 @@ public final class HydrologyPlannerProbe {
                     0D,
                     surfaceSource && source ? 1D : 0D,
                     undergroundSource && source ? 1D : 0D,
+                    1D,
                     1D,
                     1D,
                     1D,
@@ -396,7 +398,8 @@ public final class HydrologyPlannerProbe {
                         true,
                         96,
                         10
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(12, 40, 1, 3, 8, 4),
                 new HydrologyPlannerSettings.Underground(
                         true,
@@ -460,6 +463,7 @@ public final class HydrologyPlannerProbe {
                     1D,
                     1D,
                     1D,
+                    1D,
                     "parent",
                     "surface",
                     "mouth",
@@ -488,6 +492,7 @@ public final class HydrologyPlannerProbe {
                 0D,
                 0D,
                 0D,
+                1D,
                 1D,
                 1D,
                 1D,

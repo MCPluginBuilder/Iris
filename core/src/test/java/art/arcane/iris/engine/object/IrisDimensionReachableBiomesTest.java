@@ -148,7 +148,7 @@ public class IrisDimensionReachableBiomesTest {
                 .setChildren(new KList<>("dimension-child"));
         IrisBiome dimensionChild = biome("dimension-child");
         IrisBiome regionMouth = biome("region-mouth").setRiverPolicy(new IrisRiverPolicy()
-                .setDryBiomes(new KList<>("nested-dry")));
+                .setBankBiomes(new KList<>("nested-dry")));
         IrisBiome biomeShore = biome("biome-shore");
         IrisBiome nestedDry = biome("nested-dry");
 
@@ -222,7 +222,7 @@ public class IrisDimensionReachableBiomesTest {
         IrisRegion reachable = new IrisRegion()
                 .setLandBiomes(new KList<>("root"))
                 .setRiverPolicy(new IrisRiverPolicy()
-                        .setDryBiomes(new KList<>("region-dry")));
+                        .setBankBiomes(new KList<>("region-dry")));
         IrisBiome root = biome("root").setRiverPolicy(new IrisRiverPolicy()
                 .setFloodedCaveBiomes(new KList<>("biome-flooded")));
 

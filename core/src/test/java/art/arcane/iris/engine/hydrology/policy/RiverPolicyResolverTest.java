@@ -29,10 +29,12 @@ public class RiverPolicyResolverTest {
         assertEquals(IrisRiverRoutingMode.ALLOW, policy.routing());
         assertTrue(policy.outletAdmission());
         assertTrue(policy.profiles().isEmpty());
+        assertTrue(policy.bankBiomes().isEmpty());
         assertEquals(1D, policy.widthMultiplier(), 0D);
         assertEquals(1D, policy.depthMultiplier(), 0D);
         assertEquals(1D, policy.incisionMultiplier(), 0D);
         assertEquals(1D, policy.routingMultiplier(), 0D);
+        assertEquals(1D, policy.bankMultiplier(), 0D);
         assertTrue(policy.allowsSources());
         assertTrue(policy.allowsTransit());
         assertTrue(policy.allowsRouting());
@@ -49,13 +51,16 @@ public class RiverPolicyResolverTest {
                 .setProfiles(new KList<>("water"))
                 .setSurfaceBiomes(new KList<>("river/dimension"))
                 .setMouthBiomes(new KList<>("river/mouth"))
+                .setBankBiomes(new KList<>("river/bank-dimension"))
                 .setWidthMultiplier(1.5D)
-                .setDepthMultiplier(1.25D);
+                .setDepthMultiplier(1.25D)
+                .setBankMultiplier(2D);
         IrisRiverPolicy region = new IrisRiverPolicy()
                 .setRouting(IrisRiverRoutingMode.PREFER)
                 .setProfiles(new KList<>())
                 .setSurfaceBiomes(new KList<>("river/region"))
                 .setShoreBiomes(new KList<>("river/shore"))
+                .setBankBiomes(new KList<>())
                 .setWidthMultiplier(0.8D)
                 .setRoutingMultiplier(2D);
         IrisRiverPolicy biome = new IrisRiverPolicy()
@@ -63,10 +68,10 @@ public class RiverPolicyResolverTest {
                 .setRouting(IrisRiverRoutingMode.BLOCK)
                 .setOutletAdmission(true)
                 .setSurfaceBiomes(new KList<>())
-                .setDryBiomes(new KList<>("river/dry"))
                 .setFloodedCaveBiomes(new KList<>("river/flooded"))
                 .setDepthMultiplier(0.75D)
-                .setIncisionMultiplier(0.5D);
+                .setIncisionMultiplier(0.5D)
+                .setBankMultiplier(0.5D);
 
         EffectiveRiverPolicy policy = RiverPolicyResolver.resolve(dimension, region, biome);
 
@@ -75,19 +80,31 @@ public class RiverPolicyResolverTest {
         assertTrue(policy.outletAdmission());
         assertTrue(policy.profiles().isEmpty());
         assertTrue(policy.surfaceBiomes().isEmpty());
+        assertTrue(policy.bankBiomes().isEmpty());
         assertEquals(List.of("river/mouth"), policy.mouthBiomes());
         assertEquals(List.of("river/shore"), policy.shoreBiomes());
-        assertEquals(List.of("river/dry"), policy.dryBiomes());
         assertEquals(List.of("river/flooded"), policy.floodedCaveBiomes());
         assertEquals(0.8D, policy.widthMultiplier(), 0D);
         assertEquals(0.75D, policy.depthMultiplier(), 0D);
         assertEquals(0.5D, policy.incisionMultiplier(), 0D);
         assertEquals(2D, policy.routingMultiplier(), 0D);
+        assertEquals(0.5D, policy.bankMultiplier(), 0D);
         assertTrue(policy.allowsSources());
         assertTrue(policy.allowsTransit());
         assertFalse(policy.allowsRouting());
         assertTrue(policy.prefersHeadwaters());
         assertTrue(policy.requiresHeadwaters());
+    }
+
+    @Test
+    public void bankBiomesInheritUntilOverridden() {
+        IrisRiverPolicy dimension = new IrisRiverPolicy().setBankBiomes(new KList<>("river/bank"));
+        IrisRiverPolicy region = new IrisRiverPolicy().setRouting(IrisRiverRoutingMode.PREFER);
+
+        EffectiveRiverPolicy policy = RiverPolicyResolver.resolve(dimension, region, null);
+
+        assertEquals(List.of("river/bank"), policy.bankBiomes());
+        assertEquals(1D, policy.bankMultiplier(), 0D);
     }
 
     @Test

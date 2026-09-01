@@ -9,16 +9,16 @@ import lombok.experimental.Accessors;
 
 @Accessors(chain = true)
 @NoArgsConstructor
-@Desc("Controls river leveling before a coastal reservoir and the final ocean footprint.")
+@Desc("Controls how a surface river meets the sea.")
 @Data
 public class IrisRiverMouthConfig {
-    @MinNumber(0)
-    @MaxNumber(2048)
-    @Desc("Distance in blocks over which an ocean-bound river reaches sea level before the coastline.")
-    private int levelingDistance = 64;
+    @MinNumber(1)
+    @MaxNumber(4)
+    @Desc("Width multiplier reached at the coastline over the final stretch of the river.")
+    private double flareRatio = 1.6D;
 
     @MinNumber(0)
     @MaxNumber(64)
-    @Desc("Maximum number of blocks the river footprint may enter an ocean reservoir before terminating.")
+    @Desc("Maximum number of blocks the recorded mouth footprint may enter the ocean before terminating.")
     private int maximumOceanApron = 8;
 }

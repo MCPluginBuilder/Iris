@@ -3862,7 +3862,7 @@ public final class HydrologyPackProbe {
                 position.z()
         );
         String expectedBiome = witness.action() == HydrologyCaveAction.DRY_AIR
-                ? witness.layer().dryBiomeKey()
+                ? witness.layer().bankBiomeKey()
                 : witness.layer().floodedCaveBiomeKey();
         if (cell == null
                 || cell.action() != witness.action()

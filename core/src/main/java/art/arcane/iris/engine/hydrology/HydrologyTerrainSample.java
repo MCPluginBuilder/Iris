@@ -22,11 +22,12 @@ public record HydrologyTerrainSample(
         double depthMultiplier,
         double incisionMultiplier,
         double routingMultiplier,
+        double bankMultiplier,
         String parentBiomeKey,
         String surfaceBiomeKey,
         String mouthBiomeKey,
         String shoreBiomeKey,
-        String dryBiomeKey,
+        String bankBiomeKey,
         String floodedCaveBiomeKey,
         List<String> preferredProfileKeys
 ) {
@@ -39,6 +40,7 @@ public record HydrologyTerrainSample(
         requireFinitePositive(depthMultiplier, "depthMultiplier");
         requireFiniteNonNegative(incisionMultiplier, "incisionMultiplier");
         requireFiniteNonNegative(routingMultiplier, "routingMultiplier");
+        requireFinitePositive(bankMultiplier, "bankMultiplier");
         if (caveAvailable && (caveFluidY <= caveFloorY || caveFluidY >= naturalHeight)) {
             throw new IllegalArgumentException("Available cave fluid must be above its floor and below natural terrain.");
         }
@@ -46,7 +48,7 @@ public record HydrologyTerrainSample(
         surfaceBiomeKey = normalizeKey(surfaceBiomeKey, parentBiomeKey);
         mouthBiomeKey = normalizeKey(mouthBiomeKey, surfaceBiomeKey);
         shoreBiomeKey = normalizeKey(shoreBiomeKey, parentBiomeKey);
-        dryBiomeKey = normalizeKey(dryBiomeKey, parentBiomeKey);
+        bankBiomeKey = normalizeKey(bankBiomeKey, parentBiomeKey);
         floodedCaveBiomeKey = normalizeKey(floodedCaveBiomeKey, surfaceBiomeKey);
         preferredProfileKeys = normalizeProfiles(preferredProfileKeys);
     }
@@ -66,6 +68,7 @@ public record HydrologyTerrainSample(
                 false,
                 false,
                 0D,
+                1D,
                 1D,
                 1D,
                 1D,
@@ -103,6 +106,7 @@ public record HydrologyTerrainSample(
                 1D,
                 1D,
                 1D,
+                1D,
                 parentBiomeKey,
                 parentBiomeKey,
                 parentBiomeKey,
@@ -134,11 +138,12 @@ public record HydrologyTerrainSample(
                 depthMultiplier,
                 incisionMultiplier,
                 routingMultiplier,
+                bankMultiplier,
                 parentBiomeKey,
                 surfaceBiomeKey,
                 mouthBiomeKey,
                 shoreBiomeKey,
-                dryBiomeKey,
+                bankBiomeKey,
                 floodedCaveBiomeKey,
                 preferredProfileKeys
         );

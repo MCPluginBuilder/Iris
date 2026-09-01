@@ -236,7 +236,8 @@ public class HydrologyStyledGeometryTest {
                         true,
                         96,
                         8
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(12, 28, 1, 3, 8, 4),
                 new HydrologyPlannerSettings.Underground(
                         undergroundDensity > 0D,
@@ -288,6 +289,7 @@ public class HydrologyStyledGeometryTest {
                     1D,
                     1D,
                     1D,
+                    1D,
                     "ocean",
                     "surface",
                     "mouth",
@@ -315,6 +317,7 @@ public class HydrologyStyledGeometryTest {
                 0D,
                 source ? 1D : 0D,
                 source ? 1D : 0D,
+                1D,
                 1D,
                 1D,
                 1D,

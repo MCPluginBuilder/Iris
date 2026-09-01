@@ -245,7 +245,7 @@ public class HydrologyTileCacheTest {
                 63,
                 new HydrologyPlannerSettings.Routing(64, 16, 4, 128, 64,
                         new HydrologyPlannerSettings.Branching(0, 0), 0D, 0D, 0D, 0D),
-                new HydrologyPlannerSettings.Surface(false, disabled, 2, 4, 1, 2, 2, 4, 4, 1D, 2, 4, false, 0, 0),
+                new HydrologyPlannerSettings.Surface(false, disabled, 2, 4, 1, 2, 2, 4, 4, 1D, 2, 4, false, 0, 0, HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(8, 16, 1, 2, 8, 3),
                 new HydrologyPlannerSettings.Underground(false, disabled, -32, 32, 2, 4, 1, 2, 3, 4, false),
                 new HydrologyPlannerSettings.Outlets(
@@ -284,7 +284,7 @@ public class HydrologyTileCacheTest {
                 63,
                 new HydrologyPlannerSettings.Routing(64, 16, 4, 128, 96,
                         new HydrologyPlannerSettings.Branching(16, 8), 0.5D, 12D, 0.5D, 0.1D),
-                new HydrologyPlannerSettings.Surface(true, surfaceSources, 4, 8, 2, 3, 4, 8, 20, 1.5D, 2, 4, true, 96, 8),
+                new HydrologyPlannerSettings.Surface(true, surfaceSources, 4, 8, 2, 3, 4, 8, 20, 1.5D, 2, 4, true, 96, 8, HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(8, 16, 1, 2, 8, 3),
                 new HydrologyPlannerSettings.Underground(false, disabled, -32, 32, 2, 4, 1, 2, 3, 4, false),
                 new HydrologyPlannerSettings.Outlets(
@@ -323,6 +323,7 @@ public class HydrologyTileCacheTest {
                 0D,
                 source ? 1D : 0D,
                 0D,
+                1D,
                 1D,
                 1D,
                 1D,

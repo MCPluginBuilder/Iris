@@ -509,6 +509,7 @@ public class HydrologyPlannerTest {
                     1D,
                     1D,
                     1D,
+                    1D,
                     "parent",
                     "surface",
                     "mouth",
@@ -1124,7 +1125,7 @@ public class HydrologyPlannerTest {
                 assertEquals("surface", layer.surfaceBiomeKey());
                 assertEquals("mouth", layer.mouthBiomeKey());
                 assertEquals("shore", layer.shoreBiomeKey());
-                assertEquals("dry", layer.dryBiomeKey());
+                assertEquals("dry", layer.bankBiomeKey());
                 assertEquals("flooded", layer.floodedCaveBiomeKey());
                 if (layer.grading() && !layer.shore() && !layer.channel()) {
                     sawGrading = true;
@@ -1204,7 +1205,8 @@ public class HydrologyPlannerTest {
                 base.surface().ridgeTunnelsEnabled(),
                 base.surface().maximumRidgeTunnelLength(),
                 base.surface().ridgeTunnelHeadroom()
-        );
+        ,
+                HydrologyPlannerSettings.Banks.defaults());
         HydrologyPlannerSettings shaped = new HydrologyPlannerSettings(
                 base.seaLevel(),
                 base.routing(),
@@ -1498,7 +1500,8 @@ public class HydrologyPlannerTest {
                         surface.ridgeTunnelsEnabled(),
                         32,
                         surface.ridgeTunnelHeadroom()
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 base.hydraulics(),
                 base.underground(),
                 base.outlets(),
@@ -1850,7 +1853,8 @@ public class HydrologyPlannerTest {
                         true,
                         64,
                         8
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(12, 28, 1, 3, 8, 4),
                 new HydrologyPlannerSettings.Underground(
                         undergroundDensity > 0D,
@@ -1926,7 +1930,8 @@ public class HydrologyPlannerTest {
                         surface.ridgeTunnelsEnabled(),
                         192,
                         surface.ridgeTunnelHeadroom()
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(12, 28, 1, 4, 12, 5),
                 base.underground(),
                 new HydrologyPlannerSettings.Outlets(
@@ -2002,6 +2007,7 @@ public class HydrologyPlannerTest {
                     1D,
                     1D,
                     1D,
+                    1D,
                     "parent",
                     "surface",
                     "mouth",
@@ -2066,6 +2072,7 @@ public class HydrologyPlannerTest {
                 1D,
                 1D,
                 1D,
+                1D,
                 "ocean_parent",
                 "surface",
                 "mouth",
@@ -2093,6 +2100,7 @@ public class HydrologyPlannerTest {
                 0D,
                 0D,
                 0D,
+                1D,
                 1D,
                 1D,
                 1D,
@@ -2137,6 +2145,7 @@ public class HydrologyPlannerTest {
                 1D,
                 1D,
                 1D,
+                1D,
                 "parent",
                 "surface",
                 "mouth",
@@ -2168,6 +2177,7 @@ public class HydrologyPlannerTest {
                 1D,
                 1D,
                 1D,
+                1D,
                 "parent",
                 "surface",
                 "mouth",
@@ -2195,6 +2205,7 @@ public class HydrologyPlannerTest {
                 0D,
                 0D,
                 source ? 1D : 0D,
+                1D,
                 1D,
                 1D,
                 1D,
@@ -2233,7 +2244,8 @@ public class HydrologyPlannerTest {
                         surface.ridgeTunnelsEnabled(),
                         surface.maximumRidgeTunnelLength(),
                         surface.ridgeTunnelHeadroom()
-                ),
+                ,
+                        HydrologyPlannerSettings.Banks.defaults()),
                 settings.hydraulics(),
                 settings.underground(),
                 settings.outlets(),

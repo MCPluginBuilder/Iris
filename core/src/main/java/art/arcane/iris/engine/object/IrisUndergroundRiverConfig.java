@@ -1,6 +1,8 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.engine.object.annotations.Desc;
+import art.arcane.iris.engine.object.annotations.MaxNumber;
+import art.arcane.iris.engine.object.annotations.MinNumber;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
@@ -30,6 +32,11 @@ public class IrisUndergroundRiverConfig {
 
     @Desc("Allow accepted underground courses to connect transactionally to existing caves.")
     private boolean connectToExistingCaves = true;
+
+    @MinNumber(0)
+    @MaxNumber(2048)
+    @Desc("Distance in blocks over which an ocean-bound underground river levels to sea level before its mouth.")
+    private int mouthLevelingDistance = 64;
 
     private static IrisStyledRange range(double min, double max, double zoom) {
         return new IrisStyledRange(min, max, new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(zoom));

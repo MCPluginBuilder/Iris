@@ -24,22 +24,24 @@ public class IrisRiverRoutingConfig {
     @Desc("Spacing in blocks between terrain samples used to build the drainage graph.")
     private int sampleSpacing = 64;
 
-    @MinNumber(1)
-    @MaxNumber(64)
-    @Desc("Spacing in blocks used to refine accepted terrain-guided centerlines.")
-    private int refinementSpacing = 8;
-
-    @Desc("Minimum route and tributary lengths used to suppress chopped, clustered branches.")
-    private IrisRiverBranchingConfig branching = new IrisRiverBranchingConfig();
-
     @MinNumber(256)
     @MaxNumber(32768)
     @Desc("Maximum bounded length in blocks of one accepted river route.")
     private int maximumRouteLength = 16384;
 
+    @MinNumber(0)
+    @MaxNumber(32768)
+    @Desc("Minimum exposed source-to-outlet length in blocks of a published surface river.")
+    private int minimumSurfaceCourseLength = 384;
+
+    @MinNumber(0)
+    @MaxNumber(32768)
+    @Desc("Minimum source-to-outlet length in blocks of a published underground river.")
+    private int minimumUndergroundCourseLength = 192;
+
     @MinNumber(1)
     @MaxNumber(256)
-    @Desc("Maximum drainage roots selected per planning tile. Fewer roots produce longer, more strongly branching river trees.")
+    @Desc("Maximum drainage roots selected per planning tile.")
     private int maximumOutletsPerTile = 4;
 
     @Desc("Allow rivers to terminate at an ocean reservoir.")
@@ -48,4 +50,24 @@ public class IrisRiverRoutingConfig {
     @ArrayType(type = IrisRiverInlandOutlet.class)
     @Desc("Contained inland outlet kinds available when no legal ocean outlet is selected.")
     private KList<IrisRiverInlandOutlet> inlandOutlets = new KList<>();
+
+    @MinNumber(0)
+    @MaxNumber(64)
+    @Desc("How strongly routes prefer lower ground.")
+    private double valleyPreference = 1.5D;
+
+    @MinNumber(0)
+    @MaxNumber(1024)
+    @Desc("Cost per block of rise along a route.")
+    private double uphillPenalty = 24D;
+
+    @MinNumber(0)
+    @MaxNumber(64)
+    @Desc("Cost per unit of terrain slope along a route.")
+    private double slopePenalty = 2D;
+
+    @MinNumber(0)
+    @MaxNumber(16)
+    @Desc("How strongly routes are drawn toward existing drainage.")
+    private double confluenceAttraction = 0.2D;
 }
