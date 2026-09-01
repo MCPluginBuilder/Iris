@@ -94,6 +94,24 @@ public class IrisHydrologyRoutingTerrainSamplerTest {
     }
 
     @Test
+    public void pointBasisSamplesCarryTheForwardSlope() {
+        IrisHydrologyRoutingTerrainSampler sampler = sampler(64);
+        int[][] points = {{0, 0}, {-129, -257}, {37, 1024}};
+
+        for (int[] point : points) {
+            int x = point[0];
+            int z = point[1];
+            double expected = IrisHydrologyRoutingTerrainSampler.localSlope(
+                    height(x, z), height(x + 3, z), height(x, z + 3));
+
+            double actual = sampler.sampleBasis(x, z).slope();
+
+            assertTrue(expected > 0D);
+            assertEquals(Double.doubleToRawLongBits(expected), Double.doubleToRawLongBits(actual));
+        }
+    }
+
+    @Test
     public void adjacentGridsShareBasesAndProduceIdenticalOverlap() {
         AtomicInteger calls = new AtomicInteger();
         IrisHydrologyRoutingTerrainSampler sampler = new IrisHydrologyRoutingTerrainSampler(

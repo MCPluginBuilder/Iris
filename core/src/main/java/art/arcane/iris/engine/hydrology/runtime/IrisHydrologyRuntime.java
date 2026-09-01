@@ -387,9 +387,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
     }
 
     private HydrologyTerrainSample createDetailedTerrainSample(int x, int z) {
-        IrisHydrologyRoutingTerrainSampler.TerrainBasis basis = routingTerrainSampler.basis(x, z);
-        double slope = routingTerrainSampler.localSlope(x, z, basis.naturalHeight());
-        return basis.terrain().withSlope(slope);
+        return routingTerrainSampler.sampleBasis(x, z);
     }
 
     private IrisHydrologyRoutingTerrainSampler.TerrainBasis createTerrainBasis(

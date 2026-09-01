@@ -106,7 +106,9 @@ final class IrisHydrologyRoutingTerrainSampler implements HydrologyNaturalTerrai
 
     @Override
     public HydrologyTerrainSample sampleBasis(int blockX, int blockZ) {
-        return basis(blockX, blockZ).terrain();
+        // Point samples carry the forward slope; the aligned grid derives its own from neighbouring bases.
+        TerrainBasis basis = basis(blockX, blockZ);
+        return basis.terrain().withSlope(localSlope(blockX, blockZ, basis.naturalHeight()));
     }
 
     TerrainBasis basis(int blockX, int blockZ) {
