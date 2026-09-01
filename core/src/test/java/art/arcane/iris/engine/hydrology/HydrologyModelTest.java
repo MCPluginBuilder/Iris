@@ -266,7 +266,7 @@ public class HydrologyModelTest {
     }
 
     @Test
-    public void outerGradingUsesTheExactParentBiome() {
+    public void outerGradingUsesTheBankBiome() {
         HydrologyFeatureRef feature = feature(HydrologyFeatureType.SURFACE_POOL, 3L, 70);
         HydrologyColumnLayer grading = layer(feature, 72, 72, 72, false, false, false);
         grading = new HydrologyColumnLayer(
@@ -292,7 +292,7 @@ public class HydrologyModelTest {
         );
         HydrologyColumnSample sample = new HydrologyColumnSample(0, 0, 74, 63, false, "exact_parent", List.of(grading));
 
-        assertTrue(grading.biomeKey() == null);
+        assertEquals("dry", grading.biomeKey());
         assertEquals("exact_parent", sample.parentBiomeKey());
         assertFalse(sample.hasConnectedFluid());
     }

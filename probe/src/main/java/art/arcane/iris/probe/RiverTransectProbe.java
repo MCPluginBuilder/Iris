@@ -1,0 +1,473 @@
+package art.arcane.iris.probe;
+
+import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.hydrology.HydraulicSegment;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
+import art.arcane.iris.engine.hydrology.HydrologyPoint;
+import art.arcane.iris.engine.hydrology.HydrologyTile;
+import art.arcane.iris.engine.hydrology.HydrologyTileKey;
+import art.arcane.iris.engine.hydrology.RiverCourse;
+import art.arcane.iris.engine.hydrology.RiverCourseType;
+import art.arcane.iris.engine.hydrology.RiverFootprint;
+import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
+import art.arcane.iris.engine.hydrology.surface.SurfaceCenterline;
+import art.arcane.iris.engine.hydrology.surface.SurfaceFootprintCompiler;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Plans one hydrology tile over a real pack and renders every exposed surface course as a
+ * top-down plan plus five cross-sections, with a summary of cut depth, bank steps, ocean writes
+ * and spilling channel cells. Exit code 1 when any course writes the ocean or spills.
+ */
+public final class RiverTransectProbe {
+    static final int NO_WATER = Integer.MIN_VALUE;
+    private static final String PREFIX = "[transect]";
+    private static final int MARGIN = 48;
+    private static final int HALF_SECTION = 40;
+    private static final int SECTIONS = 5;
+    private static final int SECTION_SCALE = 4;
+    private static final int SECTION_ROW_HEIGHT = 120;
+    private static final int MAXIMUM_PLAN_COLUMNS = 6_000_000;
+
+    private RiverTransectProbe() {
+    }
+
+    enum Role {
+        NONE,
+        CHANNEL,
+        SHORE,
+        BANK,
+        APRON;
+
+        boolean owned() {
+            return this == CHANNEL || this == SHORE || this == BANK;
+        }
+    }
+
+    record ColumnView(int x, int z, int natural, int terrain, int water, Role role) {
+        int cut() {
+            return natural - terrain;
+        }
+    }
+
+    record CourseSummary(
+            long id,
+            int stations,
+            int ownedColumns,
+            int minimumCut,
+            int maximumCut,
+            int maximumBankStep,
+            int oceanWrites,
+            int uncontainedWetCells
+    ) {
+        boolean passes() {
+            return oceanWrites == 0 && uncontainedWetCells == 0;
+        }
+
+        String line() {
+            return String.format(Locale.ROOT,
+                    "%s course=%d %s stations=%d owned=%d cut=%d..%d bankStep=%d oceanWrites=%d uncontained=%d",
+                    PREFIX, id, passes() ? "PASS" : "FAIL", stations, ownedColumns, minimumCut, maximumCut,
+                    maximumBankStep, oceanWrites, uncontainedWetCells);
+        }
+    }
+
+    record Configuration(File pack, String dimension, long seed, int tileX, int tileZ, File output, boolean studio) {
+        static Configuration parse(String[] args) {
+            if (args.length < 6 || args.length > 7) {
+                throw new IllegalArgumentException(
+                        "usage: <pack> <dimension> <seed> <tileX> <tileZ> <outputDir> [studio]");
+            }
+            boolean studio = args.length == 7 && RealPackProbeSupport.parseBoolean(args[6], "studio");
+            return new Configuration(
+                    new File(args[0]),
+                    args[1],
+                    Long.parseLong(args[2].trim()),
+                    Integer.parseInt(args[3].trim()),
+                    Integer.parseInt(args[4].trim()),
+                    new File(args[5]),
+                    studio
+            );
+        }
+    }
+
+    private record Bounds(int minimumX, int minimumZ, int maximumX, int maximumZ) {
+        static Bounds of(SurfaceCenterline centerline, int margin) {
+            int minimumX = Integer.MAX_VALUE;
+            int minimumZ = Integer.MAX_VALUE;
+            int maximumX = Integer.MIN_VALUE;
+            int maximumZ = Integer.MIN_VALUE;
+            for (int station = 0; station < centerline.size(); station++) {
+                minimumX = Math.min(minimumX, centerline.x()[station]);
+                minimumZ = Math.min(minimumZ, centerline.z()[station]);
+                maximumX = Math.max(maximumX, centerline.x()[station]);
+                maximumZ = Math.max(maximumZ, centerline.z()[station]);
+            }
+            return new Bounds(minimumX - margin, minimumZ - margin, maximumX + margin, maximumZ + margin);
+        }
+
+        int width() {
+            return maximumX - minimumX + 1;
+        }
+
+        int depth() {
+            return maximumZ - minimumZ + 1;
+        }
+    }
+
+    public static void main(String[] args) {
+        Configuration configuration;
+        try {
+            configuration = Configuration.parse(args);
+        } catch (Throwable failure) {
+            System.out.println(PREFIX + " FAIL: " + failure.getMessage());
+            System.exit(2);
+            return;
+        }
+        int exitCode;
+        try {
+            exitCode = run(configuration) ? 0 : 1;
+        } catch (Throwable failure) {
+            System.out.println(PREFIX + " FAIL: probe execution failed");
+            failure.printStackTrace(System.out);
+            exitCode = 2;
+        }
+        System.exit(exitCode);
+    }
+
+    static boolean run(Configuration configuration) throws Exception {
+        try (RealPackProbeSupport.Workspace workspace = RealPackProbeSupport.openWorkspace(
+                configuration.pack(), configuration.dimension(), PREFIX);
+             RealPackProbeSupport.EngineSession session = workspace.openEngine(
+                     configuration.seed(), configuration.studio(), "transect")) {
+            Engine engine = session.engine();
+            IrisComplex complex = engine.getComplex();
+            IrisHydrologyRuntime runtime = complex.getHydrologyRuntime();
+            if (runtime == null) {
+                throw new IllegalStateException("Dimension '" + configuration.dimension() + "' has no hydrology runtime.");
+            }
+            Files.createDirectories(configuration.output().toPath());
+            HydrologyTileKey key = new HydrologyTileKey(configuration.tileX(), configuration.tileZ());
+            long planStart = System.nanoTime();
+            HydrologyTile tile = runtime.tile(key);
+            double planMillis = (System.nanoTime() - planStart) / 1_000_000D;
+            int seaLevel = runtime.settings().seaLevel();
+            System.out.println(String.format(Locale.ROOT,
+                    "%s tile=%d,%d seed=%d courses=%d planMs=%.1f",
+                    PREFIX, key.tileX(), key.tileZ(), configuration.seed(), tile.courses().size(), planMillis));
+
+            List<CourseSummary> summaries = new ArrayList<>();
+            for (RiverCourse course : tile.courses()) {
+                if (course.type() != RiverCourseType.SURFACE) {
+                    continue;
+                }
+                List<HydrologyPoint> exposedPath = exposedPath(course);
+                if (exposedPath.size() < 2) {
+                    continue;
+                }
+                SurfaceCenterline centerline = SurfaceCenterline.densify(exposedPath);
+                Bounds bounds = Bounds.of(centerline, MARGIN);
+                Map<Long, ColumnView> columns = sampleColumns(complex, runtime, bounds);
+                CourseSummary summary = summarize(course.id(), centerline.size(), seaLevel, columns);
+                summaries.add(summary);
+                writePlan(new File(configuration.output(), "course-" + course.id() + ".png"), bounds, columns);
+                writeSections(new File(configuration.output(), "course-" + course.id() + "-sections.png"),
+                        centerline, complex, runtime);
+                System.out.println(summary.line());
+            }
+            writeSummary(new File(configuration.output(), "summary.txt"), configuration, tile, summaries);
+            boolean pass = summaries.stream().allMatch(CourseSummary::passes);
+            System.out.println(PREFIX + " " + (pass ? "PASS" : "FAIL")
+                    + " surfaceCourses=" + summaries.size()
+                    + " output=" + configuration.output().getAbsolutePath());
+            return pass;
+        }
+    }
+
+    static int[] sectionStations(int stations) {
+        int[] selected = new int[SECTIONS];
+        for (int section = 0; section < SECTIONS; section++) {
+            double fraction = 0.1D + 0.2D * section;
+            selected[section] = Math.max(0, Math.min(stations - 1, (int) Math.floor(stations * fraction)));
+        }
+        return selected;
+    }
+
+    static CourseSummary summarize(long id, int stations, int seaLevel, Map<Long, ColumnView> columns) {
+        int owned = 0;
+        int minimumCut = Integer.MAX_VALUE;
+        int maximumCut = Integer.MIN_VALUE;
+        int maximumBankStep = 0;
+        int oceanWrites = 0;
+        int uncontained = 0;
+        for (ColumnView column : columns.values()) {
+            boolean submerged = column.natural() <= seaLevel;
+            if (submerged && (column.terrain() != column.natural() || column.role().owned())) {
+                oceanWrites++;
+            }
+            if (!column.role().owned()) {
+                continue;
+            }
+            owned++;
+            minimumCut = Math.min(minimumCut, column.cut());
+            maximumCut = Math.max(maximumCut, column.cut());
+            if (column.role() == Role.CHANNEL) {
+                if (column.water() != NO_WATER && spills(column, columns)) {
+                    uncontained++;
+                }
+                continue;
+            }
+            maximumBankStep = Math.max(maximumBankStep, bankStep(column, columns.get(RiverFootprint.pack(column.x() + 1, column.z()))));
+            maximumBankStep = Math.max(maximumBankStep, bankStep(column, columns.get(RiverFootprint.pack(column.x(), column.z() + 1))));
+        }
+        if (owned == 0) {
+            minimumCut = 0;
+            maximumCut = 0;
+        }
+        return new CourseSummary(id, stations, owned, minimumCut, maximumCut, maximumBankStep, oceanWrites, uncontained);
+    }
+
+    private static boolean spills(ColumnView channel, Map<Long, ColumnView> columns) {
+        int[][] offsets = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (int[] offset : offsets) {
+            ColumnView neighbour = columns.get(RiverFootprint.pack(channel.x() + offset[0], channel.z() + offset[1]));
+            if (neighbour == null || neighbour.role() == Role.CHANNEL) {
+                continue;
+            }
+            if (neighbour.terrain() < channel.water()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int bankStep(ColumnView bank, ColumnView neighbour) {
+        if (neighbour == null || neighbour.role() == Role.CHANNEL) {
+            return 0;
+        }
+        return Math.abs(bank.terrain() - neighbour.terrain());
+    }
+
+    private static List<HydrologyPoint> exposedPath(RiverCourse course) {
+        ArrayList<HydrologyPoint> path = new ArrayList<>();
+        for (HydraulicSegment segment : course.segments()) {
+            if (!SurfaceFootprintCompiler.exposedSegment(segment)) {
+                break;
+            }
+            for (HydrologyPoint point : segment.centerline()) {
+                if (!path.isEmpty()) {
+                    HydrologyPoint last = path.getLast();
+                    if (last.x() == point.x() && last.z() == point.z()) {
+                        continue;
+                    }
+                }
+                path.add(point);
+            }
+        }
+        return path;
+    }
+
+    private static Map<Long, ColumnView> sampleColumns(IrisComplex complex, IrisHydrologyRuntime runtime, Bounds bounds) {
+        long area = (long) bounds.width() * bounds.depth();
+        if (area > MAXIMUM_PLAN_COLUMNS) {
+            throw new IllegalStateException("Course bounding box too large to render: " + area + " columns.");
+        }
+        HashMap<Long, ColumnView> columns = new HashMap<>((int) Math.min(Integer.MAX_VALUE, area * 2));
+        for (int z = bounds.minimumZ(); z <= bounds.maximumZ(); z++) {
+            for (int x = bounds.minimumX(); x <= bounds.maximumX(); x++) {
+                columns.put(RiverFootprint.pack(x, z), column(complex, runtime, x, z));
+            }
+        }
+        return columns;
+    }
+
+    private static ColumnView column(IrisComplex complex, IrisHydrologyRuntime runtime, int x, int z) {
+        Optional<HydrologyColumnSample> sample = runtime.sample(x, z);
+        int natural = sample.map(HydrologyColumnSample::naturalHeight)
+                .orElseGet(() -> (int) Math.round(complex.getNaturalHeightStream().getDouble(x, z)));
+        int terrain = (int) Math.round(complex.getHeightStream().getDouble(x, z));
+        HydrologyColumnLayer surface = sample.flatMap(HydrologyColumnSample::primarySurfaceLayer).orElse(null);
+        HydrologyColumnLayer fluid = sample.flatMap(HydrologyColumnSample::primarySurfaceFluidLayer).orElse(null);
+        int water = fluid == null ? NO_WATER : fluid.fluidHeadY();
+        return new ColumnView(x, z, natural, terrain, water, role(surface));
+    }
+
+    private static Role role(HydrologyColumnLayer layer) {
+        if (layer == null) {
+            return Role.NONE;
+        }
+        if (layer.oceanApron()) {
+            return Role.APRON;
+        }
+        if (layer.channel()) {
+            return Role.CHANNEL;
+        }
+        if (layer.shore()) {
+            return Role.SHORE;
+        }
+        return layer.terrainOwned() ? Role.BANK : Role.NONE;
+    }
+
+    private static void writePlan(File file, Bounds bounds, Map<Long, ColumnView> columns) throws IOException {
+        int minimumNatural = Integer.MAX_VALUE;
+        int maximumNatural = Integer.MIN_VALUE;
+        for (ColumnView column : columns.values()) {
+            minimumNatural = Math.min(minimumNatural, column.natural());
+            maximumNatural = Math.max(maximumNatural, column.natural());
+        }
+        double range = Math.max(1, maximumNatural - minimumNatural);
+        BufferedImage image = new BufferedImage(bounds.width(), bounds.depth(), BufferedImage.TYPE_INT_RGB);
+        for (int z = bounds.minimumZ(); z <= bounds.maximumZ(); z++) {
+            for (int x = bounds.minimumX(); x <= bounds.maximumX(); x++) {
+                ColumnView column = columns.get(RiverFootprint.pack(x, z));
+                int gray = 40 + (int) Math.round(190D * (column.natural() - minimumNatural) / range);
+                int red = gray;
+                int green = gray;
+                int blue = gray;
+                switch (column.role()) {
+                    case CHANNEL -> {
+                        red = 30;
+                        green = 90;
+                        blue = 220;
+                    }
+                    case SHORE -> {
+                        red = 214;
+                        green = 184;
+                        blue = 122;
+                    }
+                    case BANK -> {
+                        int darken = Math.min(120, column.cut() * 12);
+                        red = Math.max(0, gray - darken + 20);
+                        green = Math.max(0, gray - darken);
+                        blue = Math.max(0, gray - darken - 20);
+                    }
+                    case APRON -> {
+                        red = 120;
+                        green = 170;
+                        blue = 230;
+                    }
+                    case NONE -> {
+                        if (column.terrain() != column.natural()) {
+                            red = 220;
+                            green = 40;
+                            blue = 40;
+                        }
+                    }
+                }
+                image.setRGB(x - bounds.minimumX(), z - bounds.minimumZ(), (red << 16) | (green << 8) | blue);
+            }
+        }
+        ImageIO.write(image, "png", file);
+    }
+
+    private static void writeSections(
+            File file,
+            SurfaceCenterline centerline,
+            IrisComplex complex,
+            IrisHydrologyRuntime runtime
+    ) throws IOException {
+        int[] stations = sectionStations(centerline.size());
+        int span = HALF_SECTION * 2 + 1;
+        int width = span * SECTION_SCALE;
+        BufferedImage image = new BufferedImage(width, SECTION_ROW_HEIGHT * SECTIONS, BufferedImage.TYPE_INT_RGB);
+        for (int section = 0; section < SECTIONS; section++) {
+            int station = stations[section];
+            double normalX = centerline.normalX(station);
+            double normalZ = centerline.normalZ(station);
+            ColumnView[] profile = new ColumnView[span];
+            int minimum = Integer.MAX_VALUE;
+            int maximum = Integer.MIN_VALUE;
+            for (int offset = -HALF_SECTION; offset <= HALF_SECTION; offset++) {
+                int x = (int) Math.round(centerline.x()[station] + normalX * offset);
+                int z = (int) Math.round(centerline.z()[station] + normalZ * offset);
+                ColumnView column = column(complex, runtime, x, z);
+                profile[offset + HALF_SECTION] = column;
+                minimum = Math.min(minimum, Math.min(column.natural(), column.terrain()));
+                maximum = Math.max(maximum, Math.max(column.natural(), column.terrain()));
+                if (column.water() != NO_WATER) {
+                    maximum = Math.max(maximum, column.water());
+                }
+            }
+            int rowTop = section * SECTION_ROW_HEIGHT;
+            fill(image, 0, rowTop, width, SECTION_ROW_HEIGHT, 0x1E1E1E);
+            double scale = (SECTION_ROW_HEIGHT - 12D) / Math.max(1, maximum - minimum + 1);
+            for (int index = 0; index < span; index++) {
+                ColumnView column = profile[index];
+                int left = index * SECTION_SCALE;
+                int naturalY = rowY(rowTop, column.natural(), minimum, scale);
+                int terrainY = rowY(rowTop, column.terrain(), minimum, scale);
+                fill(image, left, naturalY, SECTION_SCALE, rowTop + SECTION_ROW_HEIGHT - naturalY, 0x555555);
+                fill(image, left, terrainY, SECTION_SCALE, rowTop + SECTION_ROW_HEIGHT - terrainY, 0x9A7B4F);
+                if (column.water() != NO_WATER && column.water() >= column.terrain()) {
+                    int waterY = rowY(rowTop, column.water(), minimum, scale);
+                    fill(image, left, waterY, SECTION_SCALE, Math.max(1, terrainY - waterY), 0x2E6BE6);
+                }
+                if (column.role() == Role.SHORE) {
+                    fill(image, left, terrainY - 2, SECTION_SCALE, 2, 0xD6B87A);
+                }
+            }
+            fill(image, HALF_SECTION * SECTION_SCALE, rowTop, 1, 6, 0xFFFFFF);
+        }
+        ImageIO.write(image, "png", file);
+    }
+
+    private static int rowY(int rowTop, int height, int minimum, double scale) {
+        return rowTop + SECTION_ROW_HEIGHT - 6 - (int) Math.round((height - minimum + 1) * scale);
+    }
+
+    private static void fill(BufferedImage image, int left, int top, int width, int height, int rgb) {
+        int right = Math.min(image.getWidth(), left + width);
+        int bottom = Math.min(image.getHeight(), top + height);
+        for (int y = Math.max(0, top); y < bottom; y++) {
+            for (int x = Math.max(0, left); x < right; x++) {
+                image.setRGB(x, y, rgb);
+            }
+        }
+    }
+
+    private static void writeSummary(
+            File file,
+            Configuration configuration,
+            HydrologyTile tile,
+            List<CourseSummary> summaries
+    ) throws IOException {
+        StringBuilder text = new StringBuilder();
+        text.append("tile=").append(tile.key().tileX()).append(',').append(tile.key().tileZ())
+                .append(" seed=").append(configuration.seed())
+                .append(" dimension=").append(configuration.dimension())
+                .append(" courses=").append(tile.courses().size())
+                .append(" surfaceCourses=").append(summaries.size())
+                .append('\n');
+        int maximumCut = 0;
+        int maximumBankStep = 0;
+        int oceanWrites = 0;
+        int uncontained = 0;
+        for (CourseSummary summary : summaries) {
+            text.append(summary.line()).append('\n');
+            maximumCut = Math.max(maximumCut, summary.maximumCut());
+            maximumBankStep = Math.max(maximumBankStep, summary.maximumBankStep());
+            oceanWrites += summary.oceanWrites();
+            uncontained += summary.uncontainedWetCells();
+        }
+        text.append("maximumCut=").append(maximumCut)
+                .append(" maximumBankStep=").append(maximumBankStep)
+                .append(" oceanWrites=").append(oceanWrites)
+                .append(" uncontainedWetCells=").append(uncontained)
+                .append('\n');
+        Files.writeString(file.toPath(), text.toString(), StandardCharsets.UTF_8);
+    }
+}

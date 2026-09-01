@@ -82,6 +82,9 @@ Provider<String> probeMaximumChunkZ = providers.gradleProperty('probeMaximumChun
 Provider<String> probeParallelism = providers.gradleProperty('probeParallelism')
 Provider<String> probeShuffleSeed = providers.gradleProperty('probeShuffleSeed')
 Provider<String> probeJfr = providers.gradleProperty('probeJfr')
+Provider<String> probeTileX = providers.gradleProperty('probeTileX')
+Provider<String> probeTileZ = providers.gradleProperty('probeTileZ')
+Provider<String> probeOutput = providers.gradleProperty('probeOutput')
 
 tasks.register('genProbe', JavaExec) {
     group = 'verification'
@@ -187,7 +190,39 @@ tasks.register('generationOrderProbe', JavaExec) {
     }
 }
 
-['hydrologyProbe', 'genProbe', 'hydrologyPackProbe', 'generationOrderProbe'].each { String taskName ->
+tasks.register('riverTransectProbe', JavaExec) {
+    group = 'verification'
+    description = 'Plans one hydrology tile over a real pack and renders every surface river as a plan, cross-sections and a summary with ocean-write and containment gates.'
+    mainClass = 'art.arcane.iris.probe.RiverTransectProbe'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs('--add-modules', 'jdk.incubator.vector', '-Djava.awt.headless=true')
+    dependsOn(':core:compileJava')
+    doFirst {
+        Map<String, Provider<String>> required = [
+            probePack: probePack,
+            probeDimension: probeDimension,
+            probeSeed: probeSeed,
+            probeTileX: probeTileX,
+            probeTileZ: probeTileZ,
+            probeOutput: probeOutput
+        ]
+        required.each { String name, Provider<String> value ->
+            if (!value.isPresent() || value.get().isBlank()) {
+                throw new GradleException("riverTransectProbe requires -P${name}=<value>")
+            }
+        }
+        args(
+            probePack.get(),
+            probeDimension.get(),
+            probeSeed.get(),
+            probeTileX.get(),
+            probeTileZ.get(),
+            probeOutput.get(),
+            probeStudio.get())
+    }
+}
+
+['hydrologyProbe', 'genProbe', 'hydrologyPackProbe', 'generationOrderProbe', 'riverTransectProbe'].each { String taskName ->
     tasks.named(taskName, JavaExec).configure { JavaExec task ->
         doFirst {
             if (probeJfr.isPresent()) {
