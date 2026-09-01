@@ -1,10 +1,10 @@
 package art.arcane.iris.engine.hydrology;
 
-final class HydrologyHash {
+public final class HydrologyHash {
     private HydrologyHash() {
     }
 
-    static long mix(long seed, long... values) {
+    public static long mix(long seed, long... values) {
         long mixed = avalanche(seed ^ 0x9e3779b97f4a7c15L);
         for (long value : values) {
             mixed = avalanche(mixed ^ avalanche(value + 0x9e3779b97f4a7c15L));
@@ -12,7 +12,7 @@ final class HydrologyHash {
         return mixed;
     }
 
-    static long text(String value) {
+    public static long text(String value) {
         long hash = 0xcbf29ce484222325L;
         for (int index = 0; index < value.length(); index++) {
             hash ^= value.charAt(index);
@@ -21,11 +21,11 @@ final class HydrologyHash {
         return avalanche(hash);
     }
 
-    static double unit(long value) {
+    public static double unit(long value) {
         return (avalanche(value) >>> 11) * 0x1.0p-53;
     }
 
-    static int between(long value, int minimum, int maximum) {
+    public static int between(long value, int minimum, int maximum) {
         if (minimum > maximum) {
             throw new IllegalArgumentException("minimum cannot exceed maximum.");
         }
