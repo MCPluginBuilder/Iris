@@ -95,13 +95,9 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         this.settings = createSettings(context.dimension(), hydrology);
         HydrologyGeometrySampler geometrySampler = geometrySampler(context, hydrology);
         IrisHydrologyRoutingTerrainSampler.Sources terrainSources = new IrisHydrologyRoutingTerrainSampler.Sources(
-                (int x, int z, double rawNaturalHeight) -> ProceduralStream.bypass2DCaches(
-                        () -> createTerrainBasis(x, z, rawNaturalHeight)
-                ),
+                this::createTerrainBasis,
                 (int x, int z) -> context.naturalHeightProvider().sample(x, z),
-                (int x, int z) -> ProceduralStream.bypass2DCaches(
-                        () -> context.naturalOceanClassifier().isOcean(x, z)
-                )
+                (int x, int z) -> context.naturalOceanClassifier().isOcean(x, z)
         );
         this.routingTerrainSampler = new IrisHydrologyRoutingTerrainSampler(
                 terrainSources,
@@ -370,7 +366,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 return cached;
             }
         }
-        HydrologyTerrainSample sampled = ProceduralStream.bypass2DCaches(() -> createDetailedTerrainSample(x, z));
+        HydrologyTerrainSample sampled = createDetailedTerrainSample(x, z);
         synchronized (terrainSampleLock) {
             HydrologyTerrainSample existing = terrainSamples.get(packed);
             if (existing != null) {

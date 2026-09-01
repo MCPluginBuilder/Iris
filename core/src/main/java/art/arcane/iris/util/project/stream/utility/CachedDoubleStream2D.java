@@ -34,9 +34,6 @@ public class CachedDoubleStream2D extends BasicStream<Double> implements Procedu
 
     @Override
     public Double get(double x, double z) {
-        if (ProceduralStream.is2DCacheBypassActive()) {
-            return stream.getDouble((int) x, (int) z);
-        }
         return cache.get((int) x, (int) z);
     }
 
@@ -47,9 +44,6 @@ public class CachedDoubleStream2D extends BasicStream<Double> implements Procedu
 
     @Override
     public double getDouble(double x, double z) {
-        if (ProceduralStream.is2DCacheBypassActive()) {
-            return stream.getDouble((int) x, (int) z);
-        }
         return cache.get((int) x, (int) z);
     }
 
