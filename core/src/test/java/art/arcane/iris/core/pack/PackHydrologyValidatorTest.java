@@ -50,14 +50,15 @@ public class PackHydrologyValidatorTest {
                   "derivative": "minecraft:river",
                   "riverPolicy": {
                     "profiles": ["default"],
-                    "bankBiomes": ["river_dry"]
+                    "bankBiomes": ["river_bank"],
+                    "bankMultiplier": 1.25
                   }
                 }
                 """);
         write(pack, "biomes/river_shore.json",
                 "{\"name\":\"Shore\",\"derivative\":\"minecraft:river\"}");
-        write(pack, "biomes/river_dry.json",
-                "{\"name\":\"Dry\",\"derivative\":\"minecraft:plains\"}");
+        write(pack, "biomes/river_bank.json",
+                "{\"name\":\"Bank\",\"derivative\":\"minecraft:plains\"}");
 
         PackHydrologyValidator.Validation result = validate(pack);
 
@@ -66,7 +67,321 @@ public class PackHydrologyValidatorTest {
     }
 
     @Test
-    public void rejectsRoutingGeometryHydraulicComplexityAndCapabilityFailures() throws Exception {
+    public void acceptsEverySchemaBoundAtItsMinimum() throws Exception {
+        File pack = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "routing": {
+                    "tileSize": 256,
+                    "sampleSpacing": 8,
+                    "maximumRouteLength": 256,
+                    "minimumSurfaceCourseLength": 0,
+                    "minimumUndergroundCourseLength": 0,
+                    "maximumOutletsPerTile": 1,
+                    "oceanOutlets": true,
+                    "valleyPreference": 0,
+                    "uphillPenalty": 0,
+                    "slopePenalty": 0,
+                    "confluenceAttraction": 0
+                  },
+                  "surface": {
+                    "channel": {
+                      "width": {"min": 1, "max": 1},
+                      "depth": {"min": 1, "max": 1},
+                      "inset": 0,
+                      "maximumIncision": 1,
+                      "roughness": 0,
+                      "roughnessWavelength": 4
+                    },
+                    "banks": {
+                      "freeboard": 0,
+                      "shoreWidth": 0.5,
+                      "blendSlope": 0.5,
+                      "minimumBlendWidth": 1,
+                      "maximumBlendWidth": 1,
+                      "exposeCutStrata": false
+                    },
+                    "flow": {"cascadeRun": 1, "waterfallMinimumDrop": 2},
+                    "mouths": {"flareRatio": 1, "maximumOceanApron": 0}
+                  },
+                  "underground": {"mouthLevelingDistance": 16}
+                }
+                """, "\"bankMultiplier\": 0"));
+
+        PackHydrologyValidator.Validation result = validate(pack);
+
+        assertTrue(result.errors().toString(), result.errors().isEmpty());
+    }
+
+    @Test
+    public void acceptsEverySchemaBoundAtItsMaximum() throws Exception {
+        File pack = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "routing": {
+                    "tileSize": 8192,
+                    "sampleSpacing": 64,
+                    "maximumRouteLength": 32768,
+                    "minimumSurfaceCourseLength": 32768,
+                    "minimumUndergroundCourseLength": 32768,
+                    "maximumOutletsPerTile": 256,
+                    "oceanOutlets": true,
+                    "valleyPreference": 8,
+                    "uphillPenalty": 128,
+                    "slopePenalty": 16,
+                    "confluenceAttraction": 1
+                  },
+                  "surface": {
+                    "channel": {
+                      "width": {"min": 128, "max": 128},
+                      "depth": {"min": 64, "max": 64},
+                      "inset": 3,
+                      "maximumIncision": 32,
+                      "roughness": 1,
+                      "roughnessWavelength": 64
+                    },
+                    "banks": {
+                      "freeboard": 4,
+                      "shoreWidth": 6,
+                      "blendSlope": 12,
+                      "minimumBlendWidth": 64,
+                      "maximumBlendWidth": 64,
+                      "exposeCutStrata": true
+                    },
+                    "flow": {"cascadeRun": 8, "waterfallMinimumDrop": 32},
+                    "mouths": {"flareRatio": 4, "maximumOceanApron": 32}
+                  },
+                  "underground": {"mouthLevelingDistance": 512}
+                }
+                """, "\"bankMultiplier\": 4"));
+
+        PackHydrologyValidator.Validation result = validate(pack);
+
+        assertTrue(result.errors().toString(), result.errors().isEmpty());
+    }
+
+    @Test
+    public void rejectsRoutingWeightsSpacingAndCourseLengths() throws Exception {
+        File above = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "routing": {
+                    "tileSize": 2048,
+                    "sampleSpacing": 24,
+                    "maximumRouteLength": 256,
+                    "minimumSurfaceCourseLength": 512,
+                    "minimumUndergroundCourseLength": 512,
+                    "maximumOutletsPerTile": 0,
+                    "valleyPreference": 8.5,
+                    "uphillPenalty": 128.5,
+                    "slopePenalty": 16.5,
+                    "confluenceAttraction": 1.5,
+                    "oceanOutlets": false,
+                    "inlandOutlets": []
+                  }
+                }
+                """));
+        File below = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "routing": {
+                    "tileSize": 128,
+                    "sampleSpacing": 4,
+                    "maximumRouteLength": 128,
+                    "valleyPreference": -0.5,
+                    "uphillPenalty": -0.5,
+                    "slopePenalty": -0.5,
+                    "confluenceAttraction": -0.5
+                  }
+                }
+                """));
+
+        PackHydrologyValidator.Validation aboveResult = validate(above);
+        PackHydrologyValidator.Validation belowResult = validate(below);
+
+        assertContains(aboveResult.errors(), ".sampleSpacing must be one of [8, 16, 32, 64].");
+        assertContains(aboveResult.errors(), "tileSize must be divisible by sampleSpacing");
+        assertContains(aboveResult.errors(), "minimumSurfaceCourseLength must not exceed maximumRouteLength");
+        assertContains(aboveResult.errors(), "minimumUndergroundCourseLength must not exceed maximumRouteLength");
+        assertContains(aboveResult.errors(), "maximumOutletsPerTile must be at least 1");
+        assertContains(aboveResult.errors(), "valleyPreference must be at most 8.0");
+        assertContains(aboveResult.errors(), "uphillPenalty must be at most 128.0");
+        assertContains(aboveResult.errors(), "slopePenalty must be at most 16.0");
+        assertContains(aboveResult.errors(), "confluenceAttraction must be at most 1.0");
+        assertContains(aboveResult.errors(), "must enable oceanOutlets or select at least one");
+        assertContains(belowResult.errors(), "tileSize must be at least 256");
+        assertContains(belowResult.errors(), "sampleSpacing must be at least 8");
+        assertContains(belowResult.errors(), "maximumRouteLength must be at least 256");
+        assertContains(belowResult.errors(), "valleyPreference must be at least 0.0");
+        assertContains(belowResult.errors(), "uphillPenalty must be at least 0.0");
+        assertContains(belowResult.errors(), "slopePenalty must be at least 0.0");
+        assertContains(belowResult.errors(), "confluenceAttraction must be at least 0.0");
+    }
+
+    @Test
+    public void rejectsSurfaceChannelValuesOutsideTheirBounds() throws Exception {
+        File above = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "surface": {
+                    "channel": {
+                      "width": {"min": 20, "max": 2},
+                      "depth": {"min": 2, "max": 65},
+                      "inset": 4,
+                      "maximumIncision": 33,
+                      "roughness": 1.5,
+                      "roughnessWavelength": 65
+                    }
+                  }
+                }
+                """));
+        File below = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "surface": {
+                    "channel": {
+                      "width": {"min": 0, "max": 8},
+                      "depth": {"min": 0, "max": 4},
+                      "inset": -1,
+                      "maximumIncision": 0,
+                      "roughness": -0.1,
+                      "roughnessWavelength": 3
+                    }
+                  }
+                }
+                """));
+
+        PackHydrologyValidator.Validation aboveResult = validate(above);
+        PackHydrologyValidator.Validation belowResult = validate(below);
+
+        assertContains(aboveResult.errors(), "width.min must not exceed max");
+        assertContains(aboveResult.errors(), "depth.max must be at most 64.0");
+        assertContains(aboveResult.errors(), "inset must be at most 3");
+        assertContains(aboveResult.errors(), "maximumIncision must be at most 32");
+        assertContains(aboveResult.errors(), "roughness must be at most 1.0");
+        assertContains(aboveResult.errors(), "roughnessWavelength must be at most 64");
+        assertContains(belowResult.errors(), "width.min must be at least 1.0");
+        assertContains(belowResult.errors(), "depth.min must be at least 1.0");
+        assertContains(belowResult.errors(), "inset must be at least 0");
+        assertContains(belowResult.errors(), "maximumIncision must be at least 1");
+        assertContains(belowResult.errors(), "roughness must be at least 0.0");
+        assertContains(belowResult.errors(), "roughnessWavelength must be at least 4");
+    }
+
+    @Test
+    public void rejectsSurfaceBankValuesOutsideTheirBounds() throws Exception {
+        File above = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "surface": {
+                    "banks": {
+                      "freeboard": 5,
+                      "shoreWidth": 6.5,
+                      "blendSlope": 12.5,
+                      "minimumBlendWidth": 40,
+                      "maximumBlendWidth": 65,
+                      "exposeCutStrata": "yes"
+                    }
+                  }
+                }
+                """));
+        File below = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "surface": {
+                    "banks": {
+                      "freeboard": -1,
+                      "shoreWidth": 0.4,
+                      "blendSlope": 0.4,
+                      "minimumBlendWidth": 0,
+                      "maximumBlendWidth": 8
+                    }
+                  }
+                }
+                """));
+        File unordered = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "surface": {
+                    "banks": {"minimumBlendWidth": 20, "maximumBlendWidth": 10}
+                  }
+                }
+                """));
+
+        PackHydrologyValidator.Validation aboveResult = validate(above);
+        PackHydrologyValidator.Validation belowResult = validate(below);
+        PackHydrologyValidator.Validation unorderedResult = validate(unordered);
+
+        assertContains(aboveResult.errors(), "freeboard must be at most 4");
+        assertContains(aboveResult.errors(), "shoreWidth must be at most 6.0");
+        assertContains(aboveResult.errors(), "blendSlope must be at most 12.0");
+        assertContains(aboveResult.errors(), "maximumBlendWidth must be at most 64");
+        assertContains(aboveResult.errors(), "exposeCutStrata must be a boolean");
+        assertContains(belowResult.errors(), "freeboard must be at least 0");
+        assertContains(belowResult.errors(), "shoreWidth must be at least 0.5");
+        assertContains(belowResult.errors(), "blendSlope must be at least 0.5");
+        assertContains(belowResult.errors(), "minimumBlendWidth must be at least 1");
+        assertContains(unorderedResult.errors(), "minimumBlendWidth must not exceed maximumBlendWidth");
+    }
+
+    @Test
+    public void rejectsSurfaceFlowAndMouthValuesOutsideTheirBounds() throws Exception {
+        File above = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "surface": {
+                    "flow": {"cascadeRun": 9, "waterfallMinimumDrop": 33},
+                    "mouths": {"flareRatio": 4.5, "maximumOceanApron": 33}
+                  }
+                }
+                """));
+        File below = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "surface": {
+                    "flow": {"cascadeRun": 0, "waterfallMinimumDrop": 1},
+                    "mouths": {"flareRatio": 0.5, "maximumOceanApron": -1}
+                  }
+                }
+                """));
+
+        PackHydrologyValidator.Validation aboveResult = validate(above);
+        PackHydrologyValidator.Validation belowResult = validate(below);
+
+        assertContains(aboveResult.errors(), "cascadeRun must be at most 8");
+        assertContains(aboveResult.errors(), "waterfallMinimumDrop must be at most 32");
+        assertContains(aboveResult.errors(), "flareRatio must be at most 4.0");
+        assertContains(aboveResult.errors(), "maximumOceanApron must be at most 32");
+        assertContains(belowResult.errors(), "cascadeRun must be at least 1");
+        assertContains(belowResult.errors(), "waterfallMinimumDrop must be at least 2");
+        assertContains(belowResult.errors(), "flareRatio must be at least 1.0");
+        assertContains(belowResult.errors(), "maximumOceanApron must be at least 0");
+    }
+
+    @Test
+    public void rejectsUndergroundMouthLevelingDistanceOutsideItsBounds() throws Exception {
+        File above = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "underground": {"mouthLevelingDistance": 513}
+                }
+                """));
+        File below = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "underground": {"mouthLevelingDistance": 15}
+                }
+                """));
+
+        PackHydrologyValidator.Validation aboveResult = validate(above);
+        PackHydrologyValidator.Validation belowResult = validate(below);
+
+        assertContains(aboveResult.errors(), "mouthLevelingDistance must be at most 512");
+        assertContains(belowResult.errors(), "mouthLevelingDistance must be at least 16");
+    }
+
+    @Test
+    public void rejectsGeometryComplexityAndCapabilityFailures() throws Exception {
         File pack = pack("""
                 {
                   "regions": ["region"],
@@ -80,14 +395,7 @@ public class PackHydrologyValidatorTest {
                       "routing": {
                         "tileSize": 8192,
                         "sampleSpacing": 8,
-                        "refinementSpacing": 3,
-                        "branching": {
-                          "minimumSurfaceCourseLength": 32769,
-                          "minimumUndergroundCourseLength": 32769
-                        },
-                        "maximumRouteLength": 32768,
-                        "oceanOutlets": false,
-                        "inlandOutlets": []
+                        "maximumRouteLength": 32768
                       },
                       "geometry": {
                         "meanders": {
@@ -95,7 +403,7 @@ public class PackHydrologyValidatorTest {
                           "detailWavelength": 129,
                           "maximumTurnDegrees": 151
                         },
-                        "surface": {
+                        "underground": {
                           "bedRoundness": 7,
                           "bedRoughness": -0.1,
                           "wallRoughness": 1.1,
@@ -113,24 +421,7 @@ public class PackHydrologyValidatorTest {
                       },
                       "surface": {
                         "sources": {"density": 64, "minimumElevation": 128, "minimumPerTile": 64,
-                          "minimumSpacing": 8193},
-                        "channel": {
-                          "width": {"min": 20, "max": 2},
-                          "depth": {"min": 2, "max": 5},
-                          "surfaceInset": {"min": 0, "max": 65},
-                          "maximumIncision": 65,
-                          "shoreWidth": 3,
-                          "terrainBlendWidth": {"min": 3, "max": 65}
-                        },
-                        "hydraulics": {
-                          "targetPoolLength": {"min": 8, "max": 32},
-                          "riffleDrop": 5,
-                          "maximumGradualDrop": 3,
-                          "maximumGradualLength": 2,
-                          "waterfallMinimumDrop": 8
-                        },
-                        "ridgeTunnels": {"maximumLength": 4097, "headroom": 4},
-                        "mouths": {"levelingDistance": 4, "maximumOceanApron": 8}
+                          "minimumSpacing": 8193}
                       },
                       "underground": {
                         "sources": {"density": 64, "minimumPerTile": 64},
@@ -152,7 +443,6 @@ public class PackHydrologyValidatorTest {
 
         PackHydrologyValidator.Validation result = validate(pack);
 
-        assertContains(result.errors(), "sampleSpacing must be divisible by refinementSpacing");
         assertContains(result.errors(), "primaryWavelength must be at least 8");
         assertContains(result.errors(), "detailWavelength must be at most 128");
         assertContains(result.errors(), "detailWavelength must not exceed primaryWavelength");
@@ -161,8 +451,6 @@ public class PackHydrologyValidatorTest {
         assertContains(result.errors(), "bedRoughness must be at least 0");
         assertContains(result.errors(), "wallRoughness must be at most 1");
         assertContains(result.errors(), "roughnessWavelength must be at least 3");
-        assertContains(result.errors(), "minimumSurfaceCourseLength must be at most 32768");
-        assertContains(result.errors(), "minimumUndergroundCourseLength must be at most 32768");
         assertContains(result.errors(), "cascadeRunPerBlock must be at most 16");
         assertContains(result.errors(), "cascadeExponent must be at least 0.25");
         assertContains(result.errors(), "maximumCascadeStep must be at most 4");
@@ -171,18 +459,6 @@ public class PackHydrologyValidatorTest {
         assertContains(result.errors(), "basinWidthRatio must be at most 4");
         assertContains(result.errors(), "maximumBasinDepth must be at most 32");
         assertContains(result.errors(), "minimumSpacing must be at most 8192");
-        assertContains(result.errors(), "must enable oceanOutlets or select at least one");
-        assertContains(result.errors(), "shoreWidth must be at most 2");
-        assertContains(result.errors(), "terrainBlendWidth.min must be at least 4");
-        assertContains(result.errors(), "terrainBlendWidth.max must be at most 64");
-        assertContains(result.errors(), "width.min must not exceed max");
-        assertContains(result.errors(), "surfaceInset.min must be at least 1");
-        assertContains(result.errors(), "surfaceInset.max must be at most 64");
-        assertContains(result.errors(), "maximumIncision must be at most 64");
-        assertContains(result.errors(), "riffleDrop must not exceed maximumGradualDrop");
-        assertContains(result.errors(), "waterfallMinimumDrop must equal maximumGradualDrop plus one");
-        assertContains(result.errors(), "maximumGradualLength must be at least maximumGradualDrop");
-        assertContains(result.errors(), "maximumLength must be at most 4096");
         assertContains(result.errors(), "coarse lattice nodes");
         assertContains(result.errors(), "route samples per tile");
         assertContains(result.errors(), "requires useMantle to be true");
@@ -267,12 +543,13 @@ public class PackHydrologyValidatorTest {
                     "surfaceBiomes": ["missing"],
                     "mouthBiomes": "river",
                     "shoreBiomes": ["biome", "biome"],
-                    "bankBiomes": [17],
+                    "bankBiomes": ["missing_bank"],
                     "floodedCaveBiomes": ["../escape"],
                     "widthMultiplier": 0,
                     "depthMultiplier": 17,
                     "incisionMultiplier": -1,
-                    "routingMultiplier": -1
+                    "routingMultiplier": -1,
+                    "bankMultiplier": 4.5
                   }
                 }
                 """);
@@ -286,12 +563,34 @@ public class PackHydrologyValidatorTest {
         assertContains(result.errors(), "surfaceBiomes[0] references missing biome 'missing'");
         assertContains(result.errors(), ".mouthBiomes must be an array or null");
         assertContains(result.errors(), "shoreBiomes[1] duplicates biome 'biome'");
-        assertContains(result.errors(), "bankBiomes[0] must name a biome resource");
+        assertContains(result.errors(), "bankBiomes[0] references missing biome 'missing_bank'");
         assertContains(result.errors(), "floodedCaveBiomes[0] must name a biome resource");
         assertContains(result.errors(), "widthMultiplier must be at least");
         assertContains(result.errors(), "depthMultiplier must be at most");
         assertContains(result.errors(), "incisionMultiplier must be at least");
         assertContains(result.errors(), "routingMultiplier must be at least");
+        assertContains(result.errors(), "bankMultiplier must be at most 4.0");
+    }
+
+    @Test
+    public void rejectsNegativeBankMultiplierAndNonBiomeBankReferences() throws Exception {
+        File pack = pack("""
+                {
+                  "regions": ["region"],
+                  "hydrology": {
+                    "rivers": {"enabled": true}
+                  },
+                  "riverPolicy": {
+                    "bankBiomes": [17],
+                    "bankMultiplier": -0.5
+                  }
+                }
+                """);
+
+        PackHydrologyValidator.Validation result = validate(pack);
+
+        assertContains(result.errors(), "bankBiomes[0] must name a biome resource");
+        assertContains(result.errors(), "bankMultiplier must be at least 0.0");
     }
 
     @Test
@@ -706,9 +1005,8 @@ public class PackHydrologyValidatorTest {
                     "rivers": {
                       "enabled": true,
                       "routing": {
-                        "tileSize": 2048,
-                        "sampleSpacing": 63,
-                        "refinementSpacing": 8
+                        "tileSize": 1000,
+                        "sampleSpacing": 64
                       },
                       "profiles": [
                         {
@@ -749,6 +1047,23 @@ public class PackHydrologyValidatorTest {
         return pack;
     }
 
+    private String riversDimension(String riversJson) {
+        return riversDimension(riversJson, null);
+    }
+
+    private String riversDimension(String riversJson, String policyEntries) {
+        String policy = policyEntries == null ? "" : ",\n\"riverPolicy\": {" + policyEntries + "}";
+        return """
+                {
+                  "regions": ["region"],
+                  "dimensionHeight": {"min": -256, "max": 512},
+                  "hydrology": {
+                    "rivers": %s
+                  }%s
+                }
+                """.formatted(riversJson, policy);
+    }
+
     private String canonicalDimension() {
         return """
                 {
@@ -760,50 +1075,86 @@ public class PackHydrologyValidatorTest {
                       "routing": {
                         "tileSize": 2048,
                         "sampleSpacing": 64,
-                        "refinementSpacing": 8,
                         "maximumRouteLength": 8192,
+                        "minimumSurfaceCourseLength": 384,
+                        "minimumUndergroundCourseLength": 192,
+                        "maximumOutletsPerTile": 4,
                         "oceanOutlets": true,
-                        "inlandOutlets": ["SINKHOLE_GROTTO"]
+                        "inlandOutlets": ["SINKHOLE_GROTTO"],
+                        "valleyPreference": 1.5,
+                        "uphillPenalty": 24,
+                        "slopePenalty": 2,
+                        "confluenceAttraction": 0.2
+                      },
+                      "geometry": {
+                        "meanders": {
+                          "primaryWavelength": 64,
+                          "detailWavelength": 12,
+                          "primaryStrength": 0.34,
+                          "detailStrength": 0.42,
+                          "maximumOffsetRatio": 0.48,
+                          "smoothingPasses": 1,
+                          "maximumTurnDegrees": 82
+                        },
+                        "underground": {
+                          "bedRoundness": 2.4,
+                          "bedRoughness": 0.28,
+                          "wallRoughness": 0.24,
+                          "roughnessWavelength": 11
+                        },
+                        "grottos": {"bedRoundness": 2.4},
+                        "drops": {
+                          "cascadeRunPerBlock": 2,
+                          "cascadeExponent": 1.4,
+                          "maximumCascadeStep": 2,
+                          "flowWidthRatio": 0.45,
+                          "maximumFlowDepth": 2,
+                          "basinWidthRatio": 1.8,
+                          "maximumBasinDepth": 8
+                        }
                       },
                       "surface": {
                         "enabled": true,
                         "sources": {
                           "density": 0.5,
                           "minimumElevation": 88,
-                          "minimumPerTile": 1
+                          "minimumPerTile": 1,
+                          "minimumSpacing": 384
                         },
                         "channel": {
-                          "width": {"min": 4, "max": 32, "style": {"style": "STATIC"}},
-                          "depth": {"min": 2, "max": 5},
-                          "maximumIncision": 12,
+                          "width": {"min": 4, "max": 8, "style": {"style": "STATIC"}},
+                          "depth": {"min": 2, "max": 4},
+                          "inset": 1,
+                          "maximumIncision": 10,
+                          "roughness": 0.25,
+                          "roughnessWavelength": 16
+                        },
+                        "banks": {
+                          "freeboard": 1,
                           "shoreWidth": 1.5,
-                          "terrainBlendWidth": {"min": 4, "max": 10}
+                          "blendSlope": 3,
+                          "minimumBlendWidth": 4,
+                          "maximumBlendWidth": 32,
+                          "exposeCutStrata": true
                         },
-                        "hydraulics": {
-                          "targetPoolLength": {"min": 48, "max": 160},
-                          "riffleDrop": 1,
-                          "maximumGradualDrop": 3,
-                          "maximumGradualLength": 10,
-                          "waterfallMinimumDrop": 4
-                        },
-                        "ridgeTunnels": {
-                          "enabled": true,
-                          "maximumLength": 192,
-                          "headroom": 10
+                        "flow": {
+                          "cascadeRun": 2,
+                          "waterfallMinimumDrop": 6
                         },
                         "mouths": {
-                          "levelingDistance": 64,
-                          "maximumOceanApron": 2
+                          "flareRatio": 1.6,
+                          "maximumOceanApron": 8
                         }
                       },
                       "underground": {
                         "enabled": true,
-                        "sources": {"density": 0.5, "minimumPerTile": 1},
+                        "sources": {"density": 0.5, "minimumPerTile": 1, "minimumSpacing": 512},
                         "fluidLevel": {"min": -48, "max": 50},
-                        "channelWidth": {"min": 4, "max": 18},
-                        "depth": {"min": 2, "max": 5},
+                        "channelWidth": {"min": 3, "max": 8},
+                        "depth": {"min": 1, "max": 3},
                         "headroom": {"min": 6, "max": 14},
-                        "connectToExistingCaves": true
+                        "connectToExistingCaves": true,
+                        "mouthLevelingDistance": 64
                       },
                       "grottos": {
                         "coastal": {
@@ -859,12 +1210,13 @@ public class PackHydrologyValidatorTest {
                     "surfaceBiomes": ["river_surface"],
                     "mouthBiomes": ["river_surface"],
                     "shoreBiomes": ["river_shore"],
-                    "bankBiomes": ["river_dry"],
-                    "floodedCaveBiomes": ["river_dry"],
+                    "bankBiomes": ["river_bank"],
+                    "floodedCaveBiomes": ["river_bank"],
                     "widthMultiplier": 1,
                     "depthMultiplier": 1,
                     "incisionMultiplier": 1,
-                    "routingMultiplier": 1
+                    "routingMultiplier": 1,
+                    "bankMultiplier": 1
                   }
                 }
                 """;

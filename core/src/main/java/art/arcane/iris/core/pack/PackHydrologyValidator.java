@@ -28,6 +28,8 @@ final class PackHydrologyValidator {
     private static final long MAX_LATTICE_NODES = 65_536L;
     private static final long MAX_ROUTE_SAMPLES = 262_144L;
     private static final int MAX_REACHABLE_BIOMES = 65_536;
+    private static final int CORRIDOR_SAMPLE_SPACING = 4;
+    private static final List<Integer> SAMPLE_SPACINGS = List.of(8, 16, 32, 64);
     private static final IrisCoastalRiverGrottoConfig DEFAULT_COASTAL_GROTTO =
             new IrisCoastalRiverGrottoConfig();
     private static final IrisInlandRiverGrottoConfig DEFAULT_INLAND_GROTTO =
@@ -180,7 +182,7 @@ final class PackHydrologyValidator {
         }
         SourceBudget surfaceBudget = surface == null
                 ? SourceBudget.defaults()
-                : validateSurface(path + ".surface", surface, dimension, routingValues, errors, warnings);
+                : validateSurface(path + ".surface", surface, dimension, errors, warnings);
         SourceBudget undergroundBudget = underground == null
                 ? SourceBudget.defaults()
                 : validateUnderground(path + ".underground", underground, dimension, errors, warnings);
@@ -198,15 +200,11 @@ final class PackHydrologyValidator {
 
     private static void validateGeometry(String path, JSONObject geometry, List<String> errors) {
         JSONObject meanders = nestedObject(geometry, "meanders", path, errors);
-        JSONObject surface = nestedObject(geometry, "surface", path, errors);
         JSONObject underground = nestedObject(geometry, "underground", path, errors);
         JSONObject grottos = nestedObject(geometry, "grottos", path, errors);
         JSONObject drops = nestedObject(geometry, "drops", path, errors);
         if (meanders != null) {
             validateMeanders(path + ".meanders", meanders, errors);
-        }
-        if (surface != null) {
-            validateChannelShape(path + ".surface", surface, errors);
         }
         if (underground != null) {
             validateChannelShape(path + ".underground", underground, errors);
@@ -252,53 +250,47 @@ final class PackHydrologyValidator {
 
     private static RoutingValues validateRouting(String path, JSONObject routing, List<String> errors) {
         PackJsonFieldChecks.validateOptionalIntegerRange(path, routing, "tileSize", 256, 8192, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, routing, "sampleSpacing", 8, 512, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, routing, "refinementSpacing", 1, 64, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, routing, "sampleSpacing", 8, 64, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, routing, "maximumRouteLength", 256, 32768, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path,
+                routing,
+                "minimumSurfaceCourseLength",
+                0,
+                32768,
+                errors
+        );
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path,
+                routing,
+                "minimumUndergroundCourseLength",
+                0,
+                32768,
+                errors
+        );
         PackJsonFieldChecks.validateOptionalIntegerRange(path, routing, "maximumOutletsPerTile", 1, 256, errors);
         PackJsonFieldChecks.validateOptionalBoolean(path, routing, "oceanOutlets", errors);
-
-        JSONObject branching = nestedObject(routing, "branching", path, errors);
-        if (branching != null) {
-            PackJsonFieldChecks.validateOptionalIntegerRange(
-                    path + ".branching",
-                    branching,
-                    "minimumSurfaceCourseLength",
-                    0,
-                    32768,
-                    errors
-            );
-            PackJsonFieldChecks.validateOptionalIntegerRange(
-                    path + ".branching",
-                    branching,
-                    "minimumUndergroundCourseLength",
-                    0,
-                    32768,
-                    errors
-            );
-        }
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, routing, "valleyPreference", 0D, 8D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, routing, "uphillPenalty", 0D, 128D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, routing, "slopePenalty", 0D, 16D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, routing, "confluenceAttraction", 0D, 1D, errors);
 
         int tileSize = integerValue(routing, "tileSize", 2048);
         int sampleSpacing = integerValue(routing, "sampleSpacing", 64);
-        int refinementSpacing = integerValue(routing, "refinementSpacing", 8);
         int maximumRouteLength = integerValue(routing, "maximumRouteLength", 16384);
-        int minimumSurfaceCourseLength = branching == null
-                ? 384
-                : integerValue(branching, "minimumSurfaceCourseLength", 384);
-        int minimumUndergroundCourseLength = branching == null
-                ? 192
-                : integerValue(branching, "minimumUndergroundCourseLength", 192);
+        int minimumSurfaceCourseLength = integerValue(routing, "minimumSurfaceCourseLength", 384);
+        int minimumUndergroundCourseLength = integerValue(routing, "minimumUndergroundCourseLength", 192);
+        if (!SAMPLE_SPACINGS.contains(sampleSpacing)) {
+            errors.add(path + ".sampleSpacing must be one of " + SAMPLE_SPACINGS + ".");
+        }
         if (sampleSpacing > 0 && tileSize % sampleSpacing != 0) {
             errors.add(path + ".tileSize must be divisible by sampleSpacing.");
         }
-        if (refinementSpacing > 0 && sampleSpacing % refinementSpacing != 0) {
-            errors.add(path + ".sampleSpacing must be divisible by refinementSpacing.");
-        }
         if (minimumSurfaceCourseLength > maximumRouteLength) {
-            errors.add(path + ".branching.minimumSurfaceCourseLength must not exceed maximumRouteLength.");
+            errors.add(path + ".minimumSurfaceCourseLength must not exceed maximumRouteLength.");
         }
         if (minimumUndergroundCourseLength > maximumRouteLength) {
-            errors.add(path + ".branching.minimumUndergroundCourseLength must not exceed maximumRouteLength.");
+            errors.add(path + ".minimumUndergroundCourseLength must not exceed maximumRouteLength.");
         }
 
         Set<String> inlandOutlets = validateEnumArray(
@@ -312,28 +304,21 @@ final class PackHydrologyValidator {
         if (!oceanOutlets && inlandOutlets.isEmpty()) {
             errors.add(path + " must enable oceanOutlets or select at least one inlandOutlets entry.");
         }
-        return new RoutingValues(
-                tileSize,
-                sampleSpacing,
-                refinementSpacing,
-                maximumRouteLength,
-                inlandOutlets
-        );
+        return new RoutingValues(tileSize, sampleSpacing, maximumRouteLength, inlandOutlets);
     }
 
     private static SourceBudget validateSurface(
             String path,
             JSONObject surface,
             JSONObject dimension,
-            RoutingValues routing,
             List<String> errors,
             List<String> warnings
     ) {
         PackJsonFieldChecks.validateOptionalBoolean(path, surface, "enabled", errors);
         JSONObject sources = nestedObject(surface, "sources", path, errors);
         JSONObject channel = nestedObject(surface, "channel", path, errors);
-        JSONObject hydraulics = nestedObject(surface, "hydraulics", path, errors);
-        JSONObject ridgeTunnels = nestedObject(surface, "ridgeTunnels", path, errors);
+        JSONObject banks = nestedObject(surface, "banks", path, errors);
+        JSONObject flow = nestedObject(surface, "flow", path, errors);
         JSONObject mouths = nestedObject(surface, "mouths", path, errors);
 
         SourceBudget budget = sources == null
@@ -342,14 +327,14 @@ final class PackHydrologyValidator {
         if (channel != null) {
             validateSurfaceChannel(path + ".channel", channel, errors);
         }
-        if (hydraulics != null) {
-            validateHydraulics(path + ".hydraulics", hydraulics, errors);
+        if (banks != null) {
+            validateSurfaceBanks(path + ".banks", banks, errors);
         }
-        if (ridgeTunnels != null) {
-            validateRidgeTunnels(path + ".ridgeTunnels", ridgeTunnels, routing, errors);
+        if (flow != null) {
+            validateSurfaceFlow(path + ".flow", flow, errors);
         }
         if (mouths != null) {
-            validateMouths(path + ".mouths", mouths, routing, errors);
+            validateMouths(path + ".mouths", mouths, errors);
         }
 
         boolean surfaceEnabled = booleanValue(surface, "enabled", true);
@@ -368,87 +353,34 @@ final class PackHydrologyValidator {
     }
 
     private static void validateSurfaceChannel(String path, JSONObject channel, List<String> errors) {
-        validateRange(path, channel, "width", 1D, 64D, 4D, 12D, errors);
-        validateRange(path, channel, "depth", 1D, 32D, 1D, 4D, errors);
-        validateRange(path, channel, "surfaceInset", 1D, 64D, 3D, 7D, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "maximumIncision", 0, 64, errors);
-        PackJsonFieldChecks.validateOptionalDoubleRange(path, channel, "shoreWidth", 1D, 2D, errors);
-        NumericRange blend = validateRange(
-                path,
-                channel,
-                "terrainBlendWidth",
-                4D,
-                64D,
-                10D,
-                24D,
-                errors
-        );
-        if (blend.minimum() < doubleValue(channel, "shoreWidth", 2D)) {
-            errors.add(path + ".terrainBlendWidth must remain independent of and outside shoreWidth.");
+        validateRange(path, channel, "width", 1D, 128D, 4D, 8D, errors);
+        validateRange(path, channel, "depth", 1D, 64D, 2D, 4D, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "inset", 0, 3, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "maximumIncision", 1, 32, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, channel, "roughness", 0D, 1D, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "roughnessWavelength", 4, 64, errors);
+    }
+
+    private static void validateSurfaceBanks(String path, JSONObject banks, List<String> errors) {
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, banks, "freeboard", 0, 4, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, banks, "shoreWidth", 0.5D, 6D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, banks, "blendSlope", 0.5D, 12D, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, banks, "minimumBlendWidth", 1, 64, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, banks, "maximumBlendWidth", 1, 64, errors);
+        PackJsonFieldChecks.validateOptionalBoolean(path, banks, "exposeCutStrata", errors);
+        if (integerValue(banks, "minimumBlendWidth", 4) > integerValue(banks, "maximumBlendWidth", 32)) {
+            errors.add(path + ".minimumBlendWidth must not exceed maximumBlendWidth.");
         }
     }
 
-    private static void validateHydraulics(String path, JSONObject hydraulics, List<String> errors) {
-        NumericRange targetPoolLength = validateRange(
-                path,
-                hydraulics,
-                "targetPoolLength",
-                8D,
-                4096D,
-                80D,
-                180D,
-                errors
-        );
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, hydraulics, "riffleDrop", 0, 16, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, hydraulics, "maximumGradualDrop", 0, 64, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, hydraulics, "maximumGradualLength", 1, 1024, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, hydraulics, "waterfallMinimumDrop", 1, 128, errors);
-
-        int riffleDrop = integerValue(hydraulics, "riffleDrop", 1);
-        int maximumGradualDrop = integerValue(hydraulics, "maximumGradualDrop", 7);
-        int maximumGradualLength = integerValue(hydraulics, "maximumGradualLength", 24);
-        int waterfallMinimumDrop = integerValue(hydraulics, "waterfallMinimumDrop", 8);
-        if (riffleDrop > maximumGradualDrop) {
-            errors.add(path + ".riffleDrop must not exceed maximumGradualDrop.");
-        }
-        if (waterfallMinimumDrop != maximumGradualDrop + 1) {
-            errors.add(path + ".waterfallMinimumDrop must equal maximumGradualDrop plus one.");
-        }
-        if (maximumGradualLength < maximumGradualDrop) {
-            errors.add(path + ".maximumGradualLength must be at least maximumGradualDrop.");
-        }
-        if (targetPoolLength.minimum() < maximumGradualLength) {
-            errors.add(path + ".targetPoolLength.min must be at least maximumGradualLength.");
-        }
+    private static void validateSurfaceFlow(String path, JSONObject flow, List<String> errors) {
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, flow, "cascadeRun", 1, 8, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, flow, "waterfallMinimumDrop", 2, 32, errors);
     }
 
-    private static void validateRidgeTunnels(
-            String path,
-            JSONObject ridgeTunnels,
-            RoutingValues routing,
-            List<String> errors
-    ) {
-        PackJsonFieldChecks.validateOptionalBoolean(path, ridgeTunnels, "enabled", errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, ridgeTunnels, "maximumLength", 1, 4096, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, ridgeTunnels, "headroom", 1, 128, errors);
-        int maximumLength = integerValue(ridgeTunnels, "maximumLength", 192);
-        if (maximumLength > routing.maximumRouteLength()) {
-            errors.add(path + ".maximumLength must not exceed routing.maximumRouteLength.");
-        }
-    }
-
-    private static void validateMouths(
-            String path,
-            JSONObject mouths,
-            RoutingValues routing,
-            List<String> errors
-    ) {
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, mouths, "levelingDistance", 0, 2048, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, mouths, "maximumOceanApron", 0, 64, errors);
-        int levelingDistance = integerValue(mouths, "levelingDistance", 64);
-        if (levelingDistance > routing.maximumRouteLength()) {
-            errors.add(path + ".levelingDistance must not exceed routing.maximumRouteLength.");
-        }
+    private static void validateMouths(String path, JSONObject mouths, List<String> errors) {
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, mouths, "flareRatio", 1D, 4D, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, mouths, "maximumOceanApron", 0, 32, errors);
     }
 
     private static SourceBudget validateUnderground(
@@ -477,6 +409,14 @@ final class PackHydrologyValidator {
         NumericRange depth = validateRange(path, underground, "depth", 1D, 32D, 1D, 3D, errors);
         NumericRange headroom = validateRange(path, underground, "headroom", 1D, 128D, 6D, 14D, errors);
         PackJsonFieldChecks.validateOptionalBoolean(path, underground, "connectToExistingCaves", errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(
+                path,
+                underground,
+                "mouthLevelingDistance",
+                16,
+                512,
+                errors
+        );
 
         NumericRange height = dimensionHeight(dimension);
         if (fluidLevel.minimum() - depth.maximum() <= height.minimum()) {
@@ -727,7 +667,7 @@ final class PackHydrologyValidator {
             SourceBudget underground,
             List<String> errors
     ) {
-        if (routing.sampleSpacing() <= 0 || routing.refinementSpacing() <= 0) {
+        if (routing.sampleSpacing() <= 0) {
             return;
         }
         long latticeAxis = routing.tileSize() / (long) routing.sampleSpacing() + 1L;
@@ -738,7 +678,7 @@ final class PackHydrologyValidator {
         }
 
         long sources = surface.maximumExpectedSources() + underground.maximumExpectedSources();
-        long samplesPerRoute = divideCeiling(routing.maximumRouteLength(), routing.refinementSpacing()) + 1L;
+        long samplesPerRoute = divideCeiling(routing.maximumRouteLength(), CORRIDOR_SAMPLE_SPACING) + 1L;
         long routeSamples = saturatedMultiply(sources, samplesPerRoute);
         if (routeSamples > MAX_ROUTE_SAMPLES) {
             errors.add(path + " may refine " + routeSamples
@@ -810,6 +750,7 @@ final class PackHydrologyValidator {
         validateNullableDouble(path, policy, "depthMultiplier", 0.0001D, 16D, errors);
         validateNullableDouble(path, policy, "incisionMultiplier", 0D, 16D, errors);
         validateNullableDouble(path, policy, "routingMultiplier", 0D, 64D, errors);
+        validateNullableDouble(path, policy, "bankMultiplier", 0D, 4D, errors);
         return policy;
     }
 
@@ -1403,12 +1344,11 @@ final class PackHydrologyValidator {
     private record RoutingValues(
             int tileSize,
             int sampleSpacing,
-            int refinementSpacing,
             int maximumRouteLength,
             Set<String> inlandOutlets
     ) {
         private static RoutingValues defaults() {
-            return new RoutingValues(2048, 64, 8, 16384, Set.of());
+            return new RoutingValues(2048, 64, 16384, Set.of());
         }
     }
 

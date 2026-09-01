@@ -13,7 +13,6 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,20 +20,14 @@ import java.util.Objects;
 import java.util.Set;
 
 final class HydrologyFootprintCompiler {
-    private static final byte CHANNEL_ROLE = 1;
-    private static final byte SHORE_ROLE = 2;
-    private static final byte GRADING_ROLE = 3;
     private static final int FEATURE_ROLE_COUNT = 7;
     private static final int COURSE_FOOTPRINT_CACHE_SIZE = 8;
     private static final int VALIDATION_RASTER_CACHE_SIZE = 8;
     private static final int MINIMUM_ENDPOINT_PROFILE_LENGTH = 48;
-    private static final int MAXIMUM_ENDPOINT_PROFILE_LENGTH = 64;
     private static final double MINIMUM_ENDPOINT_RAMP_WIDTHS = 2D;
-    private static final int SURFACE_SHAPE_PROFILE_LENGTH = 32;
     private static final int[][] HORIZONTAL_NEIGHBORS = {
             {1, 0}, {-1, 0}, {0, 1}, {0, -1}
     };
-    private static final double MOUTH_FLARE_RATIO = 1.5D;
     private static final double SURFACE_THALWEG_RATIO = 0.65D;
     private static final long ORGANIC_SHAPE_FIRST_PHASE_SALT = 0x4f5247414e31L;
     private static final long ORGANIC_SHAPE_SECOND_PHASE_SALT = 0x4f5247414e32L;
@@ -721,661 +714,8 @@ final class HydrologyFootprintCompiler {
         return new RiverFootprint(immutable);
     }
 
-    private void containSurfaceBanks(Long2ObjectLinkedOpenHashMap<MutableColumn> columns) {
-        for (MutableColumn column : columns.values()) {
-            if (column.maximumSurfaceFluidHead() != Integer.MIN_VALUE) {
-                continue;
-            }
-            int minimumBankHeight = Integer.MIN_VALUE;
-            for (int[] offset : HORIZONTAL_NEIGHBORS) {
-                MutableColumn neighbor = columns.get(RiverFootprint.pack(
-                        column.x + offset[0],
-                        column.z + offset[1]
-                ));
-                if (neighbor == null) {
-                    continue;
-                }
-                int fluidHead = neighbor.maximumSurfaceFluidHead();
-                if (fluidHead != Integer.MIN_VALUE) {
-                    minimumBankHeight = Math.max(minimumBankHeight, Math.addExact(fluidHead, 1));
-                }
-            }
-            if (minimumBankHeight != Integer.MIN_VALUE) {
-                column.raiseDrySurfaceBed(minimumBankHeight);
-            }
-        }
-    }
-
-    private void materializeSurfaceBankTerrain(Long2ObjectLinkedOpenHashMap<MutableColumn> columns) {
-        ArrayList<Long> wetColumns = new ArrayList<>();
-        for (Long2ObjectMap.Entry<MutableColumn> entry : columns.long2ObjectEntrySet()) {
-            if (entry.getValue().maximumSurfaceFluidHead() != Integer.MIN_VALUE) {
-                wetColumns.add(entry.getLongKey());
-            }
-        }
-        for (long packed : wetColumns) {
-            int x = RiverFootprint.unpackX(packed);
-            int z = RiverFootprint.unpackZ(packed);
-            for (int[] offset : HORIZONTAL_NEIGHBORS) {
-                int bankX = Math.addExact(x, offset[0]);
-                int bankZ = Math.addExact(z, offset[1]);
-                long bankKey = RiverFootprint.pack(bankX, bankZ);
-                if (columns.containsKey(bankKey)) {
-                    continue;
-                }
-                classifyNatural(bankX, bankZ);
-                HydrologyTerrainSample terrain = sampleTerrain(bankX, bankZ);
-                if (terrain != null) {
-                    columns.put(bankKey, new MutableColumn(bankX, bankZ, terrain, settings.seaLevel()));
-                }
-            }
-        }
-    }
-
-    private static HydrologyColumnLayer raisedDrySurfaceLayer(
-            HydrologyColumnLayer layer,
-            int naturalHeight,
-            int minimumBed
-    ) {
-        if (minimumBed == Integer.MIN_VALUE
-                || !layer.feature().type().isSurface()
-                || !layer.terrainOwned()
-                || layer.channel()) {
-            return layer;
-        }
-        int bed = Math.min(naturalHeight, Math.max(layer.bedY(), minimumBed));
-        if (bed == layer.bedY()) {
-            return layer;
-        }
-        return new HydrologyColumnLayer(
-                layer.feature(),
-                bed,
-                bed,
-                bed,
-                false,
-                layer.shore(),
-                layer.grading(),
-                false,
-                false,
-                false,
-                true,
-                false,
-                false,
-                layer.profileKey(),
-                layer.surfaceBiomeKey(),
-                layer.mouthBiomeKey(),
-                layer.shoreBiomeKey(),
-                layer.bankBiomeKey(),
-                layer.floodedCaveBiomeKey()
-        );
-    }
-
-    private List<SurfaceSweep> surfaceSweeps(RiverCourse course, boolean includeFalling) {
-        ArrayList<SurfaceSweep> sweeps = new ArrayList<>();
-        int runStart = -1;
-        for (int segmentIndex = 0; segmentIndex <= course.segments().size(); segmentIndex++) {
-            boolean sweptSurface = segmentIndex < course.segments().size()
-                    && course.segments().get(segmentIndex).type().isSurface()
-                    && !course.segments().get(segmentIndex).fallingFluid();
-            if (sweptSurface && runStart < 0) {
-                runStart = segmentIndex;
-            }
-            if (sweptSurface || runStart < 0) {
-                continue;
-            }
-            sweeps.add(surfaceSweep(course, runStart, segmentIndex));
-            runStart = -1;
-        }
-        if (includeFalling) {
-            for (int segmentIndex = 0; segmentIndex < course.segments().size(); segmentIndex++) {
-                HydraulicSegment segment = course.segments().get(segmentIndex);
-                if (!segment.type().isSurface() || !segment.fallingFluid()) {
-                    continue;
-                }
-                sweeps.addAll(fallingSurfaceSweeps(course, segmentIndex));
-            }
-        }
-        return List.copyOf(sweeps);
-    }
-
-    private List<SurfaceSweep> fallingSurfaceSweeps(RiverCourse course, int segmentIndex) {
-        HydraulicSegment segment = course.segments().get(segmentIndex);
-        List<HydrologyPoint> centerline = continuousCenterline(segment);
-        HydrologyPoint throat = centerline.getFirst();
-        int flowX = flowDelta(centerline, 0, true);
-        int flowZ = flowDelta(centerline, 0, false);
-        SurfaceSweepPoint throatPoint = new SurfaceSweepPoint(
-                segment,
-                throat,
-                shape(
-                        course,
-                        segment,
-                        throat,
-                        segment.downstreamHeadY() - 1,
-                        segment.upstreamHeadY(),
-                        true,
-                        false
-                ),
-                segmentIndex == 0,
-                false,
-                true
-        );
-        ArrayList<SurfaceSweep> sweeps = new ArrayList<>();
-        sweeps.add(new SurfaceSweep(
-                course,
-                List.of(throatPoint),
-                segmentIndex == 0,
-                false,
-                flowX,
-                flowZ
-        ));
-        if (centerline.size() == 1) {
-            return List.copyOf(sweeps);
-        }
-        ArrayList<SurfaceSweepPoint> downstream = new ArrayList<>(centerline.size() - 1);
-        for (int pointIndex = 1; pointIndex < centerline.size(); pointIndex++) {
-            HydrologyPoint point = centerline.get(pointIndex);
-            boolean receiving = segment.receivingPool() && pointIndex == centerline.size() - 1;
-            downstream.add(new SurfaceSweepPoint(
-                    segment,
-                    point,
-                    shape(
-                            course,
-                            segment,
-                            point,
-                            point.y() - segment.depth(),
-                            point.y(),
-                            false,
-                            receiving
-                    ),
-                    false,
-                    receiving,
-                    false
-            ));
-        }
-        boolean roundEnd = segmentIndex + 1 >= course.segments().size()
-                || !course.segments().get(segmentIndex + 1).fallingFluid();
-        sweeps.add(new SurfaceSweep(course, List.copyOf(downstream), false, roundEnd, 0, 0));
-        return List.copyOf(sweeps);
-    }
-
-    private SurfaceSweep surfaceSweep(RiverCourse course, int startSegmentIndex, int endSegmentIndex) {
-        ArrayList<SurfaceSweepPoint> points = new ArrayList<>();
-        for (int segmentIndex = startSegmentIndex; segmentIndex < endSegmentIndex; segmentIndex++) {
-            HydraulicSegment segment = course.segments().get(segmentIndex);
-            List<HydrologyPoint> centerline = continuousCenterline(segment);
-            for (int pointIndex = 0; pointIndex < centerline.size(); pointIndex++) {
-                HydrologyPoint point = centerline.get(pointIndex);
-                boolean receiving = segment.receivingPool() && pointIndex == centerline.size() - 1;
-                LayerShape pointShape = shape(
-                        course,
-                        segment,
-                        point,
-                        point.y() - segment.depth(),
-                        point.y(),
-                        false,
-                        receiving
-                );
-                SurfaceSweepPoint sweepPoint = new SurfaceSweepPoint(
-                        segment,
-                        point,
-                        pointShape,
-                        false,
-                        receiving,
-                        false
-                );
-                if (!points.isEmpty()
-                        && points.getLast().point().x() == point.x()
-                        && points.getLast().point().z() == point.z()) {
-                    SurfaceSweepPoint existing = points.getLast();
-                    points.set(points.size() - 1, existing.receiving() ? existing : sweepPoint);
-                } else {
-                    points.add(sweepPoint);
-                }
-            }
-        }
-        if (points.isEmpty()) {
-            throw new IllegalStateException("A surface sweep requires at least one centerline point.");
-        }
-        HydraulicSegment preceding = startSegmentIndex > 0
-                ? course.segments().get(startSegmentIndex - 1)
-                : null;
-        HydraulicSegment following = endSegmentIndex < course.segments().size()
-                ? course.segments().get(endSegmentIndex)
-                : null;
-        SurfaceTerminal terminal = surfaceTerminal(points.getLast().segment());
-        boolean source = startSegmentIndex == 0;
-        boolean roundStart = source;
-        boolean roundEnd = terminal != SurfaceTerminal.NONE;
-        return new SurfaceSweep(
-                course,
-                profileSurfaceSweep(points, source, preceding, terminal, following),
-                roundStart,
-                roundEnd,
-                0,
-                0
-        );
-    }
-
-    private SurfaceTerminal surfaceTerminal(HydraulicSegment finalSurface) {
-        if (finalSurface.type() == HydrologyFeatureType.MOUTH) {
-            return SurfaceTerminal.OCEAN_MOUTH;
-        }
-        return SurfaceTerminal.NONE;
-    }
-
-    private List<SurfaceSweepPoint> profileSurfaceSweep(
-            List<SurfaceSweepPoint> rawPoints,
-            boolean source,
-            HydraulicSegment preceding,
-            SurfaceTerminal terminal,
-            HydraulicSegment following
-    ) {
-        double[] distances = new double[rawPoints.size()];
-        for (int pointIndex = 1; pointIndex < rawPoints.size(); pointIndex++) {
-            HydrologyPoint previous = rawPoints.get(pointIndex - 1).point();
-            HydrologyPoint current = rawPoints.get(pointIndex).point();
-            distances[pointIndex] = distances[pointIndex - 1]
-                    + StrictMath.hypot(current.x() - previous.x(), current.z() - previous.z());
-        }
-        double totalLength = distances[distances.length - 1];
-        boolean profileSource = source && totalLength > 0D;
-        boolean profileBoreEntry = following != null
-                && following.type().isUnderground()
-                && segmentsJoin(rawPoints.getLast().segment(), following)
-                && totalLength > 0D;
-        boolean profileBoreExit = preceding != null
-                && preceding.type().isUnderground()
-                && preceding.type() != HydrologyFeatureType.SINKHOLE
-                && segmentsJoin(preceding, rawPoints.getFirst().segment())
-                && totalLength > 0D;
-        boolean profileTerminal = terminal != SurfaceTerminal.NONE
-                && totalLength >= MINIMUM_ENDPOINT_PROFILE_LENGTH;
-        int portalLength = Math.min(
-                SURFACE_SHAPE_PROFILE_LENGTH,
-                Math.max(1, (int) StrictMath.floor(totalLength))
-        );
-        List<LayerShape> transitionShapes = smoothSurfaceSweepShapes(rawPoints, distances);
-        ArrayList<SurfaceSweepPoint> profiled = new ArrayList<>(rawPoints.size());
-        for (int pointIndex = 0; pointIndex < rawPoints.size(); pointIndex++) {
-            SurfaceSweepPoint point = rawPoints.get(pointIndex);
-            LayerShape pointShape = transitionShapes.get(pointIndex);
-            if (profileSource) {
-                int sourceLength = Math.min(
-                        endpointProfileLength(pointShape.channelRadius()),
-                        Math.max(1, (int) StrictMath.floor(totalLength))
-                );
-                if (profileTerminal) {
-                    sourceLength = Math.min(
-                            sourceLength,
-                            Math.max(1, (int) StrictMath.floor(totalLength / 2D))
-                    );
-                }
-                double sourceWeight = 1D - smoothStep(Math.min(1D, distances[pointIndex] / sourceLength));
-                pointShape = sourceTaper(pointShape, sourceWeight);
-            }
-            if (profileBoreExit) {
-                double exitWeight = 1D - smoothStep(Math.min(1D, distances[pointIndex] / portalLength));
-                pointShape = borePortalShape(pointShape, exitWeight);
-            }
-            if (profileBoreEntry) {
-                double remaining = totalLength - distances[pointIndex];
-                double entryWeight = 1D - smoothStep(Math.min(1D, remaining / portalLength));
-                pointShape = borePortalShape(pointShape, entryWeight);
-            }
-            boolean receiving = point.receiving();
-            if (profileTerminal) {
-                int terminalLength = endpointProfileLength(pointShape.channelRadius());
-                if (profileSource) {
-                    terminalLength = Math.min(
-                            terminalLength,
-                            Math.max(1, (int) StrictMath.floor(totalLength / 2D))
-                    );
-                }
-                double remaining = totalLength - distances[pointIndex];
-                double terminalWeight = 1D - smoothStep(Math.min(1D, remaining / terminalLength));
-                pointShape = terminalShape(pointShape, terminal, terminalWeight);
-            }
-            profiled.add(new SurfaceSweepPoint(
-                    point.segment(),
-                    point.point(),
-                    pointShape,
-                    point.source(),
-                    receiving,
-                    point.falling()
-            ));
-        }
-        return List.copyOf(profiled);
-    }
-
-    private LayerShape borePortalShape(LayerShape shape, double weight) {
-        return resizedSurfaceShape(
-                shape,
-                shape.channelRadius(),
-                shape.shoreWidth() * (1D - weight),
-                shape.gradingWidth() * (1D - weight),
-                shape.fluidHead() - shape.bed()
-        );
-    }
-
-    private List<LayerShape> smoothSurfaceSweepShapes(
-            List<SurfaceSweepPoint> points,
-            double[] distances
-    ) {
-        ArrayList<LayerShape> smoothed = new ArrayList<>(points.size());
-        for (int pointIndex = 0; pointIndex < points.size(); pointIndex++) {
-            LayerShape current = points.get(pointIndex).shape();
-            double channelRadius = current.channelRadius();
-            double shoreWidth = current.shoreWidth();
-            double gradingWidth = current.gradingWidth();
-            double depth = current.fluidHead() - current.bed();
-            int firstCandidate = pointIndex;
-            while (firstCandidate > 0
-                    && distances[pointIndex] - distances[firstCandidate - 1] <= SURFACE_SHAPE_PROFILE_LENGTH) {
-                firstCandidate--;
-            }
-            int lastCandidate = pointIndex;
-            while (lastCandidate + 1 < points.size()
-                    && distances[lastCandidate + 1] - distances[pointIndex] <= SURFACE_SHAPE_PROFILE_LENGTH) {
-                lastCandidate++;
-            }
-            for (int candidateIndex = firstCandidate; candidateIndex <= lastCandidate; candidateIndex++) {
-                double distance = StrictMath.abs(distances[candidateIndex] - distances[pointIndex]);
-                LayerShape candidate = points.get(candidateIndex).shape();
-                double influence = smoothStep(1D - distance / SURFACE_SHAPE_PROFILE_LENGTH);
-                channelRadius = Math.max(
-                        channelRadius,
-                        channelRadius + (candidate.channelRadius() - channelRadius) * influence
-                );
-                shoreWidth = Math.max(
-                        shoreWidth,
-                        shoreWidth + (candidate.shoreWidth() - shoreWidth) * influence
-                );
-                gradingWidth = Math.max(
-                        gradingWidth,
-                        gradingWidth + (candidate.gradingWidth() - gradingWidth) * influence
-                );
-                int candidateDepth = candidate.fluidHead() - candidate.bed();
-                depth = Math.max(depth, depth + (candidateDepth - depth) * influence);
-            }
-            smoothed.add(resizedSurfaceShape(
-                    current,
-                    (int) StrictMath.round(channelRadius),
-                    shoreWidth,
-                    gradingWidth,
-                    (int) StrictMath.round(depth)
-            ));
-        }
-        return List.copyOf(smoothed);
-    }
-
-    private int endpointProfileLength(int channelRadius) {
-        return Math.max(
-                MINIMUM_ENDPOINT_PROFILE_LENGTH,
-                Math.min(MAXIMUM_ENDPOINT_PROFILE_LENGTH, Math.multiplyExact(channelRadius, 6))
-        );
-    }
-
-    private LayerShape sourceTaper(LayerShape shape, double weight) {
-        return resizedSurfaceShape(
-                shape,
-                blend(shape.channelRadius(), 1, weight),
-                shape.shoreWidth(),
-                shape.gradingWidth(),
-                shape.fluidHead() - shape.bed()
-        );
-    }
-
-    private LayerShape terminalShape(
-            LayerShape shape,
-            SurfaceTerminal terminal,
-            double weight
-    ) {
-        return switch (terminal) {
-            case NONE -> shape;
-            case OCEAN_MOUTH -> {
-                int targetRadius = mouthFlareRadius(shape);
-                yield resizedSurfaceShape(
-                        shape,
-                        blend(shape.channelRadius(), targetRadius, weight),
-                        shape.shoreWidth() + weight,
-                        shape.gradingWidth() + weight * Math.max(2D, shape.channelRadius() * 0.5D),
-                        blend(shape.fluidHead() - shape.bed(), 1, weight)
-                );
-            }
-        };
-    }
-
-    private int mouthFlareRadius(LayerShape shape) {
-        return Math.max(
-                Math.addExact(shape.channelRadius(), 2),
-                (int) StrictMath.ceil(shape.channelRadius() * MOUTH_FLARE_RATIO)
-        );
-    }
-
-    private LayerShape resizedSurfaceShape(
-            LayerShape shape,
-            int channelRadius,
-            double shoreWidth,
-            double gradingWidth,
-            int depth
-    ) {
-        return new LayerShape(
-                channelRadius,
-                shoreWidth,
-                gradingWidth,
-                shape.fluidHead() - depth,
-                shape.fluidHead(),
-                shape.ceiling(),
-                shape.ellipsoid(),
-                shape.archedChannel(),
-                shape.roundedSurfaceBed(),
-                shape.organicBoundary(),
-                shape.fallingThroat()
-        );
-    }
-
-    private int blend(int start, int end, double progress) {
-        return (int) StrictMath.round(start + (end - start) * progress);
-    }
-
     private double smoothStep(double progress) {
         return progress * progress * (3D - 2D * progress);
-    }
-
-    private void rasterizeSurfaceSweep(
-            Long2ObjectLinkedOpenHashMap<MutableColumn> columns,
-            SurfaceSweep sweep,
-            boolean validationOnly
-    ) {
-        Long2ObjectOpenHashMap<SurfaceProjection> projections = new Long2ObjectOpenHashMap<>();
-        if (sweep.points().size() == 1) {
-            collectSurfaceEdge(projections, sweep, -1);
-        } else {
-            for (int edgeIndex = 0; edgeIndex < sweep.points().size() - 1; edgeIndex++) {
-                collectSurfaceEdge(projections, sweep, edgeIndex);
-            }
-        }
-        long[] positions = projections.keySet().toLongArray();
-        Arrays.sort(positions);
-        for (long position : positions) {
-            int x = RiverFootprint.unpackX(position);
-            int z = RiverFootprint.unpackZ(position);
-            rasterizeSurfaceProjection(columns, projections.get(position), x, z, validationOnly);
-        }
-    }
-
-    private void collectSurfaceEdge(
-            Long2ObjectOpenHashMap<SurfaceProjection> projections,
-            SurfaceSweep sweep,
-            int edgeIndex
-    ) {
-        SurfaceSweepPoint start = sweep.points().get(Math.max(0, edgeIndex));
-        SurfaceSweepPoint end = edgeIndex < 0 ? start : sweep.points().get(edgeIndex + 1);
-        int radius = (int) StrictMath.ceil(Math.max(start.shape().totalRadius(), end.shape().totalRadius()));
-        int minimumX = Math.min(start.point().x(), end.point().x()) - radius;
-        int maximumX = Math.max(start.point().x(), end.point().x()) + radius;
-        int minimumZ = Math.min(start.point().z(), end.point().z()) - radius;
-        int maximumZ = Math.max(start.point().z(), end.point().z()) + radius;
-        for (int z = minimumZ; z <= maximumZ; z++) {
-            for (int x = minimumX; x <= maximumX; x++) {
-                SurfaceProjection candidate = surfaceProjection(sweep, edgeIndex, x, z);
-                if (candidate == null) {
-                    continue;
-                }
-                long packed = RiverFootprint.pack(x, z);
-                SurfaceProjection selected = projections.get(packed);
-                if (selected == null || prefersSurfaceProjection(candidate, selected)) {
-                    projections.put(packed, candidate);
-                }
-            }
-        }
-    }
-
-    private SurfaceProjection surfaceProjection(SurfaceSweep sweep, int edgeIndex, int x, int z) {
-        if (edgeIndex < 0) {
-            SurfaceSweepPoint point = sweep.points().getFirst();
-            double distance = StrictMath.hypot(x - point.point().x(), z - point.point().z());
-            if (distance > point.shape().totalRadius() + 0.25D) {
-                return null;
-            }
-            return new SurfaceProjection(
-                    sweep,
-                    edgeIndex,
-                    point.segment(),
-                    point.point(),
-                    point.shape(),
-                    point.source() || sweep.roundStart(),
-                    point.receiving(),
-                    point.falling(),
-                    point.segment().type() == HydrologyFeatureType.MOUTH,
-                    point.point().x(),
-                    point.point().z(),
-                    distance,
-                    sweep.singletonFlowX(),
-                    sweep.singletonFlowZ(),
-                    false
-            );
-        }
-        SurfaceSweepPoint start = sweep.points().get(edgeIndex);
-        SurfaceSweepPoint end = sweep.points().get(edgeIndex + 1);
-        double deltaX = end.point().x() - start.point().x();
-        double deltaZ = end.point().z() - start.point().z();
-        double lengthSquared = deltaX * deltaX + deltaZ * deltaZ;
-        if (lengthSquared == 0D) {
-            return null;
-        }
-        double rawProgress = ((x - start.point().x()) * deltaX + (z - start.point().z()) * deltaZ)
-                / lengthSquared;
-        boolean extendStart = edgeIndex == 0 && sweep.roundStart();
-        boolean extendEnd = edgeIndex == sweep.points().size() - 2 && sweep.roundEnd();
-        if (rawProgress < 0D && !extendStart || rawProgress > 1D && !extendEnd) {
-            return null;
-        }
-        double progress = Math.max(0D, Math.min(1D, rawProgress));
-        double projectedX = start.point().x() + deltaX * progress;
-        double projectedZ = start.point().z() + deltaZ * progress;
-        double distance = StrictMath.hypot(x - projectedX, z - projectedZ);
-        LayerShape projectedShape = interpolateSurfaceShape(start.shape(), end.shape(), progress);
-        boolean secondHalf = progress >= 0.5D;
-        SurfaceSweepPoint selected = secondHalf ? end : start;
-        if (distance > projectedShape.totalRadius() + 0.25D) {
-            return null;
-        }
-        int tangentIndex = secondHalf ? edgeIndex + 1 : edgeIndex;
-        int[] tangent = surfaceTangent(sweep.points(), tangentIndex);
-        return new SurfaceProjection(
-                sweep,
-                edgeIndex,
-                selected.segment(),
-                selected.point(),
-                projectedShape,
-                sweep.roundStart() && edgeIndex == 0 && progress < 0.5D,
-                selected.receiving(),
-                selected.falling(),
-                selected.segment().type() == HydrologyFeatureType.MOUTH
-                        && edgeIndex == sweep.points().size() - 2
-                        && progress >= 0.5D,
-                projectedX,
-                projectedZ,
-                distance,
-                tangent[0],
-                tangent[1],
-                rawProgress < 0D || rawProgress > 1D
-        );
-    }
-
-    private LayerShape interpolateSurfaceShape(LayerShape start, LayerShape end, double progress) {
-        LayerShape selected = progress < 0.5D ? start : end;
-        return new LayerShape(
-                blend(start.channelRadius(), end.channelRadius(), progress),
-                start.shoreWidth() + (end.shoreWidth() - start.shoreWidth()) * progress,
-                start.gradingWidth() + (end.gradingWidth() - start.gradingWidth()) * progress,
-                blend(start.bed(), end.bed(), progress),
-                blend(start.fluidHead(), end.fluidHead(), progress),
-                blend(start.ceiling(), end.ceiling(), progress),
-                selected.ellipsoid(),
-                selected.archedChannel(),
-                selected.roundedSurfaceBed(),
-                selected.organicBoundary(),
-                selected.fallingThroat()
-        );
-    }
-
-    private int[] surfaceTangent(List<SurfaceSweepPoint> points, int pointIndex) {
-        int reach = Math.max(2, settings.routing().refinementSpacing() * 2);
-        HydrologyPoint start = points.get(Math.max(0, pointIndex - reach)).point();
-        HydrologyPoint end = points.get(Math.min(points.size() - 1, pointIndex + reach)).point();
-        int flowX = end.x() - start.x();
-        int flowZ = end.z() - start.z();
-        return flowX == 0 && flowZ == 0 ? new int[]{1, 0} : new int[]{flowX, flowZ};
-    }
-
-    private boolean prefersSurfaceProjection(SurfaceProjection candidate, SurfaceProjection selected) {
-        int distanceComparison = Double.compare(candidate.distance(), selected.distance());
-        if (distanceComparison != 0) {
-            return distanceComparison < 0;
-        }
-        if (candidate.receiving() != selected.receiving()) {
-            return candidate.receiving();
-        }
-        return candidate.edgeIndex() < selected.edgeIndex();
-    }
-
-    private void rasterizeSurfaceProjection(
-            Long2ObjectLinkedOpenHashMap<MutableColumn> columns,
-            SurfaceProjection projection,
-            int x,
-            int z,
-            boolean validationOnly
-    ) {
-        SurfaceCell cell = surfaceCell(projection, x, z);
-        if (cell == null) {
-            return;
-        }
-        if (cell.layer() != null) {
-            if (!validationOnly) {
-                addLayer(columns, x, z, cell.terrain(), cell.layer());
-            }
-            return;
-        }
-        HydrologyFeatureRef[] pointFeatures = new HydrologyFeatureRef[FEATURE_ROLE_COUNT];
-        double distance = surfaceDistance(projection, x, z);
-        if (cell.naturalOcean() && oceanApronEligible(projection.segment(), distance)) {
-            addOceanApron(
-                    columns,
-                    projection.sweep().course(),
-                    projection.segment(),
-                    projection.anchor(),
-                    x,
-                    z,
-                    distance,
-                    projection.flowX(),
-                    projection.flowZ(),
-                    cell.terrain(),
-                    pointFeatures
-            );
-        }
     }
 
     private void rasterizeSegment(
@@ -2254,117 +1594,6 @@ final class HydrologyFootprintCompiler {
         );
     }
 
-    private SurfaceCell surfaceCell(SurfaceProjection projection, int x, int z) {
-        LayerShape shape = projection.shape();
-        double channelDistance = surfaceDistance(projection, x, z);
-        boolean channel = channelDistance <= shape.channelRadius() + 0.25D;
-        boolean shore = !channel
-                && channelDistance <= shape.channelRadius() + shape.shoreWidth() + 0.25D;
-        boolean grading = !channel && !shore && projection.distance() <= shape.totalRadius() + 0.25D;
-        if (!channel && !shore && !grading) {
-            return null;
-        }
-        double distance = grading ? projection.distance() : channelDistance;
-        HydraulicSegment segment = projection.segment();
-        HydrologyRoutingTerrainSampler.NaturalClassification classification = classifyNatural(x, z);
-        boolean apronEligible = oceanApronEligible(segment, distance);
-        if (classification == HydrologyRoutingTerrainSampler.NaturalClassification.OCEAN && !apronEligible) {
-            return null;
-        }
-        boolean surfaceCourse = projection.sweep().course().type() == RiverCourseType.SURFACE;
-        if (!surfaceCourse
-                && classification == HydrologyRoutingTerrainSampler.NaturalClassification.LAND
-                && projection.oceanConnection()) {
-            return null;
-        }
-        boolean exactSlope = classification != HydrologyRoutingTerrainSampler.NaturalClassification.OCEAN
-                && (!projection.oceanConnection() || surfaceCourse)
-                && !channel
-                && segment.type() != HydrologyFeatureType.WATERFALL
-                && segment.type() != HydrologyFeatureType.CASCADE;
-        HydrologyTerrainSample terrain = exactSlope ? sampleTerrain(x, z) : sampleTerrainBasis(x, z);
-        if (terrain == null) {
-            return null;
-        }
-        boolean naturalOcean = classification == HydrologyRoutingTerrainSampler.NaturalClassification.OCEAN
-                || terrain.ocean()
-                || naturallySubmergedSurfaceColumn(segment, terrain);
-        if (naturalOcean) {
-            return apronEligible ? new SurfaceCell(terrain, null, true) : null;
-        }
-        if (channel && !projection.falling() && !surfaceChannelTerrainSupported(shape, terrain, x, z)) {
-            return null;
-        }
-        if (!surfaceCourse && projection.oceanConnection()) {
-            return null;
-        }
-        int deltaX = x - projection.anchor().x();
-        int deltaZ = z - projection.anchor().z();
-        HydrologyFeatureRef[] pointFeatures = new HydrologyFeatureRef[FEATURE_ROLE_COUNT];
-        HydrologyColumnLayer layer = regularLayer(
-                projection.sweep().course(),
-                segment,
-                projection.anchor(),
-                shape,
-                terrain,
-                distance,
-                deltaX,
-                deltaZ,
-                projection.flowX(),
-                projection.flowZ(),
-                projection.source(),
-                channel,
-                shore,
-                grading,
-                projection.falling(),
-                projection.receiving(),
-                pointFeatures
-        );
-        return new SurfaceCell(terrain, layer, false);
-    }
-
-    private boolean surfaceChannelTerrainSupported(
-            LayerShape shape,
-            HydrologyTerrainSample terrain,
-            int x,
-            int z
-    ) {
-        if (terrain.naturalHeight() <= shape.fluidHead()) {
-            return false;
-        }
-        for (int[] offset : HORIZONTAL_NEIGHBORS) {
-            HydrologyTerrainSample neighbor = sampleTerrainBasis(x + offset[0], z + offset[1]);
-            if (neighbor == null) {
-                return false;
-            }
-            if (shape.fluidHead() <= settings.seaLevel()
-                    && (neighbor.ocean() || neighbor.naturalHeight() <= settings.seaLevel())) {
-                continue;
-            }
-            if (neighbor.naturalHeight() <= shape.fluidHead()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private double surfaceDistance(SurfaceProjection projection, int x, int z) {
-        if (projection.roundedCap()) {
-            return projection.distance();
-        }
-        return shapedDistance(
-                projection.shape(),
-                projection.segment(),
-                x,
-                z,
-                x - projection.x(),
-                z - projection.z(),
-                projection.flowX(),
-                projection.flowZ(),
-                projection.distance()
-        );
-    }
-
     private RasterStencil rasterStencil(LayerShape shape) {
         RasterStencilKey key = new RasterStencilKey(
                 shape.channelRadius(),
@@ -2396,8 +1625,7 @@ final class HydrologyFootprintCompiler {
                 if (!channel && !shore && !grading) {
                     continue;
                 }
-                byte role = channel ? CHANNEL_ROLE : shore ? SHORE_ROLE : GRADING_ROLE;
-                builder.add(deltaX, deltaZ, distance, role);
+                builder.add(deltaX, deltaZ, distance);
             }
         }
         return builder.build();
@@ -2958,56 +2186,6 @@ final class HydrologyFootprintCompiler {
         }
     }
 
-    private record SurfaceSweepPoint(
-            HydraulicSegment segment,
-            HydrologyPoint point,
-            LayerShape shape,
-            boolean source,
-            boolean receiving,
-            boolean falling
-    ) {
-    }
-
-    private record SurfaceSweep(
-            RiverCourse course,
-            List<SurfaceSweepPoint> points,
-            boolean roundStart,
-            boolean roundEnd,
-            int singletonFlowX,
-            int singletonFlowZ
-    ) {
-    }
-
-    private record SurfaceSweepEdge(
-            SurfaceSweep sweep,
-            int edgeIndex
-    ) {
-    }
-
-    private record SurfaceProjection(
-            SurfaceSweep sweep,
-            int edgeIndex,
-            HydraulicSegment segment,
-            HydrologyPoint anchor,
-            LayerShape shape,
-            boolean source,
-            boolean receiving,
-            boolean falling,
-            boolean oceanConnection,
-            double x,
-            double z,
-            double distance,
-            int flowX,
-            int flowZ,
-            boolean roundedCap
-    ) {
-    }
-
-    private enum SurfaceTerminal {
-        NONE,
-        OCEAN_MOUTH
-    }
-
     private record CenterlineProjection(
             int pointIndex,
             double x,
@@ -3015,13 +2193,6 @@ final class HydrologyFootprintCompiler {
             double distance,
             int flowX,
             int flowZ
-    ) {
-    }
-
-    private record SurfaceCell(
-            HydrologyTerrainSample terrain,
-            HydrologyColumnLayer layer,
-            boolean naturalOcean
     ) {
     }
 
@@ -3060,8 +2231,7 @@ final class HydrologyFootprintCompiler {
     private record RasterStencil(
             int[] deltaXs,
             int[] deltaZs,
-            double[] distances,
-            byte[] roles
+            double[] distances
     ) {
         private int size() {
             return deltaXs.length;
@@ -3072,28 +2242,24 @@ final class HydrologyFootprintCompiler {
         private int[] deltaXs;
         private int[] deltaZs;
         private double[] distances;
-        private byte[] roles;
         private int size;
 
         private RasterStencilBuilder() {
             this.deltaXs = new int[64];
             this.deltaZs = new int[64];
             this.distances = new double[64];
-            this.roles = new byte[64];
         }
 
-        private void add(int deltaX, int deltaZ, double distance, byte role) {
+        private void add(int deltaX, int deltaZ, double distance) {
             if (size == deltaXs.length) {
                 int expandedSize = Math.multiplyExact(size, 2);
                 deltaXs = Arrays.copyOf(deltaXs, expandedSize);
                 deltaZs = Arrays.copyOf(deltaZs, expandedSize);
                 distances = Arrays.copyOf(distances, expandedSize);
-                roles = Arrays.copyOf(roles, expandedSize);
             }
             deltaXs[size] = deltaX;
             deltaZs[size] = deltaZ;
             distances[size] = distance;
-            roles[size] = role;
             size++;
         }
 
@@ -3101,8 +2267,7 @@ final class HydrologyFootprintCompiler {
             return new RasterStencil(
                     Arrays.copyOf(deltaXs, size),
                     Arrays.copyOf(deltaZs, size),
-                    Arrays.copyOf(distances, size),
-                    Arrays.copyOf(roles, size)
+                    Arrays.copyOf(distances, size)
             );
         }
     }
@@ -3377,44 +2542,6 @@ final class HydrologyFootprintCompiler {
                     parentBiomeKey,
                     builtLayers
             );
-        }
-
-        private int maximumSurfaceFluidHead() {
-            int maximum = Integer.MIN_VALUE;
-            if (singleLayer != null) {
-                return surfaceFluidHead(singleLayer);
-            }
-            if (layers == null) {
-                return maximum;
-            }
-            for (HydrologyColumnLayer layer : layers.values()) {
-                maximum = Math.max(maximum, surfaceFluidHead(layer));
-            }
-            return maximum;
-        }
-
-        private int surfaceFluidHead(HydrologyColumnLayer layer) {
-            return layer.feature().type().isSurface()
-                    && layer.channel()
-                    && layer.connectedFluid()
-                    && layer.fluidOwned()
-                    && !layer.oceanApron()
-                    && !layer.fallingFluid()
-                    ? layer.fluidHeadY()
-                    : Integer.MIN_VALUE;
-        }
-
-        private void raiseDrySurfaceBed(int minimumBed) {
-            if (singleLayer != null) {
-                singleLayer = raisedDrySurfaceLayer(singleLayer, naturalHeight, minimumBed);
-                return;
-            }
-            if (layers == null) {
-                return;
-            }
-            for (Map.Entry<Long, HydrologyColumnLayer> entry : layers.entrySet()) {
-                entry.setValue(raisedDrySurfaceLayer(entry.getValue(), naturalHeight, minimumBed));
-            }
         }
 
         private List<HydrologyColumnLayer> resolveSurfaceHeadConflicts(List<HydrologyColumnLayer> candidates) {

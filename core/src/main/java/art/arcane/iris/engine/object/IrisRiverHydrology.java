@@ -21,7 +21,7 @@ public class IrisRiverHydrology {
     @Desc("Organic centerline, bed, wall, and descending-water geometry.")
     private IrisRiverGeometryConfig geometry = new IrisRiverGeometryConfig();
 
-    @Desc("Surface river source, channel, hydraulic, ridge-tunnel, and mouth configuration.")
+    @Desc("Surface river source, channel, bank, flow, and mouth configuration.")
     private IrisSurfaceRiverConfig surface = new IrisSurfaceRiverConfig();
 
     @Desc("Independent underground river source and channel configuration.")
