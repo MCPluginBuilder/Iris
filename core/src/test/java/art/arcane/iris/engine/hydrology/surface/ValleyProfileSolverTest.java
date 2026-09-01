@@ -162,7 +162,7 @@ public class ValleyProfileSolverTest {
 
     private static ChannelProfile channel(int stations, HydrologyTerrainSampler sampler) {
         return new ChannelProfileBuilder(HydrologyPlannerSettings.defaults().surface(), sampler, CONSTANT_GEOMETRY)
-                .build(straight(stations), path(stations), "water", false);
+                .build(straight(stations), "water", false);
     }
 
     private static SurfaceCenterline straight(int stations) {

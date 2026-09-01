@@ -1,5 +1,8 @@
 package art.arcane.iris.engine.hydrology;
 
+import art.arcane.iris.engine.hydrology.surface.SurfaceFootprint;
+import art.arcane.iris.engine.hydrology.surface.SurfaceFootprintCompiler;
+import art.arcane.iris.engine.hydrology.surface.SurfaceLayerColumn;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -49,6 +52,8 @@ final class HydrologyFootprintCompiler {
     private final LinkedHashMap<CourseRasterKey, RiverFootprint> courseFootprints;
     private final LinkedHashMap<CourseRasterKey, ValidationCourseRaster> validationCourseRasters;
     private final Map<RasterStencilKey, RasterStencil> rasterStencils;
+    private final SurfaceFootprintCompiler surfaceCompiler;
+    private final LinkedHashMap<CourseRasterKey, SurfaceFootprint> surfaceFootprints;
     private int fullMaterializationCount;
 
     HydrologyFootprintCompiler(
@@ -86,7 +91,28 @@ final class HydrologyFootprintCompiler {
         this.courseFootprints = new LinkedHashMap<>(COURSE_FOOTPRINT_CACHE_SIZE, 1F, true);
         this.validationCourseRasters = new LinkedHashMap<>(VALIDATION_RASTER_CACHE_SIZE, 1F, true);
         this.rasterStencils = new HashMap<>();
+        this.surfaceCompiler = new SurfaceFootprintCompiler(settings, this::sampleTerrainBasis, this.geometrySampler);
+        this.surfaceFootprints = new LinkedHashMap<>(COURSE_FOOTPRINT_CACHE_SIZE, 1F, true);
         this.fullMaterializationCount = 0;
+    }
+
+    SurfaceFootprint surfaceFootprint(RiverCourse course) {
+        CourseRasterKey rasterKey = new CourseRasterKey(
+                course.id(),
+                course.type(),
+                course.profileKey(),
+                course.segments()
+        );
+        SurfaceFootprint cached = surfaceFootprints.get(rasterKey);
+        if (cached != null) {
+            return cached;
+        }
+        SurfaceFootprint compiled = surfaceCompiler.compile(course);
+        surfaceFootprints.put(rasterKey, compiled);
+        if (surfaceFootprints.size() > COURSE_FOOTPRINT_CACHE_SIZE) {
+            surfaceFootprints.remove(surfaceFootprints.sequencedKeySet().getFirst());
+        }
+        return compiled;
     }
 
     RiverFootprint compile(List<RiverCourse> courses) {
@@ -110,7 +136,6 @@ final class HydrologyFootprintCompiler {
                 column.merge(sample);
             }
         }
-        containSurfaceBanks(columns);
         return build(columns);
     }
 
@@ -125,17 +150,17 @@ final class HydrologyFootprintCompiler {
         if (!caveCandidatePresent) {
             return new ValidationRaster(
                     List.of(),
-                    new SurfaceRasterIndex(List.of(), new Long2ObjectOpenHashMap<>())
+                    new SurfaceRasterIndex(List.<SurfaceFootprint>of(), new Long2ObjectOpenHashMap<>())
             );
         }
 
         ArrayList<ValidationCourseRaster> courseRasters = new ArrayList<>(courses.size());
-        ArrayList<SurfaceSweep> surfaceSweeps = new ArrayList<>();
+        ArrayList<SurfaceFootprint> surfaces = new ArrayList<>();
         Long2ObjectOpenHashMap<HydrologyColumnSample> firstSamples = new Long2ObjectOpenHashMap<>();
         for (RiverCourse course : courses) {
             ValidationCourseRaster raster = compileValidationCourse(course);
             courseRasters.add(raster);
-            surfaceSweeps.addAll(raster.surfaceSweeps());
+            surfaces.add(raster.surface());
             for (HydrologyColumnSample sample : raster.columns()) {
                 long packed = RiverFootprint.pack(sample.x(), sample.z());
                 HydrologyColumnSample first = firstSamples.putIfAbsent(packed, sample);
@@ -146,7 +171,7 @@ final class HydrologyFootprintCompiler {
         }
         return new ValidationRaster(
                 List.copyOf(courseRasters),
-                new SurfaceRasterIndex(surfaceSweeps, firstSamples)
+                new SurfaceRasterIndex(surfaces, firstSamples)
         );
     }
 
@@ -567,14 +592,11 @@ final class HydrologyFootprintCompiler {
         boolean caveCourse = hasCaveSegment(course);
         features.clear();
         Long2ObjectLinkedOpenHashMap<MutableColumn> columns = new Long2ObjectLinkedOpenHashMap<>();
-        List<SurfaceSweep> surfaceSweeps = surfaceSweeps(course, true);
-        SurfaceRasterIndex courseSurface = new SurfaceRasterIndex(
-                surfaceSweeps,
-                new Long2ObjectOpenHashMap<>()
-        );
-        for (SurfaceSweep sweep : surfaceSweeps) {
-            rasterizeSurfaceSweep(columns, sweep, true);
+        SurfaceFootprint surface = surfaceFootprint(course);
+        for (SurfaceLayerColumn column : surface.columns()) {
+            addLayer(columns, column.x(), column.z(), column.terrain(), column.layer());
         }
+        SurfaceRasterIndex courseSurface = new SurfaceRasterIndex(List.of(surface), new Long2ObjectOpenHashMap<>());
         for (int segmentIndex = 0; segmentIndex < course.segments().size(); segmentIndex++) {
             HydraulicSegment segment = course.segments().get(segmentIndex);
             boolean firstSegment = segmentIndex == 0;
@@ -599,7 +621,7 @@ final class HydrologyFootprintCompiler {
         ValidationCourseRaster raster = new ValidationCourseRaster(
                 course.id(),
                 buildValidationColumns(columns),
-                surfaceSweeps
+                surface
         );
         validationCourseRasters.put(rasterKey, raster);
         if (validationCourseRasters.size() > VALIDATION_RASTER_CACHE_SIZE) {
@@ -658,19 +680,14 @@ final class HydrologyFootprintCompiler {
         }
         features.clear();
         Long2ObjectLinkedOpenHashMap<MutableColumn> columns = new Long2ObjectLinkedOpenHashMap<>();
-        List<SurfaceSweep> surfaceSweeps = surfaceSweeps(course, true);
-        SurfaceRasterIndex courseSurface = new SurfaceRasterIndex(
-                surfaceSweeps,
-                new Long2ObjectOpenHashMap<>()
-        );
-        for (SurfaceSweep sweep : surfaceSweeps) {
-            rasterizeSurfaceSweep(columns, sweep, false);
+        SurfaceFootprint surface = surfaceFootprint(course);
+        for (SurfaceLayerColumn column : surface.columns()) {
+            addLayer(columns, column.x(), column.z(), column.terrain(), column.layer());
         }
-        materializeSurfaceBankTerrain(columns);
-        containSurfaceBanks(columns);
+        SurfaceRasterIndex courseSurface = new SurfaceRasterIndex(List.of(surface), new Long2ObjectOpenHashMap<>());
         for (int segmentIndex = 0; segmentIndex < course.segments().size(); segmentIndex++) {
             HydraulicSegment segment = course.segments().get(segmentIndex);
-            if (segment.type().isSurface()) {
+            if (SurfaceFootprintCompiler.exposedSegment(segment)) {
                 continue;
             }
             boolean clipStart = segmentIndex > 0
@@ -3011,7 +3028,7 @@ final class HydrologyFootprintCompiler {
     private record ValidationCourseRaster(
             long courseId,
             List<HydrologyColumnSample> columns,
-            List<SurfaceSweep> surfaceSweeps
+            SurfaceFootprint surface
     ) {
     }
 
@@ -3228,17 +3245,23 @@ final class HydrologyFootprintCompiler {
     }
 
     private final class SurfaceRasterIndex implements HydrologyCaveVoxelViewFactory.PlannedSurface {
-        private final Long2ObjectOpenHashMap<ArrayList<SurfaceSweepEdge>> edgesByChunk;
-        private final Long2ObjectOpenHashMap<HydrologyColumnSample> rawSurfaceColumns;
+        private final Long2ObjectOpenHashMap<HydrologyColumnSample> surfaceColumns;
         private final Long2IntOpenHashMap validationNaturalHeights;
-        private final Long2IntOpenHashMap resolvedHeights;
 
         private SurfaceRasterIndex(
-                List<SurfaceSweep> surfaceSweeps,
+                List<SurfaceFootprint> footprints,
                 Long2ObjectOpenHashMap<HydrologyColumnSample> validationSamples
         ) {
-            this.edgesByChunk = new Long2ObjectOpenHashMap<>();
-            this.rawSurfaceColumns = new Long2ObjectOpenHashMap<>();
+            Long2ObjectLinkedOpenHashMap<MutableColumn> merged = new Long2ObjectLinkedOpenHashMap<>();
+            for (SurfaceFootprint footprint : footprints) {
+                for (SurfaceLayerColumn column : footprint.columns()) {
+                    addLayer(merged, column.x(), column.z(), column.terrain(), column.layer());
+                }
+            }
+            this.surfaceColumns = new Long2ObjectOpenHashMap<>(merged.size());
+            for (Long2ObjectMap.Entry<MutableColumn> entry : merged.long2ObjectEntrySet()) {
+                surfaceColumns.put(entry.getLongKey(), entry.getValue().build());
+            }
             this.validationNaturalHeights = new Long2IntOpenHashMap(validationSamples.size());
             for (HydrologyColumnSample sample : validationSamples.values()) {
                 validationNaturalHeights.put(
@@ -3246,145 +3269,37 @@ final class HydrologyFootprintCompiler {
                         sample.naturalHeight()
                 );
             }
-            this.resolvedHeights = new Long2IntOpenHashMap();
-            for (SurfaceSweep sweep : surfaceSweeps) {
-                index(sweep);
-            }
         }
 
         @Override
         public int resolve(int x, int z, int naturalHeight) {
             long packed = RiverFootprint.pack(x, z);
-            if (resolvedHeights.containsKey(packed)) {
-                return resolvedHeights.get(packed);
+            HydrologyColumnSample sample = surfaceColumns.get(packed);
+            if (sample != null) {
+                return sample.terrainHeight();
             }
-
-            MutableColumn column = null;
-            int rasterNaturalHeight = naturalHeight;
-            boolean rasterPresent = false;
-            for (SurfaceProjection projection : projectionsAt(x, z)) {
-                SurfaceCell cell = surfaceCell(projection, x, z);
-                if (cell == null) {
-                    continue;
-                }
-                if (!rasterPresent) {
-                    rasterNaturalHeight = cell.terrain().naturalHeight();
-                    rasterPresent = true;
-                }
-                if (cell.layer() == null) {
-                    continue;
-                }
-                if (column == null) {
-                    column = new MutableColumn(x, z, cell.terrain(), settings.seaLevel());
-                }
-                column.add(cell.layer());
+            if (validationNaturalHeights.containsKey(packed)) {
+                return validationNaturalHeights.get(packed);
             }
-
-            int resolved;
-            if (column != null) {
-                resolved = containedSurfaceBankHeight(column.build());
-            } else if (rasterPresent) {
-                resolved = rasterNaturalHeight;
-            } else if (validationNaturalHeights.containsKey(packed)) {
-                resolved = validationNaturalHeights.get(packed);
-            } else {
-                return naturalHeight;
-            }
-            resolvedHeights.put(packed, resolved);
-            return resolved;
-        }
-
-        private int containedSurfaceBankHeight(HydrologyColumnSample sample) {
-            return containedSurfaceBankSample(sample).terrainHeight();
-        }
-
-        private HydrologyColumnSample containedSurfaceBankSample(HydrologyColumnSample sample) {
-            if (sample.primarySurfaceFluidLayer().isPresent()) {
-                return sample;
-            }
-            int minimumBankHeight = Integer.MIN_VALUE;
-            for (int[] offset : HORIZONTAL_NEIGHBORS) {
-                int neighborX = sample.x() + offset[0];
-                int neighborZ = sample.z() + offset[1];
-                HydrologyTerrainSample terrain = sampleTerrainBasis(neighborX, neighborZ);
-                if (terrain == null) {
-                    continue;
-                }
-                HydrologyColumnSample neighbor = rawSurfaceColumnAt(
-                        neighborX,
-                        neighborZ,
-                        terrain.naturalHeight()
-                );
-                if (neighbor == null) {
-                    continue;
-                }
-                HydrologyColumnLayer fluid = neighbor.primarySurfaceFluidLayer().orElse(null);
-                if (fluid != null && !fluid.oceanApron() && !fluid.fallingFluid()) {
-                    minimumBankHeight = Math.max(minimumBankHeight, Math.addExact(fluid.fluidHeadY(), 1));
-                }
-            }
-            if (minimumBankHeight == Integer.MIN_VALUE) {
-                return sample;
-            }
-            ArrayList<HydrologyColumnLayer> raised = new ArrayList<>(sample.layers().size());
-            for (HydrologyColumnLayer layer : sample.layers()) {
-                raised.add(raisedDrySurfaceLayer(layer, sample.naturalHeight(), minimumBankHeight));
-            }
-            return new HydrologyColumnSample(
-                    sample.x(),
-                    sample.z(),
-                    sample.naturalHeight(),
-                    sample.seaLevel(),
-                    sample.ocean(),
-                    sample.parentBiomeKey(),
-                    raised
-            );
+            return naturalHeight;
         }
 
         private HydrologyColumnSample surfaceColumnAt(int x, int z, int naturalHeight) {
-            HydrologyColumnSample sample = rawSurfaceColumnAt(x, z, naturalHeight);
-            return sample == null ? null : containedSurfaceBankSample(sample);
-        }
-
-        private HydrologyColumnSample rawSurfaceColumnAt(int x, int z, int naturalHeight) {
-            long packed = RiverFootprint.pack(x, z);
-            HydrologyColumnSample cached = rawSurfaceColumns.get(packed);
-            if (cached != null) {
-                if (cached.naturalHeight() != naturalHeight) {
-                    throw new IllegalStateException("Hydrology surface and cave rasters disagree on natural terrain at "
-                            + x + "," + z + ".");
-                }
-                return cached;
-            }
-            MutableColumn column = null;
-            for (SurfaceProjection projection : projectionsAt(x, z)) {
-                SurfaceCell cell = surfaceCell(projection, x, z);
-                if (cell == null || cell.layer() == null) {
-                    continue;
-                }
-                if (column == null) {
-                    column = new MutableColumn(x, z, cell.terrain(), settings.seaLevel());
-                }
-                column.add(cell.layer());
-            }
-            if (column == null) {
-                return null;
-            }
-            HydrologyColumnSample sample = column.build();
-            if (sample.naturalHeight() != naturalHeight) {
+            HydrologyColumnSample sample = surfaceColumns.get(RiverFootprint.pack(x, z));
+            if (sample != null && sample.naturalHeight() != naturalHeight) {
                 throw new IllegalStateException("Hydrology surface and cave rasters disagree on natural terrain at "
                         + x + "," + z + ".");
             }
-            rawSurfaceColumns.put(packed, sample);
             return sample;
         }
 
         private boolean ownsSurfaceChannelAt(int x, int z, long courseId) {
-            for (SurfaceProjection projection : projectionsAt(x, z)) {
-                SurfaceCell cell = surfaceCell(projection, x, z);
-                HydrologyColumnLayer layer = cell == null ? null : cell.layer();
-                if (layer != null
-                        && layer.feature().courseId() == courseId
+            HydrologyColumnSample sample = surfaceColumns.get(RiverFootprint.pack(x, z));
+            if (sample == null) {
+                return false;
+            }
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (layer.feature().courseId() == courseId
                         && layer.feature().type().isSurface()
                         && layer.channel()
                         && layer.terrainOwned()) {
@@ -3392,67 +3307,6 @@ final class HydrologyFootprintCompiler {
                 }
             }
             return false;
-        }
-
-        private List<SurfaceProjection> projectionsAt(int x, int z) {
-            ArrayList<SurfaceSweepEdge> edges = edgesByChunk.get(RiverFootprint.pack(x >> 4, z >> 4));
-            if (edges == null) {
-                return List.of();
-            }
-            IdentityHashMap<SurfaceSweep, SurfaceProjection> selected = new IdentityHashMap<>();
-            for (SurfaceSweepEdge edge : edges) {
-                SurfaceProjection candidate = surfaceProjection(edge.sweep(), edge.edgeIndex(), x, z);
-                if (candidate == null) {
-                    continue;
-                }
-                SurfaceProjection current = selected.get(edge.sweep());
-                if (current == null || prefersSurfaceProjection(candidate, current)) {
-                    selected.put(edge.sweep(), candidate);
-                }
-            }
-            ArrayList<SurfaceProjection> projections = new ArrayList<>(selected.values());
-            projections.sort(Comparator
-                    .comparingLong((SurfaceProjection projection) -> projection.sweep().course().id())
-                    .thenComparingInt((SurfaceProjection projection) -> projection.sweep().points().getFirst().point().x())
-                    .thenComparingInt((SurfaceProjection projection) -> projection.sweep().points().getFirst().point().z())
-                    .thenComparingInt(SurfaceProjection::edgeIndex));
-            return List.copyOf(projections);
-        }
-
-        private void index(SurfaceSweep sweep) {
-            if (sweep.points().size() == 1) {
-                index(new SurfaceSweepEdge(sweep, -1));
-                return;
-            }
-            for (int edgeIndex = 0; edgeIndex < sweep.points().size() - 1; edgeIndex++) {
-                index(new SurfaceSweepEdge(sweep, edgeIndex));
-            }
-        }
-
-        private void index(SurfaceSweepEdge edge) {
-            SurfaceSweepPoint start = edge.sweep().points().get(Math.max(0, edge.edgeIndex()));
-            SurfaceSweepPoint end = edge.edgeIndex() < 0
-                    ? start
-                    : edge.sweep().points().get(edge.edgeIndex() + 1);
-            int blockRadius = (int) StrictMath.ceil(Math.max(
-                    start.shape().totalRadius(),
-                    end.shape().totalRadius()
-            ));
-            int minimumChunkX = (Math.min(start.point().x(), end.point().x()) - blockRadius) >> 4;
-            int maximumChunkX = (Math.max(start.point().x(), end.point().x()) + blockRadius) >> 4;
-            int minimumChunkZ = (Math.min(start.point().z(), end.point().z()) - blockRadius) >> 4;
-            int maximumChunkZ = (Math.max(start.point().z(), end.point().z()) + blockRadius) >> 4;
-            for (int chunkZ = minimumChunkZ; chunkZ <= maximumChunkZ; chunkZ++) {
-                for (int chunkX = minimumChunkX; chunkX <= maximumChunkX; chunkX++) {
-                    long chunkKey = RiverFootprint.pack(chunkX, chunkZ);
-                    ArrayList<SurfaceSweepEdge> edges = edgesByChunk.get(chunkKey);
-                    if (edges == null) {
-                        edges = new ArrayList<>();
-                        edgesByChunk.put(chunkKey, edges);
-                    }
-                    edges.add(edge);
-                }
-            }
         }
     }
 

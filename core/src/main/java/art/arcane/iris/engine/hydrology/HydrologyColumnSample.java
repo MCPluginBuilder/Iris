@@ -62,15 +62,6 @@ public record HydrologyColumnSample(
                 }
             }
         }
-        for (HydrologyColumnLayer layer : layers) {
-            if (layer.feature().type().isSurface()
-                    && !layer.oceanApron()
-                    && layer.channel()
-                    && layer.fluidOwned()
-                    && layer.fluidHeadY() >= naturalHeight) {
-                throw new IllegalArgumentException("Owned surface fluid must remain below natural terrain.");
-            }
-        }
     }
 
     public boolean present() {

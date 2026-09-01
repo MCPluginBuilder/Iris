@@ -22,7 +22,7 @@ public class ChannelProfileBuilderTest {
     @Test
     public void cruiseWidthIsConstantAndTapersFromTheHeadwater() {
         SurfaceCenterline centerline = straight(400);
-        ChannelProfile profile = builder(1D, 1D).build(centerline, path(400), "water", false);
+        ChannelProfile profile = builder(1D, 1D).build(centerline, "water", false);
 
         assertEquals(400, profile.size());
         assertEquals(3D, profile.halfWidth()[200], 1.0E-9D);
@@ -38,7 +38,7 @@ public class ChannelProfileBuilderTest {
     @Test
     public void directOceanCoursesFlareAtTheMouth() {
         SurfaceCenterline centerline = straight(400);
-        ChannelProfile profile = builder(1D, 1D).build(centerline, path(400), "water", true);
+        ChannelProfile profile = builder(1D, 1D).build(centerline, "water", true);
 
         assertEquals(3D * 1.6D, profile.halfWidth()[399], 0.05D);
         assertEquals(3D, profile.halfWidth()[300], 1.0E-9D);
@@ -47,7 +47,7 @@ public class ChannelProfileBuilderTest {
     @Test
     public void policyMultipliersScaleWidthDepthAndBank() {
         SurfaceCenterline centerline = straight(400);
-        ChannelProfile profile = builder(2D, 0.5D).build(centerline, path(400), "water", false);
+        ChannelProfile profile = builder(2D, 0.5D).build(centerline, "water", false);
 
         assertEquals(6D, profile.halfWidth()[200], 1.0E-9D);
         assertEquals(1.5D, profile.depth()[200], 1.0E-9D);

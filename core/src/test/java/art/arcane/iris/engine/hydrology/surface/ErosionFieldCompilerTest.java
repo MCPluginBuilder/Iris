@@ -158,7 +158,7 @@ public class ErosionFieldCompilerTest {
         List<HydrologyPoint> path = List.of(new HydrologyPoint(0, 0, 0), new HydrologyPoint(stations - 1, 0, 0));
         SurfaceCenterline centerline = SurfaceCenterline.densify(path);
         ChannelProfile channel = new ChannelProfileBuilder(surface, sampler, CONSTANT_GEOMETRY)
-                .build(centerline, path, "water", terminal == SurfaceTerminal.OCEAN_MOUTH);
+                .build(centerline, "water", terminal == SurfaceTerminal.OCEAN_MOUTH);
         ValleyProfile valley = new ValleyProfileSolver(surface, sampler, SEA_LEVEL, 64)
                 .solve(centerline, channel, terminal, terminalHead);
         assertNull(valley.rejection());

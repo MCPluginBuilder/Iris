@@ -2,11 +2,9 @@ package art.arcane.iris.engine.hydrology.surface;
 
 import art.arcane.iris.engine.hydrology.HydrologyGeometrySampler;
 import art.arcane.iris.engine.hydrology.HydrologyPlannerSettings;
-import art.arcane.iris.engine.hydrology.HydrologyPoint;
 import art.arcane.iris.engine.hydrology.HydrologyTerrainSample;
 import art.arcane.iris.engine.hydrology.HydrologyTerrainSampler;
 
-import java.util.List;
 import java.util.Objects;
 
 public final class ChannelProfileBuilder {
@@ -30,7 +28,6 @@ public final class ChannelProfileBuilder {
 
     public ChannelProfile build(
             SurfaceCenterline centerline,
-            List<HydrologyPoint> path,
             String profileKey,
             boolean directOcean
     ) {
@@ -39,12 +36,13 @@ public final class ChannelProfileBuilder {
         double[] depth = new double[count];
         double[] bank = new double[count];
         for (int station = 0; station < count; station++) {
-            HydrologyPoint point = path.get(Math.min(path.size() - 1, centerline.pathIndex()[station]));
+            int stationX = centerline.x()[station];
+            int stationZ = centerline.z()[station];
             int sampledWidth = geometry.sample(
                     HydrologyGeometrySampler.Field.SURFACE_WIDTH,
                     profileKey,
-                    point.x(),
-                    point.z(),
+                    stationX,
+                    stationZ,
                     0L,
                     surface.minimumWidth(),
                     surface.maximumWidth()
@@ -52,13 +50,13 @@ public final class ChannelProfileBuilder {
             int sampledDepth = geometry.sample(
                     HydrologyGeometrySampler.Field.SURFACE_DEPTH,
                     profileKey,
-                    point.x(),
-                    point.z(),
+                    stationX,
+                    stationZ,
                     0L,
                     surface.minimumDepth(),
                     surface.maximumDepth()
             );
-            HydrologyTerrainSample terrain = sampler.sample(centerline.x()[station], centerline.z()[station]);
+            HydrologyTerrainSample terrain = sampler.sample(stationX, stationZ);
             double widthMultiplier = terrain == null ? 1D : terrain.widthMultiplier();
             double depthMultiplier = terrain == null ? 1D : terrain.depthMultiplier();
             bank[station] = terrain == null ? 1D : terrain.bankMultiplier();

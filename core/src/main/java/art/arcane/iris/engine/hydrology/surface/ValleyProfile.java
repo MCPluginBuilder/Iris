@@ -14,6 +14,10 @@ public record ValleyProfile(
         return rejection == null;
     }
 
+    public static ValleyProfile fromHeads(int[] head, int exposedStations) {
+        return new ValleyProfile(head, new int[0], new int[0], new int[0], exposedStations, null);
+    }
+
     public static ValleyProfile rejected(HydrologyCandidateRejection rejection) {
         return new ValleyProfile(new int[0], new int[0], new int[0], new int[0], 0, rejection);
     }
