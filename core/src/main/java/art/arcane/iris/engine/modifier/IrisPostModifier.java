@@ -28,6 +28,7 @@ import art.arcane.iris.engine.object.IrisSlopeClip;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.project.hunk.Hunk;
+import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -71,6 +72,26 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
      * resolve the same height stream entry up to five times. Resolve the padded plane once instead. The
      * four diagonal corners are never read, so they are left unresolved.
      */
+    private boolean riverColumn(int x, int z) {
+        ProceduralStream<Double> carveWeights = getComplex().getRiverCarveWeightStream();
+        return skipsHydrologyColumn(new double[] {
+                carveWeights.get(x, z),
+                carveWeights.get(x + 1, z),
+                carveWeights.get(x - 1, z),
+                carveWeights.get(x, z + 1),
+                carveWeights.get(x, z - 1)
+        });
+    }
+
+    static boolean skipsHydrologyColumn(double[] carveWeights) {
+        for (double weight : carveWeights) {
+            if (weight > 0D) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private int[] heightPlane(int x, int z, int width, int depth, int planeWidth) {
         int[] heights = new int[planeWidth * (depth + 2)];
         EngineMantle mantle = getEngine().getMantle();
@@ -100,6 +121,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         int hc = heights[center - 1];
         int hd = heights[center - planeWidth];
         int fluidHeight = (int) Math.round(getComplex().getRiverWaterSurfaceStream().get(x, z));
+        boolean river = riverColumn(x, z);
 
         // Floating Nibs
         int g = 0;
@@ -113,7 +135,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         g += hc < h - 1 ? 1 : 0;
         g += hd < h - 1 ? 1 : 0;
 
-        if (g == 4 && isAir(x, h - 1, z, originX, originZ, currentData)) {
+        if (!river && g == 4 && isAir(x, h - 1, z, originX, originZ, currentData)) {
             setPostBlock(x, h, z, States.AIR, originX, originZ, currentData);
 
             for (int i = h - 1; i > 0; i--) {
@@ -131,6 +153,10 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         g += hc == h - 1 ? 1 : 0;
         g += hd == h - 1 ? 1 : 0;
 
+        if (river) {
+            g = -1;
+        }
+
         if (g >= 4) {
             PlatformBlockState bcState = getPostBlock(x, h, z, originX, originZ, currentData);
             PlatformBlockState bState = getPostBlock(x, h + 1, z, originX, originZ, currentData);
@@ -141,7 +167,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
                     h--;
                 }
             }
-        } else {
+        } else if (!river) {
             // Potholes
             g = 0;
             g += ha == h + 1 ? 1 : 0;
@@ -170,7 +196,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         // Wall Patcher
         IrisBiome biome = context.getBiome().get(currentPostX, currentPostZ);
 
-        if (walls) {
+        if (walls && !river) {
             if (!biome.getWall().getPalette().isEmpty()) {
                 if (ha < h - 2 || hb < h - 2 || hc < h - 2 || hd < h - 2) {
                     boolean brokeGround = false;
@@ -197,7 +223,7 @@ public class IrisPostModifier extends EngineAssignedModifier<PlatformBlockState>
         }
 
         // Slab
-        if (slabs) {
+        if (slabs && !river) {
             //@builder
             if ((ha == h + 1 && isSolidNonSlab(x + 1, ha, z, originX, originZ, currentData))
                     || (hb == h + 1 && isSolidNonSlab(x, hb, z + 1, originX, originZ, currentData))

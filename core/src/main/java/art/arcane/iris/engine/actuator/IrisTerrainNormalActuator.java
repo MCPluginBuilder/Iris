@@ -103,6 +103,8 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         KList<IrisOreGenerator> dimensionUndergroundOres = hideOres ? null : dimension.getUndergroundOreGenerators();
         IrisOreGeneratorBounds dimensionSurfaceOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getSurfaceOreGeneratorBounds();
         IrisOreGeneratorBounds dimensionUndergroundOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getUndergroundOreGeneratorBounds();
+        boolean exposeCutStrata = dimension.getHydrology() != null
+                && dimension.getHydrology().getRivers().getSurface().getBanks().isExposeCutStrata();
 
         for (int zf = 0; zf < chunkDepth; zf++) {
             int realZ = zf + z;
@@ -125,6 +127,15 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
             HydrologyColumnLayer hydrologyFluid = hydrology == null
                     ? null
                     : hydrology.primarySurfaceFluidLayer().orElse(null);
+            HydrologyColumnLayer hydrologyTerrain = hydrology == null
+                    ? null
+                    : hydrology.primarySurfaceLayer().orElse(null);
+            int cut = exposeCutStrata
+                    && hydrologyTerrain != null
+                    && hydrologyTerrain.terrainOwned()
+                    && !hydrologyTerrain.channel()
+                    ? Math.max(0, hydrology.naturalHeight() - he)
+                    : 0;
             PlatformBlockState fluid = hydrologyFluid == null
                     ? complex.resolveSurfaceFluid(realX, realZ)
                     : complex.resolveHydrologyFluid(hydrologyFluid.profileKey(), realX, realZ);
@@ -188,11 +199,11 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
                         continue;
                     }
                     if (blocks == null) {
-                        blocks = biome.generateLayers(dimension, realX, realZ, localRng, he, he, data, complex);
+                        blocks = biome.generateLayers(dimension, realX, realZ, localRng, he + cut, he + cut, data, complex);
                     }
 
-                    if (blocks.hasIndex(depth)) {
-                        h.setRaw(xf, i, zf, blocks.get(depth));
+                    if (blocks.hasIndex(depth + cut)) {
+                        h.setRaw(xf, i, zf, blocks.get(depth + cut));
                         continue;
                     }
 

@@ -632,7 +632,7 @@ public class IrisComplex implements DataProvider {
         if (layer.channel()) {
             return 1D;
         }
-        return layer.shore() ? 0.5D : 0.25D;
+        return layer.shore() ? 0.75D : 0.5D;
     }
 
     private double resolveHydrologyFluidSurface(double x, double z) {
@@ -656,6 +656,11 @@ public class IrisComplex implements DataProvider {
 
     public boolean hasHydrologySurfaceFluid(int x, int z) {
         return surfaceFluidLayer(x, z) != null;
+    }
+
+    public boolean hasHydrologyChannelOrShore(int x, int z) {
+        HydrologyColumnLayer layer = surfaceLayer(x, z);
+        return layer != null && (layer.channel() || layer.shore());
     }
 
     public ProceduralStream<IrisBiome> getBiomeStream(InferredType type) {
@@ -732,7 +737,7 @@ public class IrisComplex implements DataProvider {
                 throw new IllegalStateException("Hydrology biome does not exist: " + biomeKey);
             }
             if (layer.biomeKey() == null) {
-                return biome;
+                return implode(biome.withInferredType(InferredType.LAND), x, z);
             }
             InferredType inferredType = layer.shore()
                     ? InferredType.SHORE

@@ -326,7 +326,7 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
                         + position + ".");
             }
             String biomeKey = action == HydrologyCaveAction.DRY_AIR
-                    ? layer.bankBiomeKey()
+                    ? layer.floodedCaveBiomeKey()
                     : layer.floodedCaveBiomeKey();
             PlannedCell candidate = new PlannedCell(
                     new HydrologyCaveCell(action, layer.profileKey(), biomeKey),

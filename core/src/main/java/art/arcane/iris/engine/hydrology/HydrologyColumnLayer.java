@@ -56,7 +56,7 @@ public record HydrologyColumnLayer(
 
     public String biomeKey() {
         if (grading && !channel && !shore) {
-            return null;
+            return bankBiomeKey;
         }
         if (shore) {
             return shoreBiomeKey;

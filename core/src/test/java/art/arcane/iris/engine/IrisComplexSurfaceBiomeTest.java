@@ -21,7 +21,7 @@ import static org.mockito.Mockito.mock;
 
 public class IrisComplexSurfaceBiomeTest {
     @Test
-    public void gradingFootprintKeepsItsExactNaturalParentBiome() {
+    public void gradingFootprintUsesTheBankBiome() {
         HydrologyFeatureRef feature = new HydrologyFeatureRef(
                 1L,
                 HydrologyFeatureType.SURFACE_POOL,
@@ -65,7 +65,7 @@ public class IrisComplexSurfaceBiomeTest {
                 List.of(grading)
         );
 
-        assertEquals("exact_parent", IrisComplex.hydrologySurfaceBiomeKey(sample));
+        assertEquals("dry", IrisComplex.hydrologySurfaceBiomeKey(sample));
     }
 
     @Test
