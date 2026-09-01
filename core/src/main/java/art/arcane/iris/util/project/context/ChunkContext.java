@@ -3,6 +3,7 @@ package art.arcane.iris.util.project.context;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.EngineMetrics;
+import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.object.FloatingIslandBoundarySampler;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -61,6 +62,10 @@ public class ChunkContext {
             PrefillPlan resolvedPlan = prefillPlan == null ? PrefillPlan.NO_CAVE : prefillPlan;
             boolean capturePrefillMetric = metrics != null;
             long totalStartNanos = capturePrefillMetric ? System.nanoTime() : 0L;
+            IrisHydrologyRuntime hydrologyRuntime = complex.getHydrologyRuntime();
+            if (hydrologyRuntime != null && (resolvedPlan.height || resolvedPlan.biome)) {
+                hydrologyRuntime.prepareChunkColumns(x, z);
+            }
             List<Runnable> fillTasks = new ArrayList<>(6);
             if (resolvedPlan.height) {
                 fillTasks.add(() -> height.fillRounded(roundedHeight));

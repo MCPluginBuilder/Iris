@@ -21,6 +21,7 @@ package art.arcane.iris.engine.framework;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.nms.container.BlockPos;
 import art.arcane.iris.core.nms.container.Pair;
+import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -53,8 +54,20 @@ public interface Locator<T> {
     }
 
     static Locator<IrisBiome> surfaceBiome(String loadKey) {
-        Locator<IrisBiome> exact = (e, c) -> e.getSurfaceBiome((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
+        Locator<IrisBiome> exact = (e, c) -> chunkContainsSurfaceBiome(e, c, loadKey);
         return new HintedLocator<>(exact, (engine) -> HintedLocator.biomePlan(engine, loadKey));
+    }
+
+    static boolean chunkContainsSurfaceBiome(Engine engine, Position2 chunk, String loadKey) {
+        int minimumX = chunk.getX() << 4;
+        int minimumZ = chunk.getZ() << 4;
+        IrisBiome center = engine.getSurfaceBiome(minimumX + 8, minimumZ + 8);
+        if (center != null && loadKey.equals(center.getLoadKey())) {
+            return true;
+        }
+        IrisHydrologyRuntime hydrology = engine.getComplex().getHydrologyRuntime();
+        return hydrology != null
+                && hydrology.hasAcceptedSurfaceBiomeInChunk(loadKey, chunk.getX(), chunk.getZ());
     }
 
     static Locator<art.arcane.iris.engine.object.IrisStructure> structure(String key) {

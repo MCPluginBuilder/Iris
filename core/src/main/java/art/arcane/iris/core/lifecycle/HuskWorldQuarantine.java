@@ -2,6 +2,7 @@ package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.WorldSlotKey;
+import art.arcane.iris.engine.IrisEngineMantle;
 
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -37,7 +38,9 @@ import java.util.stream.Stream;
 public final class HuskWorldQuarantine {
     private static final String IRIS_NAMESPACE = "iris";
     private static final Pattern MANAGED_KEY = Pattern.compile("[a-z0-9_-]+");
-    private static final String[] CHUNK_DATA_DIRECTORIES = {"region", "entities", "poi", "mantle"};
+    private static final String[] CHUNK_DATA_DIRECTORIES = {
+            "region", "entities", "poi", IrisEngineMantle.STORAGE_FOLDER_NAME
+    };
     private static final Set<String> OS_METADATA_FILES = Set.of(".DS_Store", "Thumbs.db", "desktop.ini");
     private static final String APPLE_DOUBLE_PREFIX = "._";
     private static final DateTimeFormatter STAMP = DateTimeFormatter

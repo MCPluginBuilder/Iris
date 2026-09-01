@@ -1,0 +1,2226 @@
+package art.arcane.iris.engine.hydrology;
+
+import org.junit.Test;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+
+public class HydrologyFootprintCompilerTest {
+    @Test
+    public void surfaceChannelNeverRaisesTerrainOrPublishesUnsupportedFluid() {
+        HydraulicSegment segment = new HydraulicSegment(
+                9L,
+                8L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                10,
+                4,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(24, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                z < 0 ? 54 : 82,
+                0D,
+                "parent"
+        );
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                terrain,
+                request -> request.minimum()
+        ).compile(List.of(course(8L, RiverCourseType.SURFACE, segment)));
+
+        HydrologyColumnSample lowCenter = footprint.sample(12, -1).orElse(null);
+        assertTrue(lowCenter == null || lowCenter.primarySurfaceFluidLayer().isEmpty());
+        for (HydrologyColumnSample sample : footprint.columns().values()) {
+            assertTrue(sample.terrainHeight() <= sample.naturalHeight());
+            sample.primarySurfaceFluidLayer().ifPresent((HydrologyColumnLayer layer) ->
+                    assertTrue(layer.fluidHeadY() < sample.naturalHeight()));
+        }
+    }
+
+    @Test
+    public void sparseCenterlinePublishesAContinuousOwnedFluidChannel() {
+        HydraulicSegment segment = new HydraulicSegment(
+                11L,
+                10L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(8, 70, 0))
+        );
+        RiverCourse course = new RiverCourse(
+                10L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(segment)
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(75, 1D, "parent");
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                terrain,
+                HydrologyGeometrySampler.deterministic(1L, terrain)
+        ).compile(List.of(course));
+
+        for (int x = 0; x <= 8; x++) {
+            HydrologyColumnLayer layer = footprint.sample(x, 0)
+                    .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                    .orElseThrow();
+            assertTrue(layer.channel());
+            assertTrue(layer.connectedFluid());
+            assertTrue(layer.fluidOwned());
+        }
+        HydrologyColumnLayer firstShared = footprint.sample(1, 0)
+                .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                .orElseThrow();
+        HydrologyColumnLayer secondShared = footprint.sample(2, 0)
+                .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                .orElseThrow();
+        assertSame(firstShared.feature(), secondShared.feature());
+    }
+
+    @Test
+    public void sweptSurfaceChannelDoesNotRoundItsCascadeLipOverLowerTerrain() {
+        HydraulicSegment approach = new HydraulicSegment(
+                21L,
+                20L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                12,
+                5,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(8, 70, 0))
+        );
+        HydraulicSegment cascade = new HydraulicSegment(
+                22L,
+                20L,
+                HydrologyFeatureType.WATERFALL,
+                70,
+                60,
+                4,
+                5,
+                true,
+                true,
+                List.of(
+                        new HydrologyPoint(8, 70, 0),
+                        new HydrologyPoint(9, 60, 0),
+                        new HydrologyPoint(10, 60, 0)
+                )
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                x > 8 ? 64 : 82,
+                0D,
+                "parent"
+        );
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                terrain,
+                request -> request.minimum()
+        ).compile(List.of(new RiverCourse(
+                20L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(21L),
+                OptionalLong.of(22L),
+                "water",
+                1,
+                List.of(),
+                List.of(approach, cascade)
+        )));
+
+        assertTrue(footprint.sample(8, 0).flatMap(HydrologyColumnSample::primarySurfaceFluidLayer).isPresent());
+        HydrologyColumnLayer receivingLayer = footprint.sample(9, 0)
+                .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                .orElseThrow();
+        assertTrue(receivingLayer.fluidHeadY() <= 64);
+    }
+
+    @Test
+    public void sweptSurfaceChannelHasABroadThalwegAndContinuousOrganicBanks() {
+        HydraulicSegment segment = new HydraulicSegment(
+                13L,
+                12L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                12,
+                5,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(96, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(82, 0D, "parent");
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                terrain,
+                request -> request.minimum()
+        ).compile(List.of(course(12L, RiverCourseType.SURFACE, segment)));
+
+        ArrayList<Integer> crossSection = new ArrayList<>();
+        for (int z = 0; z <= 8; z++) {
+            HydrologyColumnLayer layer = footprint.sample(72, z)
+                    .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                    .orElse(null);
+            if (layer == null) {
+                break;
+            }
+            crossSection.add(layer.bedY());
+        }
+        assertTrue(crossSection.size() >= 7);
+        assertTrue(crossSection.getFirst() >= 65 && crossSection.getFirst() <= 66);
+        int thalwegMinimum = crossSection.subList(0, 4).stream().mapToInt(Integer::intValue).min().orElseThrow();
+        int thalwegMaximum = crossSection.subList(0, 4).stream().mapToInt(Integer::intValue).max().orElseThrow();
+        assertTrue(thalwegMaximum - thalwegMinimum <= 1);
+        for (int index = 1; index < crossSection.size(); index++) {
+            assertTrue(crossSection.get(index) >= crossSection.get(index - 1));
+            assertTrue(
+                    "crossSection=" + crossSection,
+                    crossSection.get(index) - crossSection.get(index - 1) <= 3
+            );
+        }
+
+        for (int x = 60; x < 84; x++) {
+            for (int z = -5; z < 5; z++) {
+                HydrologyColumnLayer northWest = surfaceFluidLayer(footprint, x, z);
+                HydrologyColumnLayer northEast = surfaceFluidLayer(footprint, x + 1, z);
+                HydrologyColumnLayer southWest = surfaceFluidLayer(footprint, x, z + 1);
+                HydrologyColumnLayer southEast = surfaceFluidLayer(footprint, x + 1, z + 1);
+                if (northWest == null || northEast == null || southWest == null || southEast == null) {
+                    continue;
+                }
+                boolean checker = northWest.bedY() == southEast.bedY()
+                        && northEast.bedY() == southWest.bedY()
+                        && northWest.bedY() != northEast.bedY();
+                assertFalse(checker);
+            }
+        }
+    }
+
+    @Test
+    public void surfaceChannelRejectsTerrainAtItsFluidHead() {
+        HydraulicSegment segment = new HydraulicSegment(
+                15L,
+                14L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(24, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(70, 0D, "parent");
+        RiverFootprint footprint = compiler(terrain).compile(List.of(course(14L, RiverCourseType.SURFACE, segment)));
+
+        for (int x = 0; x <= 24; x++) {
+            assertTrue(footprint.sample(x, 0)
+                    .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                    .isEmpty());
+        }
+    }
+
+    @Test
+    public void deepPoolIsOneConnectedAsymmetricMultiLobedBowl() {
+        HydrologyPlannerSettings base = HydrologyPlannerSettings.defaults();
+        HydrologyPlannerSettings.DeepFluid deepFluid = new HydrologyPlannerSettings.DeepFluid(
+                "lava",
+                true,
+                1D,
+                512,
+                -64,
+                32,
+                20,
+                20,
+                8,
+                8,
+                0,
+                0,
+                4,
+                2,
+                5,
+                65536,
+                1,
+                true,
+                false
+        );
+        HydrologyPlannerSettings settings = new HydrologyPlannerSettings(
+                base.seaLevel(),
+                base.routing(),
+                base.surface(),
+                base.hydraulics(),
+                base.underground(),
+                base.outlets(),
+                HydrologyPlannerSettings.Geometry.defaults(),
+                List.of(deepFluid)
+        );
+        HydraulicSegment segment = new HydraulicSegment(
+                15L,
+                14L,
+                HydrologyFeatureType.DEEP_POOL,
+                -20,
+                -20,
+                40,
+                8,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, -20, 0))
+        );
+        RiverCourse course = new RiverCourse(
+                14L,
+                RiverCourseType.DEEP_FLUID,
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                "lava",
+                1,
+                List.of(),
+                List.of(segment)
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(80, 0D, "parent");
+        RiverFootprint footprint = new HydrologyFootprintCompiler(settings, terrain, request -> request.minimum())
+                .compile(List.of(course));
+
+        HashSet<Long> wetColumns = new HashSet<>();
+        int shallowestBed = Integer.MIN_VALUE;
+        for (HydrologyColumnSample sample : footprint.columns().values()) {
+            HydrologyColumnLayer layer = sample.layers().getFirst();
+            if (!layer.channel()) {
+                continue;
+            }
+            wetColumns.add(RiverFootprint.pack(sample.x(), sample.z()));
+            shallowestBed = Math.max(shallowestBed, layer.bedY());
+        }
+        assertTrue(wetColumns.size() > 100);
+        assertEquals(wetColumns.size(), connectedColumnCount(wetColumns));
+        assertTrue(layerAt(footprint, 0, 0).bedY() < shallowestBed);
+
+        boolean rotationalMismatch = false;
+        for (long packed : wetColumns) {
+            int x = RiverFootprint.unpackX(packed);
+            int z = RiverFootprint.unpackZ(packed);
+            if (wetColumns.contains(RiverFootprint.pack(-z, x)) != wetColumns.contains(packed)) {
+                rotationalMismatch = true;
+                break;
+            }
+        }
+        assertTrue(rotationalMismatch);
+    }
+
+    @Test
+    public void overlappingRasterPointsReuseExactClassificationAndPreserveCanonicalAnchors() {
+        HydraulicSegment segment = new HydraulicSegment(
+                111L,
+                110L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(16, 70, 0))
+        );
+        RiverCourse course = course(110L, RiverCourseType.SURFACE, segment);
+        HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 1D, "parent");
+        CountingNaturalSampler naturalSampler = new CountingNaturalSampler(
+                terrain,
+                HydrologyRoutingTerrainSampler.NaturalClassification.LAND
+        );
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                new HydrologyFootprintCompiler.Sampling(
+                        (int x, int z) -> terrain,
+                        request -> request.minimum(),
+                        naturalSampler
+                )
+        ).compile(List.of(course));
+
+        assertEquals(footprint.size(), naturalSampler.classificationCalls());
+        ArrayList<Long> keys = new ArrayList<>(footprint.columns().keySet());
+        ArrayList<Long> sortedKeys = new ArrayList<>(keys);
+        sortedKeys.sort(Long::compareTo);
+        assertEquals(sortedKeys, keys);
+        HydrologyFeatureRef channelFeature = footprint.sample(1, 0)
+                .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                .orElseThrow()
+                .feature();
+        assertEquals(70, channelFeature.y());
+        assertEquals(111L, channelFeature.segmentId());
+        assertTrue(footprint.sample(channelFeature.x(), channelFeature.z()).isPresent());
+    }
+
+    @Test
+    public void styledBlendAndHeadroomSampleOnlySelectedCenterlines() {
+        HydraulicSegment surfaceSegment = new HydraulicSegment(
+                21L,
+                20L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0))
+        );
+        HydraulicSegment undergroundSegment = new HydraulicSegment(
+                31L,
+                30L,
+                HydrologyFeatureType.UNDERGROUND_POOL,
+                50,
+                50,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(20, 50, 0))
+        );
+        RiverCourse surface = course(20L, RiverCourseType.SURFACE, surfaceSegment);
+        RiverCourse underground = course(30L, RiverCourseType.UNDERGROUND, undergroundSegment);
+        HydrologyPlannerSettings settings = HydrologyPlannerSettings.defaults();
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(80, 1D, "parent");
+        AtomicInteger geometrySamples = new AtomicInteger();
+        HydrologyGeometrySampler geometry = request -> {
+            geometrySamples.incrementAndGet();
+            return request.x() < 10 ? request.maximum() : request.minimum();
+        };
+
+        RiverFootprint first = new HydrologyFootprintCompiler(settings, terrain, geometry)
+                .compile(List.of(surface, underground));
+        RiverFootprint repeated = new HydrologyFootprintCompiler(settings, terrain, geometry)
+                .compile(List.of(surface, underground));
+
+        assertEquals(first, repeated);
+        assertEquals(4, geometrySamples.get());
+        int surfaceRadius = surfaceSegment.width() / 2;
+        int outerX = surfaceRadius
+                + (int) StrictMath.ceil(settings.surface().shoreWidth())
+                + settings.surface().maximumTerrainBlendWidth();
+        HydrologyColumnLayer grading = first.sample(outerX, 0).orElseThrow().layers().getFirst();
+        assertTrue(grading.grading());
+        HydrologyColumnLayer channel = first.sample(20, 0).orElseThrow().layers().getFirst();
+        assertEquals(settings.underground().minimumHeadroom(), channel.ceilingY() - channel.fluidHeadY());
+    }
+
+    @Test
+    public void surfaceChannelUsesSlopeFreeBasesWithIdenticalFootprint() {
+        HydraulicSegment segment = new HydraulicSegment(
+                41L,
+                40L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0))
+        );
+        RiverCourse course = course(40L, RiverCourseType.SURFACE, segment);
+        HydrologyPlannerSettings settings = HydrologyPlannerSettings.defaults();
+        HydrologyTerrainSample detailed = HydrologyTerrainSample.openLand(80, 20D, "parent");
+        AtomicInteger baselineCalls = new AtomicInteger();
+        HydrologyTerrainSampler baselineSampler = (int x, int z) -> {
+            baselineCalls.incrementAndGet();
+            return detailed;
+        };
+        RiverFootprint baseline = new HydrologyFootprintCompiler(
+                settings,
+                baselineSampler,
+                request -> request.minimum()
+        ).compile(List.of(course));
+        AtomicInteger detailedCalls = new AtomicInteger();
+        HydrologyTerrainSampler detailedSampler = (int x, int z) -> {
+            detailedCalls.incrementAndGet();
+            return detailed;
+        };
+        CountingNaturalSampler naturalSampler = new CountingNaturalSampler(
+                detailed.withSlope(0D),
+                HydrologyRoutingTerrainSampler.NaturalClassification.LAND
+        );
+
+        RiverFootprint optimized = new HydrologyFootprintCompiler(
+                settings,
+                new HydrologyFootprintCompiler.Sampling(
+                        detailedSampler,
+                        request -> request.minimum(),
+                        naturalSampler
+                )
+        ).compile(List.of(course));
+
+        assertEquals(baseline, optimized);
+        assertTrue(baselineCalls.get() > 221);
+        assertTrue(baselineCalls.get() <= detailedCalls.get() + naturalSampler.basisCalls());
+        assertEquals(baselineCalls.get(), naturalSampler.classificationCalls());
+        assertTrue(detailedCalls.get() > 0);
+        assertTrue(naturalSampler.basisCalls() > 0);
+    }
+
+    @Test
+    public void surfaceChannelRoundsFromItsDeepCenterIntoParentTerrain() {
+        HydraulicSegment segment = new HydraulicSegment(
+                43L,
+                42L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                12,
+                10,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0))
+        );
+        RiverCourse course = course(42L, RiverCourseType.SURFACE, segment);
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(80, 1D, "parent");
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                terrain,
+                request -> request.minimum()
+        ).compile(List.of(course));
+
+        HydrologyColumnLayer center = layerAt(footprint, 0, 0);
+        HydrologyColumnLayer wetEdge = layerAt(footprint, 4, 0);
+        HydrologyColumnLayer shore = layerAt(footprint, 7, 0);
+        HydrologyColumnLayer outerGrade = layerAt(footprint, 12, 0);
+
+        assertTrue(center.bedY() >= 60 && center.bedY() <= 61);
+        assertTrue(center.bedY() < wetEdge.bedY());
+        assertTrue(wetEdge.bedY() < shore.bedY());
+        assertTrue(shore.bedY() < outerGrade.bedY());
+        assertEquals(76, outerGrade.bedY());
+        assertTrue(center.channel());
+        assertTrue(wetEdge.channel());
+        assertTrue(shore.shore() || shore.grading());
+        assertTrue(footprint.columns().values().stream()
+                .flatMap((HydrologyColumnSample sample) -> sample.layers().stream())
+                .anyMatch(HydrologyColumnLayer::shore));
+        assertTrue(outerGrade.grading());
+    }
+
+    @Test
+    public void surfacePoolOutlineIsNotRotationallySymmetric() {
+        HydraulicSegment segment = new HydraulicSegment(
+                47L,
+                46L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                12,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0))
+        );
+        RiverCourse course = course(46L, RiverCourseType.SURFACE, segment);
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(84, 1D, "parent");
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                terrain,
+                request -> request.minimum()
+        ).compile(List.of(course));
+        boolean rotationalMismatch = false;
+        for (HydrologyColumnSample column : footprint.columns().values()) {
+            boolean channel = column.primarySurfaceFluidLayer()
+                    .map(HydrologyColumnLayer::channel)
+                    .orElse(false);
+            if (!channel) {
+                continue;
+            }
+            boolean rotatedChannel = footprint.sample(-column.z(), column.x())
+                    .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                    .map(HydrologyColumnLayer::channel)
+                    .orElse(false);
+            if (!rotatedChannel) {
+                rotationalMismatch = true;
+                break;
+            }
+        }
+
+        assertTrue(rotationalMismatch);
+    }
+
+    @Test
+    public void waterfallGradingUsesOnlySlopeFreeBasesWithIdenticalFootprint() {
+        HydraulicSegment segment = new HydraulicSegment(
+                51L,
+                50L,
+                HydrologyFeatureType.WATERFALL,
+                80,
+                68,
+                4,
+                2,
+                true,
+                true,
+                List.of(new HydrologyPoint(0, 80, 0), new HydrologyPoint(1, 68, 0))
+        );
+        RiverCourse course = course(50L, RiverCourseType.SURFACE, segment);
+        HydrologyPlannerSettings settings = HydrologyPlannerSettings.defaults();
+        HydrologyTerrainSample detailed = HydrologyTerrainSample.openLand(90, 50D, "parent");
+        AtomicInteger baselineCalls = new AtomicInteger();
+        HydrologyTerrainSampler baselineSampler = (int x, int z) -> {
+            baselineCalls.incrementAndGet();
+            return detailed;
+        };
+        RiverFootprint baseline = new HydrologyFootprintCompiler(
+                settings,
+                baselineSampler,
+                request -> request.minimum()
+        ).compile(List.of(course));
+        AtomicInteger detailedCalls = new AtomicInteger();
+        HydrologyTerrainSampler detailedSampler = (int x, int z) -> {
+            detailedCalls.incrementAndGet();
+            return detailed;
+        };
+        CountingNaturalSampler naturalSampler = new CountingNaturalSampler(
+                detailed.withSlope(0D),
+                HydrologyRoutingTerrainSampler.NaturalClassification.LAND
+        );
+
+        RiverFootprint optimized = new HydrologyFootprintCompiler(
+                settings,
+                new HydrologyFootprintCompiler.Sampling(
+                        detailedSampler,
+                        request -> request.minimum(),
+                        naturalSampler
+                )
+        ).compile(List.of(course));
+
+        assertEquals(baseline, optimized);
+        assertTrue(baselineCalls.get() > 0);
+        assertTrue(baselineCalls.get() < 1024);
+        assertEquals(0, detailedCalls.get());
+        assertEquals(baselineCalls.get(), naturalSampler.basisCalls());
+        assertEquals(baselineCalls.get(), naturalSampler.classificationCalls());
+
+        int fallingColumns = 0;
+        int minimumX = Integer.MAX_VALUE;
+        int maximumX = Integer.MIN_VALUE;
+        int minimumZ = Integer.MAX_VALUE;
+        int maximumZ = Integer.MIN_VALUE;
+        for (HydrologyColumnSample column : baseline.columns().values()) {
+            for (HydrologyColumnLayer layer : column.layers()) {
+                if (!layer.fallingFluid()) {
+                    continue;
+                }
+                fallingColumns++;
+                minimumX = Math.min(minimumX, column.x());
+                maximumX = Math.max(maximumX, column.x());
+                minimumZ = Math.min(minimumZ, column.z());
+                maximumZ = Math.max(maximumZ, column.z());
+            }
+        }
+        assertTrue(fallingColumns > 0);
+        assertTrue(fallingColumns < 13);
+        assertTrue(maximumZ - minimumZ > maximumX - minimumX);
+    }
+
+    @Test
+    public void waterfallCurtainNeverOwnsTheVerticalTerrainCut() {
+        HydraulicSegment approach = new HydraulicSegment(
+                55L,
+                54L,
+                HydrologyFeatureType.SURFACE_POOL,
+                80,
+                80,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 80, 0), new HydrologyPoint(8, 80, 0))
+        );
+        HydraulicSegment waterfall = new HydraulicSegment(
+                56L,
+                54L,
+                HydrologyFeatureType.WATERFALL,
+                80,
+                68,
+                8,
+                3,
+                true,
+                true,
+                List.of(new HydrologyPoint(8, 80, 0), new HydrologyPoint(9, 68, 0))
+        );
+        HydraulicSegment receiver = new HydraulicSegment(
+                57L,
+                54L,
+                HydrologyFeatureType.SURFACE_POOL,
+                68,
+                68,
+                8,
+                3,
+                false,
+                true,
+                List.of(new HydrologyPoint(9, 68, 0), new HydrologyPoint(20, 68, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                x <= 8 ? 90 : 76,
+                0D,
+                "parent"
+        );
+        RiverCourse course = new RiverCourse(
+                54L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(approach, waterfall, receiver)
+        );
+        HydrologyFootprintCompiler compiler = compiler(terrain);
+        RiverFootprint footprint = compiler.compile(List.of(course));
+
+        HydrologyColumnSample lip = footprint.sample(8, 0).orElseThrow();
+        HydrologyColumnLayer curtain = lip.layers().stream()
+                .filter((HydrologyColumnLayer layer) -> layer.feature().segmentId() == waterfall.id())
+                .filter(HydrologyColumnLayer::fallingFluid)
+                .findFirst()
+                .orElseThrow();
+        assertFalse(curtain.terrainOwned());
+        assertTrue(curtain.fluidOwned());
+        assertFalse(footprint.columns().values().stream()
+                .flatMap((HydrologyColumnSample sample) -> sample.layers().stream())
+                .anyMatch((HydrologyColumnLayer layer) ->
+                        layer.feature().segmentId() == waterfall.id()
+                                && layer.fallingFluid()
+                                && layer.terrainOwned()));
+        assertTrue(footprint.sample(9, 0).orElseThrow().layers().stream()
+                .anyMatch((HydrologyColumnLayer layer) -> layer.receivingPool() && layer.terrainOwned()));
+        assertTrue(compiler.surfaceBanksContained(course));
+    }
+
+    @Test
+    public void undergroundPassageIsContinuousArchedAndVerticallyVaried() {
+        HydraulicSegment segment = new HydraulicSegment(
+                61L,
+                60L,
+                HydrologyFeatureType.UNDERGROUND_POOL,
+                48,
+                48,
+                12,
+                2,
+                false,
+                false,
+                List.of(
+                        new HydrologyPoint(0, 48, 0),
+                        new HydrologyPoint(12, 48, 5),
+                        new HydrologyPoint(24, 48, 0)
+                )
+        );
+        RiverCourse course = course(60L, RiverCourseType.UNDERGROUND, segment);
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(84, 1D, "parent");
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                terrain,
+                request -> request.minimum() + Math.floorMod(request.x(), request.maximum() - request.minimum() + 1)
+        ).compile(List.of(course));
+
+        for (int x = 0; x <= 24; x++) {
+            int z = x <= 12
+                    ? (int) StrictMath.round(x * 5D / 12D)
+                    : (int) StrictMath.round((24 - x) * 5D / 12D);
+            HydrologyColumnLayer layer = layerAt(footprint, x, z);
+            assertTrue(layer.channel());
+            assertTrue(layer.connectedFluid());
+        }
+
+        HashSet<Integer> bedLevels = new HashSet<>();
+        HashSet<Integer> ceilingLevels = new HashSet<>();
+        int centerBed = layerAt(footprint, 12, 5).bedY();
+        int shallowestBed = Integer.MIN_VALUE;
+        int lowestCeiling = Integer.MAX_VALUE;
+        for (HydrologyColumnSample column : footprint.columns().values()) {
+            for (HydrologyColumnLayer layer : column.layers()) {
+                if (!layer.channel()) {
+                    continue;
+                }
+                bedLevels.add(layer.bedY());
+                ceilingLevels.add(layer.ceilingY());
+                shallowestBed = Math.max(shallowestBed, layer.bedY());
+                lowestCeiling = Math.min(lowestCeiling, layer.ceilingY());
+            }
+        }
+
+        assertTrue(bedLevels.size() >= 3);
+        assertTrue(ceilingLevels.size() >= 3);
+        assertTrue(centerBed < shallowestBed);
+        assertTrue(lowestCeiling >= 49);
+    }
+
+    @Test
+    public void compilerReusesSingleCourseFootprintsAndCombinesThemExactly() {
+        RiverCourse surface = course(
+                71L,
+                RiverCourseType.SURFACE,
+                new HydraulicSegment(
+                        72L,
+                        71L,
+                        HydrologyFeatureType.SURFACE_POOL,
+                        70,
+                        70,
+                        4,
+                        2,
+                        false,
+                        false,
+                        List.of(new HydrologyPoint(0, 70, 0))
+                )
+        );
+        RiverCourse underground = course(
+                81L,
+                RiverCourseType.UNDERGROUND,
+                new HydraulicSegment(
+                        82L,
+                        81L,
+                        HydrologyFeatureType.UNDERGROUND_POOL,
+                        40,
+                        40,
+                        4,
+                        2,
+                        false,
+                        false,
+                        List.of(new HydrologyPoint(32, 40, 0))
+                )
+        );
+        HydrologyPlannerSettings settings = HydrologyPlannerSettings.defaults();
+        HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 1D, "parent");
+        AtomicInteger terrainCalls = new AtomicInteger();
+        AtomicInteger geometryCalls = new AtomicInteger();
+        HydrologyFootprintCompiler compiler = new HydrologyFootprintCompiler(
+                settings,
+                (int x, int z) -> {
+                    terrainCalls.incrementAndGet();
+                    return terrain;
+                },
+                request -> {
+                    geometryCalls.incrementAndGet();
+                    return request.minimum();
+                }
+        );
+
+        RiverFootprint surfaceFootprint = compiler.compile(List.of(surface));
+        int terrainAfterSurface = terrainCalls.get();
+        int geometryAfterSurface = geometryCalls.get();
+        RiverFootprint repeatedSurface = compiler.compile(List.of(surface));
+
+        assertSame(surfaceFootprint, repeatedSurface);
+        assertEquals(terrainAfterSurface, terrainCalls.get());
+        assertEquals(geometryAfterSurface, geometryCalls.get());
+
+        RiverFootprint combined = compiler.compile(List.of(surface, underground));
+        int terrainAfterCombined = terrainCalls.get();
+        int geometryAfterCombined = geometryCalls.get();
+        RiverFootprint repeatedCombined = compiler.compile(List.of(surface, underground));
+        RiverFootprint freshCombined = new HydrologyFootprintCompiler(
+                settings,
+                (int x, int z) -> terrain,
+                request -> request.minimum()
+        ).compile(List.of(surface, underground));
+
+        assertEquals(freshCombined, combined);
+        assertEquals(combined, repeatedCombined);
+        assertTrue(terrainAfterCombined > terrainAfterSurface);
+        assertTrue(geometryAfterCombined > geometryAfterSurface);
+        assertEquals(terrainAfterCombined, terrainCalls.get());
+        assertEquals(geometryAfterCombined, geometryCalls.get());
+    }
+
+    @Test
+    public void overlappingCourseMergePreservesCanonicalLayerOrder() {
+        HydraulicSegment pool = new HydraulicSegment(
+                211L,
+                210L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0))
+        );
+        HydraulicSegment waterfall = new HydraulicSegment(
+                221L,
+                220L,
+                HydrologyFeatureType.WATERFALL,
+                74,
+                68,
+                4,
+                2,
+                true,
+                true,
+                List.of(new HydrologyPoint(0, 74, 0))
+        );
+        HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 1D, "parent");
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                (int x, int z) -> terrain,
+                request -> request.minimum()
+        ).compile(List.of(
+                course(210L, RiverCourseType.SURFACE, pool),
+                course(220L, RiverCourseType.SURFACE, waterfall)
+        ));
+
+        List<HydrologyColumnLayer> layers = footprint.sample(0, 0).orElseThrow().layers();
+        assertEquals(2, layers.size());
+        assertEquals(HydrologyFeatureType.WATERFALL, layers.get(0).feature().type());
+        assertEquals(HydrologyFeatureType.SURFACE_POOL, layers.get(1).feature().type());
+    }
+
+    @Test
+    public void oneCoursePublishesOnlyOneNonFallingSurfaceHeadPerColumn() {
+        HydraulicSegment upper = new HydraulicSegment(
+                231L,
+                230L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(-2, 70, 0), new HydrologyPoint(0, 70, 0))
+        );
+        HydraulicSegment lower = new HydraulicSegment(
+                232L,
+                230L,
+                HydrologyFeatureType.SURFACE_POOL,
+                68,
+                68,
+                4,
+                2,
+                false,
+                true,
+                List.of(new HydrologyPoint(0, 68, 0), new HydrologyPoint(2, 68, 0))
+        );
+        HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 1D, "parent");
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                (int x, int z) -> terrain,
+                request -> request.minimum()
+        ).compile(List.of(new RiverCourse(
+                230L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(upper, lower)
+        )));
+
+        HashSet<Integer> heads = new HashSet<>();
+        for (HydrologyColumnLayer layer : footprint.sample(0, 0).orElseThrow().layers()) {
+            if (layer.feature().type().isSurface()
+                    && layer.channel()
+                    && layer.connectedFluid()
+                    && layer.fluidOwned()
+                    && !layer.fallingFluid()) {
+                heads.add(layer.fluidHeadY());
+            }
+        }
+        assertEquals(1, heads.size());
+    }
+
+    @Test
+    public void exactOceanClassificationSkipsUnpublishableTerrainSamples() {
+        HydraulicSegment segment = new HydraulicSegment(
+                61L,
+                60L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0))
+        );
+        RiverCourse course = course(60L, RiverCourseType.SURFACE, segment);
+        HydrologyPlannerSettings settings = HydrologyPlannerSettings.defaults();
+        HydrologyTerrainSample ocean = HydrologyTerrainSample.ocean(62, "ocean");
+        AtomicInteger baselineCalls = new AtomicInteger();
+        HydrologyTerrainSampler baselineSampler = (int x, int z) -> {
+            baselineCalls.incrementAndGet();
+            return ocean;
+        };
+        RiverFootprint baseline = new HydrologyFootprintCompiler(
+                settings,
+                baselineSampler,
+                request -> request.minimum()
+        ).compile(List.of(course));
+        AtomicInteger detailedCalls = new AtomicInteger();
+        HydrologyTerrainSampler detailedSampler = (int x, int z) -> {
+            detailedCalls.incrementAndGet();
+            return ocean;
+        };
+        CountingNaturalSampler naturalSampler = new CountingNaturalSampler(
+                ocean,
+                HydrologyRoutingTerrainSampler.NaturalClassification.OCEAN
+        );
+
+        RiverFootprint optimized = new HydrologyFootprintCompiler(
+                settings,
+                new HydrologyFootprintCompiler.Sampling(
+                        detailedSampler,
+                        request -> request.minimum(),
+                        naturalSampler
+                )
+        ).compile(List.of(course));
+
+        assertEquals(baseline, optimized);
+        assertTrue(optimized.isEmpty());
+        assertTrue(baselineCalls.get() > 221);
+        assertEquals(baselineCalls.get(), naturalSampler.classificationCalls());
+        assertEquals(0, naturalSampler.basisCalls());
+        assertEquals(0, detailedCalls.get());
+    }
+
+    @Test
+    public void naturallySubmergedLandColumnsRejectOwnedSurfaceWritesAtAndBelowSeaLevel() {
+        HydraulicSegment segment = new HydraulicSegment(
+                71L,
+                70L,
+                HydrologyFeatureType.SURFACE_POOL,
+                63,
+                63,
+                6,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 63, 0))
+        );
+        RiverCourse course = course(70L, RiverCourseType.SURFACE, segment);
+
+        for (int naturalHeight : List.of(62, 63)) {
+            HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                    naturalHeight,
+                    0D,
+                    "shore"
+            );
+            RiverFootprint footprint = compiler(terrain).compile(List.of(course));
+
+            assertTrue(footprint.isEmpty());
+        }
+
+        HydrologyTerrainSampler raisedTerrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                64,
+                0D,
+                "shore"
+        );
+        RiverFootprint raised = compiler(raisedTerrain).compile(List.of(course));
+
+        assertTrue(raised.sample(0, 0).flatMap(HydrologyColumnSample::primarySurfaceFluidLayer).isPresent());
+    }
+
+    @Test
+    public void naturallySubmergedLandAtAMouthPublishesOnlyANonOwningApron() {
+        HydraulicSegment mouth = new HydraulicSegment(
+                81L,
+                80L,
+                HydrologyFeatureType.MOUTH,
+                63,
+                63,
+                6,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 63, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(63, 0D, "shore");
+        RiverFootprint footprint = compiler(terrain).compile(List.of(course(80L, RiverCourseType.SURFACE, mouth)));
+
+        HydrologyColumnSample sample = footprint.sample(0, 0).orElseThrow();
+        assertEquals(63, sample.terrainHeight());
+        assertTrue(sample.layers().stream().allMatch(HydrologyColumnLayer::oceanApron));
+        assertTrue(sample.layers().stream().noneMatch(HydrologyColumnLayer::terrainOwned));
+        assertTrue(sample.layers().stream().noneMatch(HydrologyColumnLayer::fluidOwned));
+    }
+
+    @Test
+    public void validationRetriesDeferTheOnlyFullFootprintMaterialization() {
+        HydraulicSegment surface = new HydraulicSegment(
+                302L,
+                301L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(8, 70, 0))
+        );
+        HydraulicSegment ridge = new HydraulicSegment(
+                303L,
+                301L,
+                HydrologyFeatureType.RIDGE_BORE,
+                66,
+                66,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(8, 66, 0), new HydrologyPoint(12, 66, 0))
+        );
+        RiverCourse course = new RiverCourse(
+                301L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(surface, ridge)
+        );
+        HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 1D, "parent");
+        HydrologyFootprintCompiler compiler = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                (int x, int z) -> terrain,
+                request -> request.minimum()
+        );
+
+        HydrologyFootprintCompiler.ValidationRaster first = compiler.compileValidation(List.of(course));
+        HydrologyFootprintCompiler.ValidationRaster retry = compiler.compileValidation(List.of(course));
+
+        assertEquals(0, compiler.fullMaterializationCount());
+        assertEquals(first.columns(), retry.columns());
+        assertTrue(first.columns().stream().flatMap(
+                (HydrologyColumnSample sample) -> sample.layers().stream()
+        ).allMatch((HydrologyColumnLayer layer) -> layer.feature().type().isUnderground()
+                || layer.feature().type().isDeepFluid()
+                || layer.oceanApron()));
+
+        RiverFootprint footprint = compiler.compile(List.of(course));
+
+        assertEquals(1, compiler.fullMaterializationCount());
+        for (HydrologyColumnSample sample : footprint.columns().values()) {
+            assertEquals(
+                    "planned surface at " + sample.x() + "," + sample.z(),
+                    sample.terrainHeight(),
+                    first.plannedSurface().resolve(sample.x(), sample.z(), sample.naturalHeight())
+            );
+        }
+    }
+
+    @Test
+    public void surfaceRidgeBorePreservesASolidTerrainFollowingRoof() {
+        HydraulicSegment ridge = new HydraulicSegment(
+                311L,
+                310L,
+                HydrologyFeatureType.RIDGE_BORE,
+                70,
+                70,
+                6,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(8, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                x < 4 ? 90 : 77,
+                0D,
+                "parent"
+        );
+        RiverFootprint footprint = compiler(terrain).compile(List.of(course(
+                310L,
+                RiverCourseType.SURFACE,
+                ridge
+        )));
+
+        HydrologyColumnLayer deepRoof = layerAt(footprint, 2, 0);
+        HydrologyColumnLayer taperedRoof = layerAt(footprint, 6, 0);
+        assertEquals(80, deepRoof.ceilingY());
+        assertEquals(76, taperedRoof.ceilingY());
+        for (HydrologyColumnSample sample : footprint.columns().values()) {
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (layer.feature().type() == HydrologyFeatureType.RIDGE_BORE) {
+                    assertTrue(layer.ceilingY() < sample.naturalHeight());
+                }
+            }
+        }
+    }
+
+    @Test
+    public void surfaceUndergroundPoolPreservesASolidTerrainFollowingRoof() {
+        HydraulicSegment pool = new HydraulicSegment(
+                316L,
+                315L,
+                HydrologyFeatureType.UNDERGROUND_POOL,
+                70,
+                70,
+                6,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(8, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                x < 4 ? 90 : 77,
+                0D,
+                "parent"
+        );
+        RiverFootprint footprint = compiler(terrain).compile(List.of(course(
+                315L,
+                RiverCourseType.SURFACE,
+                pool
+        )));
+
+        HydrologyColumnLayer deepRoof = layerAt(footprint, 2, 0);
+        HydrologyColumnLayer taperedRoof = layerAt(footprint, 6, 0);
+        assertTrue(deepRoof.ceilingY() < footprint.sample(2, 0).orElseThrow().naturalHeight());
+        assertEquals(76, taperedRoof.ceilingY());
+        for (HydrologyColumnSample sample : footprint.columns().values()) {
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (layer.feature().type() == HydrologyFeatureType.UNDERGROUND_POOL) {
+                    assertTrue(layer.ceilingY() < sample.naturalHeight());
+                }
+            }
+        }
+    }
+
+    @Test
+    public void surfaceBankGradingTapersAnIntersectingBoreInsteadOfOpeningItsSide() {
+        HydraulicSegment surface = new HydraulicSegment(
+                321L,
+                320L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                6,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(8, 70, 0))
+        );
+        HydraulicSegment ridge = new HydraulicSegment(
+                322L,
+                320L,
+                HydrologyFeatureType.RIDGE_BORE,
+                74,
+                74,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 74, 8), new HydrologyPoint(8, 74, 8))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(80, 0D, "parent");
+        RiverFootprint footprint = compiler(terrain).compile(List.of(new RiverCourse(
+                320L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(surface, ridge)
+        )));
+
+        HydrologyColumnSample gradedBank = footprint.sample(4, 8).orElseThrow();
+        assertTrue(gradedBank.layers().stream().noneMatch(
+                (HydrologyColumnLayer layer) -> layer.feature().type() == HydrologyFeatureType.RIDGE_BORE
+        ));
+        assertTrue(gradedBank.terrainHeight() < gradedBank.naturalHeight());
+    }
+
+    @Test
+    public void compactValidationMatchesFullRasterAcrossOverlapsOceanAndSurfaceOnlyCourses() {
+        RiverCourse mixed = new RiverCourse(
+                401L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(
+                        new HydraulicSegment(
+                                402L,
+                                401L,
+                                HydrologyFeatureType.SURFACE_POOL,
+                                70,
+                                70,
+                                6,
+                                2,
+                                false,
+                                false,
+                                List.of(new HydrologyPoint(-8, 70, 0), new HydrologyPoint(8, 70, 0))
+                        ),
+                        new HydraulicSegment(
+                                403L,
+                                401L,
+                                HydrologyFeatureType.RIDGE_BORE,
+                                60,
+                                60,
+                                4,
+                                2,
+                                false,
+                                false,
+                                List.of(new HydrologyPoint(8, 60, 0), new HydrologyPoint(14, 60, 0))
+                        ),
+                        new HydraulicSegment(
+                                404L,
+                                401L,
+                                HydrologyFeatureType.MOUTH,
+                                63,
+                                63,
+                                6,
+                                2,
+                                false,
+                                false,
+                                List.of(new HydrologyPoint(14, 63, 0), new HydrologyPoint(20, 63, 0))
+                        )
+                )
+        );
+        RiverCourse surfaceOnly = course(
+                411L,
+                RiverCourseType.SURFACE,
+                new HydraulicSegment(
+                        412L,
+                        411L,
+                        HydrologyFeatureType.SURFACE_POOL,
+                        74,
+                        74,
+                        4,
+                        2,
+                        false,
+                        false,
+                        List.of(new HydrologyPoint(0, 74, -4), new HydrologyPoint(12, 74, -4))
+                )
+        );
+        RiverCourse underground = new RiverCourse(
+                421L,
+                RiverCourseType.UNDERGROUND,
+                OptionalLong.of(3L),
+                OptionalLong.of(4L),
+                "water",
+                1,
+                List.of(),
+                List.of(
+                        new HydraulicSegment(
+                                422L,
+                                421L,
+                                HydrologyFeatureType.UNDERGROUND_POOL,
+                                45,
+                                45,
+                                4,
+                                2,
+                                false,
+                                false,
+                                List.of(new HydrologyPoint(4, 45, 2), new HydrologyPoint(16, 45, 2))
+                        ),
+                        new HydraulicSegment(
+                                423L,
+                                421L,
+                                HydrologyFeatureType.MOUTH,
+                                63,
+                                63,
+                                4,
+                                2,
+                                false,
+                                false,
+                                List.of(new HydrologyPoint(16, 63, 2), new HydrologyPoint(20, 63, 2))
+                        )
+                )
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> x >= 17
+                ? HydrologyTerrainSample.ocean(63, "ocean")
+                : HydrologyTerrainSample.openLand(80 + Math.floorMod(z, 3), Math.abs(z), "parent");
+        HydrologyPlannerSettings settings = HydrologyPlannerSettings.defaults();
+        List<RiverCourse> courses = List.of(mixed, surfaceOnly, underground);
+        HydrologyFootprintCompiler compactCompiler = new HydrologyFootprintCompiler(
+                settings,
+                terrain,
+                request -> request.minimum()
+        );
+        HydrologyFootprintCompiler.ValidationRaster validation = compactCompiler.compileValidation(courses);
+        RiverFootprint full = new HydrologyFootprintCompiler(
+                settings,
+                terrain,
+                request -> request.minimum()
+        ).compile(courses);
+
+        ArrayList<HydrologyColumnSample> expectedValidationColumns = new ArrayList<>();
+        for (HydrologyColumnSample sample : full.columns().values()) {
+            ArrayList<HydrologyColumnLayer> layers = new ArrayList<>();
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (layer.feature().type().isUnderground()
+                        || layer.feature().type().isDeepFluid()
+                        || layer.oceanApron()) {
+                    layers.add(layer);
+                }
+            }
+            if (!layers.isEmpty()) {
+                expectedValidationColumns.add(new HydrologyColumnSample(
+                        sample.x(),
+                        sample.z(),
+                        sample.naturalHeight(),
+                        sample.seaLevel(),
+                        sample.ocean(),
+                        sample.parentBiomeKey(),
+                        layers
+                ));
+            }
+            assertEquals(
+                    "planned surface at " + sample.x() + "," + sample.z(),
+                    sample.terrainHeight(),
+                    validation.plannedSurface().resolve(
+                            sample.x(),
+                            sample.z(),
+                            terrain.sample(sample.x(), sample.z()).naturalHeight()
+                    )
+            );
+        }
+        assertEquals(expectedValidationColumns.size(), validation.columns().size());
+        for (int index = 0; index < expectedValidationColumns.size(); index++) {
+            assertEquals(
+                    "validation column " + index,
+                    expectedValidationColumns.get(index),
+                    validation.columns().get(index)
+            );
+        }
+        assertEquals(91, validation.plannedSurface().resolve(80, 80, 91));
+        assertEquals(92, validation.plannedSurface().resolve(80, 80, 92));
+    }
+
+    @Test
+    public void adjacentSurfaceSegmentsMatchOneContinuousSurfaceSweep() {
+        HydraulicSegment continuous = new HydraulicSegment(
+                501L,
+                500L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(
+                        new HydrologyPoint(0, 70, 0),
+                        new HydrologyPoint(32, 70, 0),
+                        new HydrologyPoint(64, 70, 0)
+                )
+        );
+        HydraulicSegment first = new HydraulicSegment(
+                502L,
+                500L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(32, 70, 0))
+        );
+        HydraulicSegment second = new HydraulicSegment(
+                503L,
+                500L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(32, 70, 0), new HydrologyPoint(64, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(82, 0D, "parent");
+        RiverFootprint continuousFootprint = compiler(terrain).compile(List.of(new RiverCourse(
+                500L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(continuous)
+        )));
+        RiverFootprint adjacentFootprint = compiler(terrain).compile(List.of(new RiverCourse(
+                500L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(first, second)
+        )));
+
+        assertEquals(continuousFootprint.columns().keySet(), adjacentFootprint.columns().keySet());
+        for (long packed : continuousFootprint.columns().keySet()) {
+            HydrologyColumnLayer continuousLayer = continuousFootprint.columns().get(packed)
+                    .primarySurfaceLayer()
+                    .orElse(null);
+            HydrologyColumnLayer adjacentLayer = adjacentFootprint.columns().get(packed)
+                    .primarySurfaceLayer()
+                    .orElse(null);
+            assertEquals(continuousLayer == null, adjacentLayer == null);
+            if (continuousLayer == null) {
+                continue;
+            }
+            assertEquals(continuousLayer.channel(), adjacentLayer.channel());
+            assertEquals(continuousLayer.shore(), adjacentLayer.shore());
+            assertEquals(continuousLayer.grading(), adjacentLayer.grading());
+            assertEquals(continuousLayer.fluidHeadY(), adjacentLayer.fluidHeadY());
+        }
+    }
+
+    @Test
+    public void continuousSurfaceBendHasNoJoinLayerOrDiagonalSpur() {
+        HydraulicSegment first = new HydraulicSegment(
+                511L,
+                510L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(32, 70, 0))
+        );
+        HydraulicSegment second = new HydraulicSegment(
+                512L,
+                510L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(32, 70, 0), new HydrologyPoint(32, 70, 32))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(82, 0D, "parent");
+        RiverFootprint footprint = compiler(terrain).compile(List.of(new RiverCourse(
+                510L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(first, second)
+        )));
+
+        HydrologyColumnSample join = footprint.sample(32, 0).orElseThrow();
+        long joinedChannels = join.layers().stream()
+                .filter((HydrologyColumnLayer layer) -> layer.feature().type().isSurface() && layer.channel())
+                .count();
+        assertEquals(1L, joinedChannels);
+        assertTrue(join.primarySurfaceFluidLayer().isPresent());
+        assertTrue(footprint.sample(39, -7).isEmpty());
+    }
+
+    @Test
+    public void surfaceHeadwaterTapersUpToChannelWidthWithoutARadialBasin() {
+        HydraulicSegment segment = new HydraulicSegment(
+                521L,
+                520L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(64, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(82, 0D, "parent");
+        RiverCourse course = course(520L, RiverCourseType.SURFACE, segment);
+        HydrologyFootprintCompiler compiler = compiler(terrain);
+        RiverFootprint footprint = compiler.compile(List.of(course));
+
+        assertTrue(surfaceFluidLayer(footprint, -4, 0) == null);
+        assertTrue(wetHalfWidth(footprint, 0) < wetHalfWidth(footprint, 32));
+        assertTrue(wetHalfWidth(footprint, 32) <= wetHalfWidth(footprint, 56));
+        HydrologyColumnLayer source = surfaceFluidLayer(footprint, 0, 0);
+        HydrologyColumnLayer cruise = surfaceFluidLayer(footprint, 56, 0);
+        assertTrue(source != null);
+        assertTrue(cruise != null);
+        int sourceDepth = source.fluidHeadY() - source.bedY();
+        int cruiseDepth = cruise.fluidHeadY() - cruise.bedY();
+        assertTrue(Math.abs(sourceDepth - cruiseDepth) <= 1);
+        assertTrue(compiler.surfaceHeadwaterRampSupported(course));
+    }
+
+    @Test
+    public void shortSurfaceHeadwaterStillTapersBeforeAnUndergroundTransition() {
+        HydraulicSegment surface = new HydraulicSegment(
+                525L,
+                524L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(12, 70, 0))
+        );
+        HydraulicSegment ridge = new HydraulicSegment(
+                526L,
+                524L,
+                HydrologyFeatureType.RIDGE_BORE,
+                69,
+                69,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(12, 69, 0), new HydrologyPoint(24, 69, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(82, 0D, "parent");
+        RiverCourse course = new RiverCourse(
+                524L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(surface, ridge)
+        );
+        HydrologyFootprintCompiler compiler = compiler(terrain);
+        RiverFootprint footprint = compiler.compile(List.of(course));
+
+        assertTrue(wetHalfWidth(footprint, 0) < wetHalfWidth(footprint, 8));
+        assertFalse(compiler.surfaceHeadwaterRampSupported(course));
+    }
+
+    @Test
+    public void continuousSurfaceBoreHasNoSecondHeadwaterOrRoundedSeams() {
+        HydraulicSegment entry = new HydraulicSegment(
+                528L,
+                527L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(32, 70, 0))
+        );
+        HydraulicSegment bore = new HydraulicSegment(
+                529L,
+                527L,
+                HydrologyFeatureType.RIDGE_BORE,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(32, 70, 0), new HydrologyPoint(64, 70, 0))
+        );
+        HydraulicSegment exit = new HydraulicSegment(
+                530L,
+                527L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(64, 70, 0), new HydrologyPoint(96, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(82, 0D, "parent");
+        RiverCourse course = new RiverCourse(
+                527L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(entry, bore, exit)
+        );
+        RiverFootprint footprint = compiler(terrain).compile(List.of(course));
+
+        for (int x = 32; x <= 64; x++) {
+            HydrologyColumnSample sample = footprint.sample(x, 0).orElseThrow();
+            assertTrue(sample.layers().stream().anyMatch((HydrologyColumnLayer layer) ->
+                    layer.feature().segmentId() == bore.id()
+                            && layer.channel()
+                            && layer.connectedFluid()
+                            && layer.fluidOwned()));
+        }
+        assertTrue(footprint.sample(31, 0).orElseThrow().layers().stream().noneMatch(
+                (HydrologyColumnLayer layer) -> layer.feature().segmentId() == bore.id()
+        ));
+        assertTrue(footprint.sample(65, 0).orElseThrow().layers().stream().noneMatch(
+                (HydrologyColumnLayer layer) -> layer.feature().segmentId() == bore.id()
+        ));
+        HydrologyColumnLayer reopened = surfaceFluidLayer(footprint, 64, 0);
+        assertTrue(reopened != null);
+        assertFalse(reopened.feature().source());
+        assertEquals(wetHalfWidth(footprint, 65), wetHalfWidth(footprint, 80));
+    }
+
+    @Test
+    public void incompleteSurfaceBoreCenterlineRejectsTheWholeCourse() {
+        HydraulicSegment entry = new HydraulicSegment(
+                532L,
+                531L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(16, 70, 0))
+        );
+        HydraulicSegment bore = new HydraulicSegment(
+                533L,
+                531L,
+                HydrologyFeatureType.RIDGE_BORE,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(16, 70, 0), new HydrologyPoint(48, 70, 0))
+        );
+        HydraulicSegment exit = new HydraulicSegment(
+                534L,
+                531L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(48, 70, 0), new HydrologyPoint(64, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                x == 32 ? 70 : 82,
+                0D,
+                "parent"
+        );
+        RiverCourse course = new RiverCourse(
+                531L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(entry, bore, exit)
+        );
+
+        assertFalse(compiler(terrain).surfaceBanksContained(course));
+    }
+
+    @Test
+    public void descendingSurfaceBanksRemainAboveEveryAdjacentFluidHead() {
+        HydraulicSegment cascade = new HydraulicSegment(
+                528L,
+                527L,
+                HydrologyFeatureType.CASCADE,
+                74,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 74, 0), new HydrologyPoint(24, 70, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(82, 0D, "parent");
+        RiverFootprint footprint = compiler(terrain).compile(List.of(course(527L, RiverCourseType.SURFACE, cascade)));
+        int[][] offsets = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+
+        for (HydrologyColumnSample sample : footprint.columns().values()) {
+            HydrologyColumnLayer fluid = sample.primarySurfaceFluidLayer().orElse(null);
+            if (fluid == null) {
+                continue;
+            }
+            for (int[] offset : offsets) {
+                HydrologyColumnSample neighbor = footprint.sample(
+                        sample.x() + offset[0],
+                        sample.z() + offset[1]
+                ).orElse(null);
+                assertTrue(neighbor != null);
+                if (neighbor.primarySurfaceFluidLayer().isPresent()) {
+                    continue;
+                }
+                assertTrue(neighbor.terrainHeight() > fluid.fluidHeadY());
+            }
+        }
+    }
+
+    @Test
+    public void surfaceContainmentClipsAnUnsupportedWetEdgeWithoutRaisingItsNaturalBank() {
+        HydraulicSegment channel = new HydraulicSegment(
+                529L,
+                528L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(24, 70, 0))
+        );
+        RiverCourse course = course(528L, RiverCourseType.SURFACE, channel);
+        HydrologyTerrainSampler highTerrain = (int x, int z) ->
+                HydrologyTerrainSample.openLand(82, 0D, "parent");
+        HydrologyFootprintCompiler highCompiler = compiler(highTerrain);
+        RiverFootprint highFootprint = highCompiler.compile(List.of(course));
+        int bankZ = 0;
+        while (surfaceFluidLayer(highFootprint, 12, bankZ) != null) {
+            bankZ++;
+        }
+        int lowBankZ = bankZ;
+        HydrologyTerrainSampler lowBankTerrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                x == 12 && z == lowBankZ ? 70 : 82,
+                0D,
+                "parent"
+        );
+        HydrologyFootprintCompiler lowBankCompiler = compiler(lowBankTerrain);
+        RiverFootprint lowBankFootprint = lowBankCompiler.compile(List.of(course));
+        HydrologyColumnSample lowBank = lowBankFootprint.sample(12, lowBankZ).orElseThrow();
+
+        assertTrue(highCompiler.surfaceBanksContained(course));
+        assertEquals(70, lowBank.naturalHeight());
+        assertTrue(lowBank.terrainHeight() <= lowBank.naturalHeight());
+        assertTrue(surfaceFluidLayer(lowBankFootprint, 12, lowBankZ - 1) == null);
+        assertTrue(surfaceFluidLayer(lowBankFootprint, 12, lowBankZ - 2) != null);
+        assertTrue(lowBankCompiler.surfaceBanksContained(course));
+    }
+
+    @Test
+    public void surfaceIncisionContainmentUsesFinalTerrainHeight() {
+        HydraulicSegment channel = new HydraulicSegment(
+                529L,
+                528L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(24, 70, 0))
+        );
+        RiverCourse course = course(528L, RiverCourseType.SURFACE, channel);
+        HydrologyFootprintCompiler supported = compiler((int x, int z) ->
+                HydrologyTerrainSample.openLand(76, 0D, "parent"));
+        HydrologyTerrainSample routingBasis = HydrologyTerrainSample.openLand(76, 0D, "parent");
+        HydrologyFootprintCompiler excessive = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                new HydrologyFootprintCompiler.Sampling(
+                        (int x, int z) -> HydrologyTerrainSample.openLand(79, 0D, "parent"),
+                        request -> request.minimum(),
+                        new CountingNaturalSampler(
+                                routingBasis,
+                                HydrologyRoutingTerrainSampler.NaturalClassification.LAND
+                        )
+                )
+        );
+
+        assertTrue(supported.surfaceIncisionContained(course));
+        RiverFootprint excessiveFootprint = excessive.compile(List.of(course));
+        assertFalse(
+                "center=" + excessiveFootprint.sample(12, 0),
+                excessive.surfaceIncisionContained(course)
+        );
+        assertFalse(excessive.surfaceIncisionContained(course, excessiveFootprint));
+    }
+
+    @Test
+    public void surfaceContainmentRejectsAnUnpublishedCascadeCenterline() {
+        HydraulicSegment cascade = new HydraulicSegment(
+                530L,
+                529L,
+                HydrologyFeatureType.CASCADE,
+                74,
+                70,
+                8,
+                3,
+                false,
+                true,
+                List.of(
+                        new HydrologyPoint(0, 74, 0),
+                        new HydrologyPoint(1, 73, 0),
+                        new HydrologyPoint(2, 72, 0),
+                        new HydrologyPoint(3, 71, 0),
+                        new HydrologyPoint(4, 70, 0)
+                )
+        );
+        RiverCourse course = course(529L, RiverCourseType.SURFACE, cascade);
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.ocean(82, "ocean");
+        HydrologyFootprintCompiler compiler = compiler(terrain);
+
+        assertTrue(compiler.compile(List.of(course)).isEmpty());
+        assertFalse(compiler.surfaceBanksContained(course));
+    }
+
+    @Test
+    public void surfaceContainmentAllowsTerrainFreeFallingFluidCenterline() {
+        HydraulicSegment waterfall = new HydraulicSegment(
+                531L,
+                530L,
+                HydrologyFeatureType.WATERFALL,
+                80,
+                68,
+                8,
+                3,
+                true,
+                true,
+                List.of(new HydrologyPoint(0, 80, 0), new HydrologyPoint(1, 68, 0))
+        );
+        HydraulicSegment receiver = new HydraulicSegment(
+                532L,
+                530L,
+                HydrologyFeatureType.SURFACE_POOL,
+                68,
+                68,
+                8,
+                3,
+                false,
+                true,
+                List.of(new HydrologyPoint(1, 68, 0), new HydrologyPoint(20, 68, 0))
+        );
+        RiverCourse course = new RiverCourse(
+                530L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(waterfall, receiver)
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                x <= 0 ? 90 : 76,
+                0D,
+                "parent"
+        );
+        HydrologyFootprintCompiler compiler = compiler(terrain);
+        RiverFootprint footprint = compiler.compile(List.of(course));
+        HydrologyColumnLayer throat = footprint.sample(0, 0)
+                .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                .orElseThrow();
+
+        assertTrue(throat.fallingFluid());
+        assertTrue(throat.fluidOwned());
+        assertFalse(throat.terrainOwned());
+        assertTrue(compiler.surfaceBanksContained(course));
+    }
+
+    @Test
+    public void oceanMouthWidensGraduallyIntoItsTerminalGrade() {
+        HydraulicSegment channel = new HydraulicSegment(
+                531L,
+                530L,
+                HydrologyFeatureType.SURFACE_POOL,
+                63,
+                63,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 63, 0), new HydrologyPoint(32, 63, 0))
+        );
+        HydraulicSegment mouth = new HydraulicSegment(
+                532L,
+                530L,
+                HydrologyFeatureType.MOUTH,
+                63,
+                63,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(32, 63, 0), new HydrologyPoint(64, 63, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> x >= 64
+                ? HydrologyTerrainSample.ocean(48, "ocean")
+                : HydrologyTerrainSample.openLand(76, 0D, "parent");
+        RiverCourse course = new RiverCourse(
+                530L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(channel, mouth)
+        );
+        HydrologyFootprintCompiler compiler = compiler(terrain);
+        RiverFootprint footprint = compiler.compile(List.of(course));
+
+        assertTrue(compiler.surfaceBanksContained(course));
+        int upstreamWidth = wetHalfWidth(footprint, 32);
+        int transitionWidth = wetHalfWidth(footprint, 52);
+        int terminalWidth = wetHalfWidth(footprint, 62);
+        assertTrue(transitionWidth >= upstreamWidth);
+        assertTrue(terminalWidth >= transitionWidth);
+        assertTrue(terminalWidth > upstreamWidth);
+        assertTrue(surfaceFluidLayer(footprint, 63, 0) != null);
+        HydrologyColumnSample firstOcean = footprint.sample(64, 0).orElseThrow();
+        assertEquals(48, firstOcean.naturalHeight());
+        assertEquals(48, firstOcean.terrainHeight());
+        assertFalse(firstOcean.layers().stream().anyMatch(HydrologyColumnLayer::terrainOwned));
+        assertFalse(firstOcean.layers().stream().anyMatch(HydrologyColumnLayer::fluidOwned));
+    }
+
+    @Test
+    public void surfaceSinkholeContinuesThroughOneBorePortal() {
+        HydraulicSegment channel = new HydraulicSegment(
+                541L,
+                540L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(48, 70, 0))
+        );
+        HydraulicSegment sinkhole = new HydraulicSegment(
+                542L,
+                540L,
+                HydrologyFeatureType.SINKHOLE,
+                70,
+                60,
+                4,
+                2,
+                false,
+                true,
+                List.of(new HydrologyPoint(48, 70, 0), new HydrologyPoint(52, 60, 0))
+        );
+        HydraulicSegment grotto = new HydraulicSegment(
+                543L,
+                540L,
+                HydrologyFeatureType.INLAND_GROTTO,
+                60,
+                60,
+                8,
+                4,
+                false,
+                true,
+                List.of(new HydrologyPoint(52, 60, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(82, 0D, "parent");
+        RiverFootprint footprint = compiler(terrain).compile(List.of(new RiverCourse(
+                540L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(channel, sinkhole, grotto)
+        )));
+
+        HydrologyColumnLayer entry = footprint.sample(48, 0).orElseThrow().layers().stream()
+                .filter((HydrologyColumnLayer layer) -> layer.feature().segmentId() == sinkhole.id())
+                .findFirst()
+                .orElseThrow();
+        HydrologyColumnLayer receiver = footprint.sample(52, 0).orElseThrow().layers().stream()
+                .filter((HydrologyColumnLayer layer) -> layer.feature().segmentId() == sinkhole.id())
+                .findFirst()
+                .orElseThrow();
+        assertTrue(wetHalfWidth(footprint, 46) >= wetHalfWidth(footprint, 24));
+        assertTrue(entry.channel());
+        assertTrue(entry.connectedFluid());
+        assertFalse(entry.receivingPool());
+        assertTrue(receiver.receivingPool());
+    }
+
+    @Test
+    public void midCourseReceivingPoolWidensWithoutAHalfEdgeSpur() {
+        HydraulicSegment approach = new HydraulicSegment(
+                551L,
+                550L,
+                HydrologyFeatureType.SURFACE_POOL,
+                70,
+                70,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 70, 0), new HydrologyPoint(64, 70, 0))
+        );
+        HydraulicSegment receiver = new HydraulicSegment(
+                552L,
+                550L,
+                HydrologyFeatureType.CASCADE,
+                70,
+                69,
+                4,
+                2,
+                false,
+                true,
+                List.of(new HydrologyPoint(64, 70, 0), new HydrologyPoint(80, 69, 0))
+        );
+        HydraulicSegment outflow = new HydraulicSegment(
+                553L,
+                550L,
+                HydrologyFeatureType.SURFACE_POOL,
+                69,
+                69,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(80, 69, 0), new HydrologyPoint(160, 69, 0))
+        );
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(82, 0D, "parent");
+        RiverFootprint footprint = compiler(terrain).compile(List.of(new RiverCourse(
+                550L,
+                RiverCourseType.SURFACE,
+                OptionalLong.of(1L),
+                OptionalLong.of(2L),
+                "water",
+                1,
+                List.of(),
+                List.of(approach, receiver, outflow)
+        )));
+
+        int previousWidth = wetHalfWidth(footprint, 40);
+        for (int x = 44; x <= 120; x += 4) {
+            int width = wetHalfWidth(footprint, x);
+            assertTrue(Math.abs(width - previousWidth) <= 1);
+            previousWidth = width;
+        }
+    }
+
+    private RiverCourse course(long id, RiverCourseType type, HydraulicSegment segment) {
+        return new RiverCourse(
+                id,
+                type,
+                OptionalLong.of(id + 1L),
+                OptionalLong.of(id + 2L),
+                "water",
+                1,
+                List.of(),
+                List.of(segment)
+        );
+    }
+
+    private HydrologyColumnLayer layerAt(RiverFootprint footprint, int x, int z) {
+        return footprint.sample(x, z).orElseThrow().layers().getFirst();
+    }
+
+    private HydrologyColumnLayer surfaceFluidLayer(RiverFootprint footprint, int x, int z) {
+        return footprint.sample(x, z)
+                .flatMap(HydrologyColumnSample::primarySurfaceFluidLayer)
+                .orElse(null);
+    }
+
+    private HydrologyFootprintCompiler compiler(HydrologyTerrainSampler terrain) {
+        return new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                terrain,
+                request -> request.minimum()
+        );
+    }
+
+    private int wetHalfWidth(RiverFootprint footprint, int x) {
+        int halfWidth = 0;
+        for (int z = 0; z <= 32; z++) {
+            if (surfaceFluidLayer(footprint, x, z) == null) {
+                break;
+            }
+            halfWidth = z;
+        }
+        return halfWidth;
+    }
+
+    private int connectedColumnCount(HashSet<Long> columns) {
+        if (columns.isEmpty()) {
+            return 0;
+        }
+        HashSet<Long> visited = new HashSet<>();
+        ArrayDeque<Long> pending = new ArrayDeque<>();
+        pending.add(columns.iterator().next());
+        while (!pending.isEmpty()) {
+            long packed = pending.removeFirst();
+            if (!visited.add(packed)) {
+                continue;
+            }
+            int x = RiverFootprint.unpackX(packed);
+            int z = RiverFootprint.unpackZ(packed);
+            long[] neighbors = {
+                    RiverFootprint.pack(x - 1, z),
+                    RiverFootprint.pack(x + 1, z),
+                    RiverFootprint.pack(x, z - 1),
+                    RiverFootprint.pack(x, z + 1)
+            };
+            for (long neighbor : neighbors) {
+                if (columns.contains(neighbor) && !visited.contains(neighbor)) {
+                    pending.addLast(neighbor);
+                }
+            }
+        }
+        return visited.size();
+    }
+
+    private static final class CountingNaturalSampler implements HydrologyNaturalTerrainSampler {
+        private final HydrologyTerrainSample basis;
+        private final NaturalClassification classification;
+        private final AtomicInteger basisCalls;
+        private final AtomicInteger classificationCalls;
+
+        private CountingNaturalSampler(HydrologyTerrainSample basis, NaturalClassification classification) {
+            this.basis = basis;
+            this.classification = classification;
+            this.basisCalls = new AtomicInteger();
+            this.classificationCalls = new AtomicInteger();
+        }
+
+        @Override
+        public HydrologyTerrainSample[] sampleGrid(GridRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public NaturalClassification classifyNatural(int blockX, int blockZ) {
+            classificationCalls.incrementAndGet();
+            return classification;
+        }
+
+        @Override
+        public HydrologyTerrainSample sampleBasis(int blockX, int blockZ) {
+            basisCalls.incrementAndGet();
+            return basis;
+        }
+
+        private int basisCalls() {
+            return basisCalls.get();
+        }
+
+        private int classificationCalls() {
+            return classificationCalls.get();
+        }
+    }
+}

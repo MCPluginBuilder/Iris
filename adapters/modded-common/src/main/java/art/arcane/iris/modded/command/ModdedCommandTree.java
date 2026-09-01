@@ -227,6 +227,9 @@ final class ModdedCommandTree {
                 .then(Commands.literal("object")
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.OBJECT_KEYS)
                                 .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoObject(context.getSource(), StringArgumentType.getString(context, "key")))))
+                .then(Commands.literal("river")
+                        .then(Commands.argument("type", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.HYDROLOGY_TYPES)
+                                .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoRiver(context.getSource(), StringArgumentType.getString(context, "type")))))
                 .then(Commands.literal("unregistered")
                         .executes((CommandContext<CommandSourceStack> context) ->
                                 ModdedUnregisteredStructures.print(context.getSource())))

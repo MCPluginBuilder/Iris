@@ -328,7 +328,11 @@ public final class HintedLocator<T> implements Locator<T> {
         }
 
         if (!surfaceRegions.isEmpty()) {
-            return SearchPlan.of(surfaceCoarse(complex, surfaceRegions, landHosts, seaHosts, shoreHosts), BIOME_STRIDE_CHUNKS, null);
+            return SearchPlan.of(
+                    surfaceCoarse(complex, surfaceRegions, landHosts, seaHosts, shoreHosts),
+                    BIOME_STRIDE_CHUNKS,
+                    null
+            );
         }
 
         if (!caveRegions.isEmpty()) {
@@ -341,6 +345,11 @@ public final class HintedLocator<T> implements Locator<T> {
             return SearchPlan.of(coarse, BIOME_STRIDE_CHUNKS, caveExact);
         }
 
+        for (IrisBiome reachableBiome : engine.getDimension().getReachableBiomes(engine)) {
+            if (reachableBiome != null && biomeKey.equals(reachableBiome.getLoadKey())) {
+                return SearchPlan.unpruned();
+            }
+        }
         return SearchPlan.impossible();
     }
 
@@ -574,6 +583,36 @@ public final class HintedLocator<T> implements Locator<T> {
             }
 
             return false;
+        }
+
+        private KList<IrisBiome> closure(String rootKey) {
+            KList<IrisBiome> biomes = new KList<>();
+            if (rootKey == null) {
+                return biomes;
+            }
+
+            KSet<String> visited = new KSet<>();
+            ArrayDeque<String> queue = new ArrayDeque<>();
+            queue.add(rootKey);
+
+            while (!queue.isEmpty()) {
+                String key = queue.poll();
+                if (!visited.add(key)) {
+                    continue;
+                }
+
+                IrisBiome biome = load(key);
+                if (biome == null) {
+                    continue;
+                }
+                biomes.add(biome);
+                for (String child : biome.getChildren()) {
+                    if (child != null && !visited.contains(child)) {
+                        queue.add(child);
+                    }
+                }
+            }
+            return biomes;
         }
 
         private boolean closurePlacesObject(String rootKey, String objectKey) {

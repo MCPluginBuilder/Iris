@@ -1,5 +1,6 @@
 package art.arcane.iris.core.lifecycle;
 
+import art.arcane.iris.engine.IrisEngineMantle;
 import art.arcane.iris.core.WorldSlotKey;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.Rule;
@@ -223,8 +224,10 @@ public class BukkitWorldConfigurationTest {
     public void auditFailsClosedForMantleDataWithoutAPackSnapshot() throws Exception {
         File configuration = temporaryFolder.newFile("audit-mantle.yml");
         Path levelRoot = temporaryFolder.newFolder("audit-mantle-level-root").toPath();
-        Files.createDirectories(levelRoot.resolve("dimensions/iris/mantled/mantle"));
-        Files.writeString(levelRoot.resolve("dimensions/iris/mantled/mantle/0.0.ttp"), "mantle");
+        Path mantleRoot = levelRoot.resolve("dimensions/iris/mantled")
+                .resolve(IrisEngineMantle.STORAGE_FOLDER_NAME);
+        Files.createDirectories(mantleRoot);
+        Files.writeString(mantleRoot.resolve("0.0.ttp"), "mantle");
         YamlConfiguration yaml = new YamlConfiguration();
         yaml.set("worlds.world_iris_mantled.generator", "Iris:overworld");
         yaml.save(configuration);

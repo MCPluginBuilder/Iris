@@ -5,8 +5,8 @@ import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
-import art.arcane.iris.engine.river.cave.RiverCaveAction;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
@@ -110,40 +110,36 @@ public class IrisCarveModifierBoundarySupportTest {
     }
 
     @Test
-    public void riverGuardOnlyAcceptsStableSolidBoundaryLayers() {
-        RiverCaveHydrology guard = RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD);
+    public void hydrologyGuardOnlyAcceptsStableSolidBoundaryLayers() {
+        HydrologyCaveCell guard = HydrologyCaveCell.of(HydrologyCaveAction.SEAL_GUARD);
         PlatformBlockState stone = state("minecraft:stone", true);
         PlatformBlockState sand = state("minecraft:sand", true);
         PlatformBlockState water = state("minecraft:water", false, true);
 
-        assertTrue(IrisCarveModifier.canReplaceRiverGuard(guard, stone, false));
-        assertTrue(IrisCarveModifier.canReplaceRiverGuard(guard, stone, true));
-        assertTrue(IrisCarveModifier.canReplaceRiverGuard(guard, sand, false));
-        assertFalse(IrisCarveModifier.canReplaceRiverGuard(guard, sand, true));
-        assertFalse(IrisCarveModifier.canReplaceRiverGuard(guard, water, false));
+        assertTrue(IrisCarveModifier.canReplaceHydrologyGuard(guard, stone, false));
+        assertTrue(IrisCarveModifier.canReplaceHydrologyGuard(guard, stone, true));
+        assertTrue(IrisCarveModifier.canReplaceHydrologyGuard(guard, sand, false));
+        assertFalse(IrisCarveModifier.canReplaceHydrologyGuard(guard, sand, true));
+        assertFalse(IrisCarveModifier.canReplaceHydrologyGuard(guard, water, false));
     }
 
     @Test
-    public void riverBiomeInheritanceIsColumnCoherentAndHonorsLimits() {
-        long seed = 7845123L;
-        boolean cell = IrisCarveModifier.selectsParentRiverBiome(seed, 8, 12, 0.5D);
-        for (int x = 8; x < 12; x++) {
-            for (int z = 12; z < 16; z++) {
-                assertTrue(cell == IrisCarveModifier.selectsParentRiverBiome(seed, x, z, 0.5D));
-            }
-        }
-        assertFalse(IrisCarveModifier.selectsParentRiverBiome(seed, 8, 12, 0D));
-        assertTrue(IrisCarveModifier.selectsParentRiverBiome(seed, 8, 12, 1D));
+    @SuppressWarnings("unchecked")
+    public void submergedCaveFloorUsesBuriedSubstrateInsteadOfVegetatedSurface() {
+        Hunk<PlatformBlockState> output = mock(Hunk.class);
+        PlatformBlockState grass = state("minecraft:grass_block", true);
+        PlatformBlockState dirt = state("minecraft:dirt", true);
+        PlatformBlockState moss = state("minecraft:moss_block", true);
+        HydrologyCaveCell wet = HydrologyCaveCell.of(HydrologyCaveAction.WET_SOURCE);
 
-        boolean inherited = false;
-        boolean overridden = false;
-        for (int x = -128; x <= 128; x += 4) {
-            boolean selected = IrisCarveModifier.selectsParentRiverBiome(seed, x, 0, 0.5D);
-            inherited |= selected;
-            overridden |= !selected;
-        }
-        assertTrue(inherited);
-        assertTrue(overridden);
+        doReturn(dirt).when(output).getRaw(0, 4, 0);
+
+        assertSame(dirt, IrisCarveModifier.resolveSubmergedCaveFloorLayer(
+                output, 0, 5, 0, grass, wet));
+        assertSame(dirt, IrisCarveModifier.resolveSubmergedCaveFloorLayer(
+                output, 0, 5, 0, moss, wet));
+        assertSame(grass, IrisCarveModifier.resolveSubmergedCaveFloorLayer(
+                output, 0, 5, 0, grass, HydrologyCaveCell.of(HydrologyCaveAction.DRY_AIR)));
     }
 
     private PlatformBlockState state(String key, boolean solid) {

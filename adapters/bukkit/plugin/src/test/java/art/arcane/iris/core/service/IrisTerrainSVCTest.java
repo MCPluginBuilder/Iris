@@ -5,12 +5,10 @@ import art.arcane.iris.api.terrain.IrisColumnQuery;
 import art.arcane.iris.api.terrain.IrisRiverState;
 import art.arcane.iris.api.terrain.IrisSurfaceKind;
 import art.arcane.iris.api.terrain.IrisTerrainService;
-import art.arcane.iris.engine.river.RiverEdgeId;
-import art.arcane.iris.engine.river.RiverNodeId;
-import art.arcane.iris.engine.river.RiverRouteState;
-import art.arcane.iris.engine.river.RiverSample;
-import art.arcane.iris.engine.river.RiverSection;
-import art.arcane.iris.engine.river.runtime.IrisRiverSurfaceSample;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureRef;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
 import art.arcane.iris.util.common.plugin.IrisService;
 import org.bukkit.World;
 import org.junit.Test;
@@ -19,6 +17,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -104,36 +103,46 @@ public class IrisTerrainSVCTest {
     }
 
     @Test
-    public void riverRouteStatesMapToThePublicDiagnosticStates() {
-        assertEquals(IrisRiverState.NONE, IrisTerrainSVC.riverState(
-                new IrisRiverSurfaceSample(RiverSample.none(), 70D, 70D, 70D, false, false)
-        ));
-        assertEquals(IrisRiverState.WET, IrisTerrainSVC.riverState(river(RiverRouteState.WET)));
-        assertEquals(IrisRiverState.DRY, IrisTerrainSVC.riverState(river(RiverRouteState.DRY)));
-        assertEquals(IrisRiverState.NONE, IrisTerrainSVC.riverState(river(RiverRouteState.SUPPRESSED)));
+    public void acceptedHydrologyMapsToThePublicDiagnosticStates() {
+        assertEquals(IrisRiverState.NONE, IrisTerrainSVC.riverState(null));
+        assertEquals(IrisRiverState.WET, IrisTerrainSVC.riverState(river(true)));
+        assertEquals(IrisRiverState.DRY, IrisTerrainSVC.riverState(river(false)));
     }
 
-    private static IrisRiverSurfaceSample river(RiverRouteState state) {
-        RiverSection section = switch (state) {
-            case WET -> RiverSection.CHANNEL;
-            case DRY -> RiverSection.DRY_CHANNEL;
-            case SUPPRESSED -> RiverSection.NONE;
-        };
-        RiverSample sample = new RiverSample(
-                true,
-                state,
-                section,
-                0D,
-                0.5D,
-                1D,
+    private static HydrologyColumnSample river(boolean connectedFluid) {
+        HydrologyFeatureRef feature = new HydrologyFeatureRef(
+                1L,
+                HydrologyFeatureType.SURFACE_POOL,
+                2L,
+                3L,
+                0,
+                63,
+                0,
                 1,
-                1,
-                8D,
-                4D,
-                3D,
-                false,
-                RiverEdgeId.of(new RiverNodeId(0, 0), new RiverNodeId(1, 0))
+                0,
+                false
         );
-        return new IrisRiverSurfaceSample(sample, 70D, 60D, 63D, false, state == RiverRouteState.WET);
+        HydrologyColumnLayer layer = new HydrologyColumnLayer(
+                feature,
+                60,
+                63,
+                63,
+                true,
+                false,
+                false,
+                connectedFluid,
+                false,
+                false,
+                true,
+                connectedFluid,
+                false,
+                "water",
+                "river",
+                "mouth",
+                "shore",
+                "dry",
+                "cave"
+        );
+        return new HydrologyColumnSample(0, 0, 70, 63, false, "parent", List.of(layer));
     }
 }

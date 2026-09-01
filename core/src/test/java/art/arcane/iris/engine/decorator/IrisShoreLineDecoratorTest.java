@@ -75,19 +75,101 @@ public class IrisShoreLineDecoratorTest {
     }
 
     @Test
-    public void forcePlaceStillRejectsMissingSurface() {
-        Fixture fixture = createFixture(true);
+    public void acceptedShoreUsesPublishedGeometry() {
+        Fixture fixture = createFixture(false, false);
+        PlatformBlockState support = sturdyState();
         PlatformBlockState targetAir = airState();
-        Hunk<PlatformBlockState> output = output(airState(), targetAir);
+        when(fixture.decorant.canPlaceOnto(support)).thenReturn(true);
+        Hunk<PlatformBlockState> output = output(support, targetAir);
 
         fixture.shoreline.decorate(0, 0, 0, 1, -1, 0, 1, -1,
                 output, fixture.biome, FLUID_HEIGHT, output.getHeight());
 
         assertSame(targetAir, output.get(0, FLUID_HEIGHT + 1, 0));
+
+        fixture.shoreline.decorateAcceptedShore(
+                0,
+                0,
+                0,
+                0,
+                output,
+                fixture.biome,
+                FLUID_HEIGHT,
+                output.getHeight()
+        );
+
+        assertSame(fixture.decorant, output.get(0, FLUID_HEIGHT + 1, 0));
+    }
+
+    @Test
+    public void forcePlaceStillRejectsMissingSurface() {
+        Fixture fixture = createFixture(true);
+        PlatformBlockState targetAir = airState();
+        Hunk<PlatformBlockState> output = output(airState(), targetAir);
+
+        fixture.shoreline.decorateAcceptedShore(
+                0,
+                0,
+                0,
+                0,
+                output,
+                fixture.biome,
+                FLUID_HEIGHT,
+                output.getHeight()
+        );
+
+        assertSame(targetAir, output.get(0, FLUID_HEIGHT + 1, 0));
+    }
+
+    @Test
+    public void unsupportedWaterloggedStackRestoresEveryOriginalBlock() {
+        Fixture fixture = createFixture(false, false);
+        PlatformBlockState support = sturdyState();
+        PlatformBlockState lowerOriginal = airState();
+        PlatformBlockState upperOriginal = airState();
+        PlatformBlockState waterloggedTop = mock(PlatformBlockState.class);
+        when(fixture.decorant.key()).thenReturn("minecraft:grass");
+        when(fixture.decorant.canPlaceOnto(support)).thenReturn(true);
+        when(waterloggedTop.isWaterLogged()).thenReturn(true);
+        when(fixture.decorator.isStacking()).thenReturn(true);
+        when(fixture.decorator.isScaleStack()).thenReturn(false);
+        when(fixture.decorator.getStackMax()).thenReturn(2);
+        when(fixture.decorator.getHeight(any(), anyDouble(), anyDouble(), eq(fixture.data))).thenReturn(2);
+        when(fixture.decorator.getTopThreshold()).thenReturn(1D);
+        when(fixture.decorator.getBlockDataArray(fixture.data)).thenReturn(new PlatformBlockState[0]);
+        when(fixture.decorator.getBlockDataTopsArray(fixture.data))
+                .thenReturn(new PlatformBlockState[]{waterloggedTop});
+        when(fixture.decorator.getBlockDataForTop(
+                eq(fixture.biome), any(), anyDouble(), anyDouble(), anyDouble(), eq(fixture.data)))
+                .thenReturn(waterloggedTop);
+
+        Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, FLUID_HEIGHT + 3, 1);
+        output.set(0, FLUID_HEIGHT, 0, support);
+        output.set(0, FLUID_HEIGHT + 1, 0, lowerOriginal);
+        output.set(0, FLUID_HEIGHT + 2, 0, upperOriginal);
+
+        fixture.shoreline.decorateAcceptedShore(
+                0,
+                0,
+                0,
+                0,
+                output,
+                fixture.biome,
+                FLUID_HEIGHT,
+                output.getHeight()
+        );
+
+        assertSame(lowerOriginal, output.get(0, FLUID_HEIGHT + 1, 0));
+        assertSame(upperOriginal, output.get(0, FLUID_HEIGHT + 2, 0));
     }
 
     @SuppressWarnings("unchecked")
     private Fixture createFixture(boolean forcePlace) {
+        return createFixture(forcePlace, true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Fixture createFixture(boolean forcePlace, boolean naturalShore) {
         Engine engine = mock(Engine.class);
         SeedManager seedManager = mock(SeedManager.class);
         IrisDimension dimension = mock(IrisDimension.class);
@@ -109,7 +191,9 @@ public class IrisShoreLineDecoratorTest {
         when(complex.getFluidHeight()).thenReturn((double) FLUID_HEIGHT);
         when(complex.getHeightStream()).thenReturn(heightStream);
         when(complex.getRiverWaterSurfaceStream()).thenReturn(fluidStream);
-        when(heightStream.get(anyDouble(), anyDouble())).thenReturn((double) FLUID_HEIGHT - 1);
+        when(heightStream.get(anyDouble(), anyDouble())).thenReturn(
+                naturalShore ? (double) FLUID_HEIGHT - 1 : (double) FLUID_HEIGHT
+        );
         when(fluidStream.get(anyDouble(), anyDouble())).thenReturn((double) FLUID_HEIGHT);
         when(engine.getData()).thenReturn(data);
         when(biome.getDecoratorBucket(IrisDecorationPart.SHORE_LINE))

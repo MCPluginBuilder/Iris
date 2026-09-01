@@ -1,138 +1,114 @@
 package art.arcane.iris.engine;
 
-import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureRef;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
 import art.arcane.iris.engine.object.InferredType;
+import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.engine.object.IrisRiverOverride;
-import art.arcane.iris.engine.river.RiverRouteState;
-import art.arcane.iris.engine.river.RiverSample;
-import art.arcane.iris.engine.river.RiverSection;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.iris.util.project.stream.interpolation.Interpolated;
 import org.junit.Test;
 
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertSame;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 
 public class IrisComplexSurfaceBiomeTest {
     @Test
-    public void focusBiomeWithoutOverrideIgnoresOverridesOutsideFocus() {
-        IrisBiome focusBiome = new IrisBiome();
-        IrisBiome unreachableBiome = new IrisBiome().setRiverOverride(new IrisRiverOverride());
+    public void gradingFootprintKeepsItsExactNaturalParentBiome() {
+        HydrologyFeatureRef feature = new HydrologyFeatureRef(
+                1L,
+                HydrologyFeatureType.SURFACE_POOL,
+                2L,
+                3L,
+                4,
+                70,
+                5,
+                1,
+                0,
+                false
+        );
+        HydrologyColumnLayer grading = new HydrologyColumnLayer(
+                feature,
+                72,
+                74,
+                74,
+                false,
+                false,
+                true,
+                false,
+                false,
+                false,
+                true,
+                false,
+                false,
+                "water",
+                "river",
+                "mouth",
+                "shore",
+                "dry",
+                "flooded"
+        );
+        HydrologyColumnSample sample = new HydrologyColumnSample(
+                4,
+                5,
+                76,
+                63,
+                false,
+                "exact_parent",
+                List.of(grading)
+        );
 
-        assertFalse(IrisComplex.biomeRiverOverridesPossible(focusBiome, List.of(unreachableBiome)));
-    }
-
-    @Test
-    public void focusBiomeOverrideAlwaysEnablesBiomeSampling() {
-        IrisBiome focusBiome = new IrisBiome().setRiverOverride(new IrisRiverOverride());
-
-        assertTrue(IrisComplex.biomeRiverOverridesPossible(focusBiome, List.of()));
-    }
-
-    @Test
-    public void nonFocusBiomeSamplingTracksReachableOverrides() {
-        assertFalse(IrisComplex.biomeRiverOverridesPossible(null, List.of(new IrisBiome())));
-        assertTrue(IrisComplex.biomeRiverOverridesPossible(
-                null,
-                List.of(new IrisBiome().setRiverOverride(new IrisRiverOverride()))
-        ));
-    }
-
-    @Test
-    public void maxIncisionCapabilityIgnoresIdentityOverrides() {
-        assertFalse(IrisComplex.changesMaxIncision(null));
-        assertFalse(IrisComplex.changesMaxIncision(new IrisRiverOverride()));
-        assertFalse(IrisComplex.changesMaxIncision(
-                new IrisRiverOverride().setMaxIncisionMultiplier(1D)));
-        assertTrue(IrisComplex.changesMaxIncision(
-                new IrisRiverOverride().setMaxIncisionMultiplier(0.75D)));
+        assertEquals("exact_parent", IrisComplex.hydrologySurfaceBiomeKey(sample));
     }
 
     @Test
     public void naturalOceanMaskTracksContinentalIntent() {
-        assertTrue(IrisComplex.createNaturalOceanStream(
+        assertEquals(InferredType.SEA, IrisComplex.resolveNaturalInferredType(
                 constantType(InferredType.SEA),
-                null
-        ).get(0D, 0D));
-        assertFalse(IrisComplex.createNaturalOceanStream(
+                null,
+                0D,
+                0D
+        ));
+        assertEquals(InferredType.LAND, IrisComplex.resolveNaturalInferredType(
                 constantType(InferredType.LAND),
-                null
-        ).get(0D, 0D));
+                null,
+                0D,
+                0D
+        ));
     }
 
     @Test
-    public void naturalOceanMaskDoesNotSampleNaturalHeight() {
-        AtomicInteger heightSamples = new AtomicInteger();
-        ProceduralStream<Double> height = ProceduralStream.ofDouble((x, z) -> {
-            heightSamples.incrementAndGet();
-            return 62D;
-        });
-
-        Boolean ocean = IrisComplex.createNaturalOceanStream(
+    public void focusNaturalOceanMaskUsesTheFocusedSurfaceType() {
+        assertEquals(InferredType.SEA, IrisComplex.resolveNaturalInferredType(
                 constantType(InferredType.LAND),
-                null
-        ).get(8D, -3D);
-
-        assertFalse(ocean);
-        assertEquals(0, heightSamples.get());
+                new IrisBiome().setInferredType(InferredType.SEA),
+                0D,
+                0D
+        ));
+        assertEquals(InferredType.LAND, IrisComplex.resolveNaturalInferredType(
+                constantType(InferredType.SEA),
+                new IrisBiome().setInferredType(InferredType.LAND),
+                0D,
+                0D
+        ));
+        assertEquals(InferredType.SHORE, IrisComplex.resolveNaturalInferredType(
+                constantType(InferredType.SEA),
+                new IrisBiome().setInferredType(InferredType.SHORE),
+                0D,
+                0D
+        ));
     }
 
     @Test
-    public void focusNaturalOceanMaskIgnoresHeightForEverySurfaceType() {
-        AtomicInteger heightSamples = new AtomicInteger();
-        ProceduralStream<Double> height = ProceduralStream.ofDouble((x, z) -> {
-            heightSamples.incrementAndGet();
-            return -1_000D;
-        });
-
-        assertTrue(IrisComplex.createNaturalOceanStream(
-                constantType(InferredType.LAND),
-                new IrisBiome().setInferredType(InferredType.SEA)
-        ).get(0D, 0D));
-        assertFalse(IrisComplex.createNaturalOceanStream(
-                constantType(InferredType.SEA),
-                new IrisBiome().setInferredType(InferredType.LAND)
-        ).get(0D, 0D));
-        assertFalse(IrisComplex.createNaturalOceanStream(
-                constantType(InferredType.SEA),
-                new IrisBiome().setInferredType(InferredType.SHORE)
-        ).get(0D, 0D));
-        assertEquals(0, heightSamples.get());
-    }
-
-    @Test
-    public void fixedOceanMaskUsesContinentalIntentWithoutSamplingHeight() {
-        AtomicInteger heightSamples = new AtomicInteger();
-        ProceduralStream<Double> height = ProceduralStream.ofDouble((x, z) -> {
-            heightSamples.incrementAndGet();
-            return -1_000D;
-        });
-
-        Boolean ocean = IrisComplex.createNaturalOceanStream(
-                constantType(InferredType.SEA),
-                null
-        ).get(8D, -3D);
-
-        assertTrue(ocean);
-        assertEquals(0, heightSamples.get());
-    }
-
-    @Test
-    public void emptyRiverPoolsKeepWetChannelsAquaticAndDryChannelsLand() {
-        assertEquals(InferredType.SEA, IrisComplex.directRiverFallback(sample(RiverRouteState.WET, RiverSection.CHANNEL)));
-        assertEquals(InferredType.SEA, IrisComplex.directRiverFallback(sample(RiverRouteState.WET, RiverSection.MOUTH)));
-        assertEquals(InferredType.LAND, IrisComplex.directRiverFallback(sample(RiverRouteState.DRY, RiverSection.DRY_BANK)));
-        assertNull(IrisComplex.directRiverFallback(sample(RiverRouteState.WET, RiverSection.BANK)));
+    public void naturalSlopeMatchesTheRangeThreeStreamFormula() {
+        assertEquals(5D, IrisComplex.calculateNaturalSlope(10D, 13D, 14D), 0D);
     }
 
     @Test
@@ -153,10 +129,12 @@ public class IrisComplexSurfaceBiomeTest {
                 70D,
                 constant(base),
                 constant(sea),
-                constant(base));
+                constant(base)
+        );
 
         assertSame(sea, resolved);
     }
+
     @Test
     public void shorelineHeightSelectsShoreBiome() {
         IrisBiome base = mock(IrisBiome.class);
@@ -174,7 +152,8 @@ public class IrisComplexSurfaceBiomeTest {
                 63D,
                 constant(base),
                 constant(base),
-                constant(shore));
+                constant(shore)
+        );
 
         assertSame(shore, resolved);
     }
@@ -197,7 +176,8 @@ public class IrisComplexSurfaceBiomeTest {
                 63D,
                 constant(land),
                 constant(aquatic),
-                constant(aquatic));
+                constant(aquatic)
+        );
 
         assertSame(land, resolved);
     }
@@ -214,9 +194,5 @@ public class IrisComplexSurfaceBiomeTest {
                 (x, z) -> type,
                 Interpolated.of(value -> 0D, value -> type)
         );
-    }
-
-    private static RiverSample sample(RiverRouteState state, RiverSection section) {
-        return new RiverSample(true, state, section, 0D, 0.5D, 1D, 1, 1, 10D, 5D, 3D, false, null);
     }
 }

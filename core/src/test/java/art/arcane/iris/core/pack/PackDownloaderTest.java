@@ -105,9 +105,9 @@ public class PackDownloaderTest {
     }
 
     @Test
-    public void resolvesDefaultOverworldBetaRelease() {
+    public void resolvesDefaultOverworldStableRelease() {
         assertEquals(
-                "https://github.com/IrisDimensions/overworld/releases/download/beta/overworld.zip",
+                "https://github.com/IrisDimensions/overworld/releases/download/4002/overworld.zip",
                 PackDownloader.builtInPackUrl("overworld")
         );
         assertTrue(PackDownloader.isDefaultOverworld("overworld"));
@@ -116,9 +116,9 @@ public class PackDownloaderTest {
     }
 
     @Test
-    public void resolvesUnderworldBetaRelease() {
+    public void resolvesUnderworldStableRelease() {
         assertEquals(
-                "https://github.com/IrisDimensions/underworld/releases/download/beta/underworld.zip",
+                "https://github.com/IrisDimensions/underworld/releases/download/1005/underworld.zip",
                 PackDownloader.builtInPackUrl("underworld")
         );
         assertTrue(PackDownloader.isBuiltInPack("underworld"));
@@ -659,8 +659,8 @@ public class PackDownloaderTest {
         Files.writeString(
                 extracted.toPath().resolve("dimensions/overworld.json"),
                 "{\"name\":\"Overworld\",\"regions\":[\"local\"],\"logicalHeight\":256,"
-                        + "\"dimensionHeight\":{\"min\":-64,\"max\":320},\"rivers\":{\"enabled\":true,"
-                        + "\"terrain\":{},\"water\":{\"mode\":\"SEA_LEVEL\"}}}",
+                        + "\"dimensionHeight\":{\"min\":-64,\"max\":320},\"hydrology\":{\"rivers\":{"
+                        + "\"enabled\":true,\"routing\":{\"tileSize\":255}}}}",
                 StandardCharsets.UTF_8
         );
 

@@ -188,6 +188,17 @@ public class ModdedGenerationLeaseContractTest {
     }
 
     @Test
+    public void pregenReportsOnlyCleanupCallbacksFromCoveredTargets() throws IOException {
+        String source = source("art/arcane/iris/modded/command/ModdedPregenMethod.java");
+        String cleanup = method(source, "private void cleanupMantleChunksCoveredBy(");
+
+        assertTrue(source.contains("cleanupMantleChunksCoveredBy(x, z, listener);"));
+        assertFalse(source.contains("cleanupMantleChunk(x, z);"));
+        assertTrue(cleanup.contains("cleanupChunksCoveredBy(x, z, true, listener::onChunkCleaned)"));
+        assertFalse(cleanup.contains("forceCleanupChunk"));
+    }
+
+    @Test
     public void invalidPregenBoundsFailBeforeRuntimeMutation() throws IOException {
         String jobSource = source("art/arcane/iris/modded/command/ModdedPregenJob.java");
         String start = method(jobSource, "public static boolean start(");

@@ -302,6 +302,15 @@ final class IrisObjectPlacementRunner {
             return -1;
         }
 
+        if (yv < 0
+                && config.getCarvingSupport().supportsSurface()
+                && config.getMode() != ObjectPlaceMode.FLOATING
+                && !rawStructurePiece
+                && IrisSurfaceSupport.intersectsHydrology(oplacer, x, z, config.getTranslate(),
+                        config.getRotation(), spinx, spiny, spinz, self.getSurfaceSupportOffsets())) {
+            return -1;
+        }
+
         // Surface-anchored placements may never roof or bridge a carved hole. Explicit-Y anchors are only
         // guarded for SURFACE_ONLY: ANYWHERE covers the inverted upper dimension and CARVING_ONLY covers
         // cave anchors, and neither reads the terrain surface this stencil samples.
@@ -358,7 +367,8 @@ final class IrisObjectPlacementRunner {
             for (int i = worldBounds.minX(); i <= worldBounds.maxX(); i++) {
                 for (int j = worldBounds.minY(); j <= worldBounds.maxY(); j++) {
                     for (int k = worldBounds.minZ(); k <= worldBounds.maxZ(); k++) {
-                        PlacedObject p = engine.getObjectPlacement(i, j, k);
+                        String placementMarker = placer.getData(i, j, k, String.class);
+                        PlacedObject p = engine.resolveObjectPlacementMarker(i, k, placementMarker);
                         if (p == null) continue;
                         IrisObject o = p.getObject();
                         if (o == null) continue;

@@ -25,6 +25,8 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class IrisObjectPlacementRunnerRegressionTest {
@@ -94,13 +96,9 @@ public class IrisObjectPlacementRunnerRegressionTest {
     @Test
     public void collisionCheckUsesTheTransformedBounds() {
         PlacedObject forbidden = new PlacedObject(null, object("forbidden"), 1, 0, 0);
-        when(engine.getObjectPlacement(anyInt(), anyInt(), anyInt())).thenAnswer(invocation -> {
-            int x = invocation.getArgument(0);
-            int y = invocation.getArgument(1);
-            int z = invocation.getArgument(2);
-            return x == 0 && y == ANCHOR_Y && z == -4 ? forbidden : null;
-        });
         RecordingPlacer placer = new RecordingPlacer(engine);
+        placer.setData(0, ANCHOR_Y, -4, "forbidden@1");
+        when(engine.resolveObjectPlacementMarker(0, -4, "forbidden@1")).thenReturn(forbidden);
         IrisObjectPlacement placement = placement();
         placement.setRotation(IrisObjectRotation.of(0, 90, 0));
         placement.setTranslate(new IrisObjectTranslate().setX(4));
@@ -110,6 +108,25 @@ public class IrisObjectPlacementRunnerRegressionTest {
 
         assertEquals(-1, result);
         assertTrue(placer.writes().isEmpty());
+        verify(engine).resolveObjectPlacementMarker(0, -4, "forbidden@1");
+        verify(engine, never()).getObjectPlacement(anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
+    public void allowedCollisionOverridesTheForbiddenKey() {
+        PlacedObject allowed = new PlacedObject(null, object("allowed"), 1, 0, 0);
+        RecordingPlacer placer = new RecordingPlacer(engine);
+        placer.setData(0, ANCHOR_Y, 0, "allowed@1");
+        when(engine.resolveObjectPlacementMarker(0, 0, "allowed@1")).thenReturn(allowed);
+        IrisObjectPlacement placement = placement();
+        placement.getForbiddenCollisions().add("allowed");
+        placement.getAllowedCollisions().add("allowed");
+
+        int result = lineObject(1).place(0, ANCHOR_Y, 0, placer, placement, new RNG(2L), data);
+
+        assertEquals(ANCHOR_Y, result);
+        assertFalse(placer.writes().isEmpty());
+        verify(engine).resolveObjectPlacementMarker(0, 0, "allowed@1");
     }
 
     @Test
@@ -216,6 +233,7 @@ public class IrisObjectPlacementRunnerRegressionTest {
     private static final class RecordingPlacer implements IObjectPlacer {
         private final List<BlockWrite> writes = new ArrayList<>();
         private final Map<String, PlatformBlockState> world = new HashMap<>();
+        private final Map<String, Object> data = new HashMap<>();
         private final List<String> sampledColumns = new ArrayList<>();
         private final Engine engine;
         private int failAfterWrites = Integer.MAX_VALUE;
@@ -308,11 +326,12 @@ public class IrisObjectPlacementRunnerRegressionTest {
 
         @Override
         public <T> void setData(int x, int y, int z, T data) {
+            this.data.put(x + ":" + y + ":" + z + ":" + data.getClass().getName(), data);
         }
 
         @Override
         public <T> T getData(int x, int y, int z, Class<T> type) {
-            return null;
+            return type.cast(data.get(x + ":" + y + ":" + z + ":" + type.getName()));
         }
 
         @Override

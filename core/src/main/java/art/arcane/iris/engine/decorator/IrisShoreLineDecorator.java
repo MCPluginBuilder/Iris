@@ -54,6 +54,32 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             return;
         }
 
+        place(x, z, realX, realZ, data, biome, height, max);
+    }
+
+    public void decorateAcceptedShore(
+            int x,
+            int z,
+            int realX,
+            int realZ,
+            Hunk<PlatformBlockState> data,
+            IrisBiome biome,
+            int height,
+            int max
+    ) {
+        place(x, z, realX, realZ, data, biome, height, max);
+    }
+
+    private void place(
+            int x,
+            int z,
+            int realX,
+            int realZ,
+            Hunk<PlatformBlockState> data,
+            IrisBiome biome,
+            int height,
+            int max
+    ) {
         RNG rng = getRNG(realX, realZ);
         IrisDecorator decorator = DecoratorCore.pickDecorator(biome, getPart(), partRNG, rng, getData(), realX, realZ);
 
@@ -71,6 +97,8 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             return;
         }
 
+        IrisSurfaceDecorator.AquaticPlacementSnapshot aquaticSnapshot = IrisSurfaceDecorator.captureAquaticPlacement(
+                decorator, getData(), data, x, z, height, max);
         if (!decorator.isStacking()) {
             int targetY = height + 1;
             if (targetY >= data.getHeight()
@@ -80,6 +108,7 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             PlatformBlockState block = decorator.getBlockData100(biome, rng, realX, height, realZ, getData());
             if (block != null && DecoratorCore.isValidShorelineSupport(decorator, block, support)) {
                 data.set(x, targetY, z, block);
+                aquaticSnapshot.restoreIfUnsupported(data, x, z);
             }
             return;
         }
@@ -100,6 +129,7 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             PlatformBlockState block = decorator.getBlockDataForTop(biome, rng, realX, height, realZ, getData());
             if (block != null && DecoratorCore.isValidShorelineSupport(decorator, block, support)) {
                 data.set(x, targetY, z, block);
+                aquaticSnapshot.restoreIfUnsupported(data, x, z);
             }
             return;
         }
@@ -123,5 +153,6 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             }
             data.set(x, targetY, z, block);
         }
+        aquaticSnapshot.restoreIfUnsupported(data, x, z);
     }
 }

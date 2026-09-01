@@ -21,8 +21,8 @@ package art.arcane.iris.engine.mantle.components;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.TileData;
-import art.arcane.iris.engine.river.cave.RiverCaveAction;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.spi.PlatformBlockState;
 import org.junit.Test;
 
@@ -112,10 +112,10 @@ public class CaveObjectPlacementTransactionTest {
     }
 
     @Test
-    public void protectedHydrologyRejectsTheWholePlacement() {
+    public void dryHydrologyHeadroomRejectsTheWholePlacement() {
         IObjectPlacer delegate = createPlacer(128, 80, 20, 90);
-        when(delegate.getData(4, 30, 7, RiverCaveHydrology.class))
-                .thenReturn(RiverCaveHydrology.of(RiverCaveAction.WET_SOURCE));
+        when(delegate.getData(4, 30, 7, HydrologyCaveCell.class))
+                .thenReturn(HydrologyCaveCell.of(HydrologyCaveAction.DRY_AIR));
         CaveObjectPlacementTransaction transaction = new CaveObjectPlacementTransaction(delegate, 20, 10);
 
         transaction.set(4, 30, 7, mock(PlatformBlockState.class));

@@ -72,9 +72,18 @@ import art.arcane.iris.util.project.stream.utility.SynchronizedStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 @SuppressWarnings("ALL")
 public interface ProceduralStream<T> extends ProceduralLayer, Interpolated<T> {
+    static <V> V bypass2DCaches(Supplier<V> operation) {
+        return ProceduralStreamCacheBypass.supply(operation);
+    }
+
+    static boolean is2DCacheBypassActive() {
+        return ProceduralStreamCacheBypass.isActive();
+    }
+
     static ProceduralStream<Double> ofDouble(Function2<Double, Double, Double> f) {
         try {
             return of(f, Interpolated.DOUBLE);

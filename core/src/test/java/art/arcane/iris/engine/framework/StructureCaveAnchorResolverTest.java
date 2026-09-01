@@ -3,8 +3,8 @@ package art.arcane.iris.engine.framework;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisStructureAnchorMode;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
-import art.arcane.iris.engine.river.cave.RiverCaveAction;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -181,18 +181,18 @@ public class StructureCaveAnchorResolverTest {
     }
 
     @Test
-    public void wetAndSealHydrologyCannotBecomeStructureAnchors() {
+    public void plannedHydrologyCannotBecomeStructureAnchors() {
         MatterCavern fluid = new MatterCavern(true, "", (byte) 1);
         MatterCavern forcedAir = new MatterCavern(true, "", (byte) 3);
 
         assertFalse(StructureCaveAnchorResolver.acceptsAnchorFluid(
-                true, fluid, RiverCaveHydrology.of(RiverCaveAction.WET_SOURCE), 20, 8));
+                true, fluid, HydrologyCaveCell.of(HydrologyCaveAction.WET_SOURCE), 20, 8));
         assertFalse(StructureCaveAnchorResolver.acceptsAnchorFluid(
-                true, fluid, RiverCaveHydrology.of(RiverCaveAction.FALLING_FLUID), 20, 8));
+                true, fluid, HydrologyCaveCell.of(HydrologyCaveAction.FALLING_FLUID), 20, 8));
         assertFalse(StructureCaveAnchorResolver.acceptsAnchorFluid(
-                true, null, RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD), 20, 8));
-        assertTrue(StructureCaveAnchorResolver.acceptsAnchorFluid(
-                false, forcedAir, RiverCaveHydrology.of(RiverCaveAction.DRY_AIR), 0, 8));
+                true, null, HydrologyCaveCell.of(HydrologyCaveAction.SEAL_GUARD), 20, 8));
+        assertFalse(StructureCaveAnchorResolver.acceptsAnchorFluid(
+                false, forcedAir, HydrologyCaveCell.of(HydrologyCaveAction.DRY_AIR), 0, 8));
     }
 
     private static Engine engineWithFloorAnchor(MatterCavern anchorCavern, int surfaceHeight) {

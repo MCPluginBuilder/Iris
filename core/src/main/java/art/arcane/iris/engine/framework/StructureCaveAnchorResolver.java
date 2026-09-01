@@ -3,8 +3,8 @@ package art.arcane.iris.engine.framework;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisStructureAnchorMode;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrologyStorage;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveStorage;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.MatterCavern;
 
@@ -288,7 +288,7 @@ public final class StructureCaveAnchorResolver {
             int mantleY,
             int blockZ
     ) {
-        RiverCaveHydrology hydrology = hydrologyAt(engine, blockX, mantleY, blockZ);
+        HydrologyCaveCell hydrology = hydrologyAt(engine, blockX, mantleY, blockZ);
         MatterCavern cavern = cavernAt(engine, blockX, mantleY, blockZ);
         return acceptsAnchorFluid(
                 placement.isUnderwater(),
@@ -310,7 +310,7 @@ public final class StructureCaveAnchorResolver {
     static boolean acceptsAnchorFluid(
             boolean underwater,
             MatterCavern cavern,
-            RiverCaveHydrology hydrology,
+            HydrologyCaveCell hydrology,
             int mantleY,
             int defaultLavaHeight
     ) {
@@ -332,12 +332,12 @@ public final class StructureCaveAnchorResolver {
     private static MatterCavern cavernAt(Engine engine, int blockX, int mantleY, int blockZ) {
         MatterCavern baseline = engine.getMantle().getMantle()
                 .get(blockX, mantleY, blockZ, MatterCavern.class);
-        RiverCaveHydrology hydrology = hydrologyAt(engine, blockX, mantleY, blockZ);
+        HydrologyCaveCell hydrology = hydrologyAt(engine, blockX, mantleY, blockZ);
         return hydrology == null ? baseline : hydrology.asCavern();
     }
 
-    private static RiverCaveHydrology hydrologyAt(Engine engine, int blockX, int mantleY, int blockZ) {
-        return RiverCaveHydrologyStorage.getIfPresent(
+    private static HydrologyCaveCell hydrologyAt(Engine engine, int blockX, int mantleY, int blockZ) {
+        return HydrologyCaveStorage.getIfPresent(
                 engine.getMantle().getMantle(), blockX, mantleY, blockZ);
     }
 

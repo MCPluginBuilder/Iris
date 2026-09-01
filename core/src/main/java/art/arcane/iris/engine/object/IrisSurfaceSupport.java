@@ -1,6 +1,8 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.util.common.math.IrisBlockVector;
 
 import java.util.Arrays;
@@ -27,6 +29,21 @@ public final class IrisSurfaceSupport {
             return true;
         }
         return stencil.anyColumnUnsupported(placer, data, x, z, Math.max(1, minSolidDepth));
+    }
+
+    public static boolean intersectsHydrology(IObjectPlacer placer, int x, int z,
+                                              IrisObjectTranslate translate, IrisObjectRotation rotation,
+                                              int spinX, int spinY, int spinZ,
+                                              List<IrisBlockVector> supportOffsets) {
+        Engine engine = placer.getEngine();
+        if (engine == null || engine.getComplex() == null) {
+            return false;
+        }
+        Stencil stencil = STENCIL.get();
+        if (!stencil.build(supportOffsets, translate, rotation, spinX, spinY, spinZ, 0)) {
+            return true;
+        }
+        return stencil.anyColumnIntersectsHydrology(engine.getComplex(), x, z);
     }
 
     private static IrisBlockVector transform(IrisBlockVector offset, IrisObjectTranslate translate,
@@ -173,6 +190,22 @@ public final class IrisSurfaceSupport {
                 for (int sz = lowZ + 1; sz < highZ; sz++) {
                     if (isColumnUnsupported(placer, data, x, z, lowX, sz, minSolidDepth)
                             || isColumnUnsupported(placer, data, x, z, highX, sz, minSolidDepth)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private boolean anyColumnIntersectsHydrology(IrisComplex complex, int x, int z) {
+            for (int stencilX = 0; stencilX < width; stencilX++) {
+                for (int stencilZ = 0; stencilZ < depth; stencilZ++) {
+                    if (!cells[(stencilX * depth) + stencilZ]) {
+                        continue;
+                    }
+                    int columnX = x + minX + stencilX;
+                    int columnZ = z + minZ + stencilZ;
+                    if (complex.hasHydrologySurfaceFluid(columnX, columnZ)) {
                         return true;
                     }
                 }

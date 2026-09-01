@@ -23,10 +23,11 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.render.IrisRenderer;
 import art.arcane.iris.engine.framework.render.RenderType;
+import art.arcane.iris.engine.hydrology.HydrologyCandidateKind;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.engine.river.RiverSection;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.localization.MessageArgument;
@@ -125,6 +126,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     private VisionRenderController.Frame renderFrame;
     private JComboBox<RenderType> modeSelector;
     private JToggleButton gridToggle;
+    private JToggleButton entitiesToggle;
     private JToggleButton followToggle;
     private RenderType currentType;
     private List<GuiMarker> players;
@@ -142,6 +144,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     private double blocksPerPixel;
     private int paintCadenceFps;
     private boolean grid;
+    private boolean entitiesVisible;
     private boolean follow;
     private boolean help;
     private boolean debug;
@@ -160,6 +163,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         this.notifications = new LinkedHashMap<>();
         this.players = List.of();
         this.entities = List.of();
+        this.entitiesVisible = false;
         this.currentType = RenderType.BIOME;
         this.blocksPerPixel = DEFAULT_BLOCKS_PER_PIXEL;
         this.contentRevision = 1L;
@@ -265,6 +269,12 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         vision.gridToggle = createToggle(IrisLanguage.plain(DesktopUiMessages.VISION_GRID), vision.grid);
         vision.gridToggle.addActionListener(event -> vision.toggleGrid());
         trailing.add(vision.gridToggle);
+        vision.entitiesToggle = createToggle(
+                IrisLanguage.plain(DesktopUiMessages.VISION_ENTITIES),
+                vision.entitiesVisible
+        );
+        vision.entitiesToggle.addActionListener(event -> vision.toggleEntities());
+        trailing.add(vision.entitiesToggle);
         vision.followToggle = createToggle(IrisLanguage.plain(DesktopUiMessages.VISION_FOLLOW), vision.follow);
         vision.followToggle.addActionListener(event -> vision.toggleFollow());
         trailing.add(vision.followToggle);
@@ -411,11 +421,13 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     }
 
     private void renderMarkers(Graphics2D canvas) {
-        for (GuiMarker marker : entities) {
-            int screenX = (int) Math.round(worldToScreenX(marker.worldX()));
-            int screenY = (int) Math.round(worldToScreenZ(marker.worldZ()));
-            canvas.setColor(MOB_COLOR);
-            canvas.fillRect(screenX - 2, screenY - 2, 5, 5);
+        if (entitiesVisible) {
+            for (GuiMarker marker : entities) {
+                int screenX = (int) Math.round(worldToScreenX(marker.worldX()));
+                int screenY = (int) Math.round(worldToScreenZ(marker.worldZ()));
+                canvas.setColor(MOB_COLOR);
+                canvas.fillRect(screenX - 2, screenY - 2, 5, 5);
+            }
         }
 
         for (GuiMarker marker : players) {
@@ -430,7 +442,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
             int labelWidth = canvas.getFontMetrics().stringWidth(marker.label());
             canvas.drawString(marker.label(), screenX - labelWidth / 2, screenY - 14);
         }
-        if (detailedHover) {
+        if (entitiesVisible && detailedHover) {
             renderNearestEntity(canvas);
         }
     }
@@ -483,21 +495,40 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     }
 
     private void renderRiverLegend(Graphics2D canvas) {
-        RiverSection[] sections = RiverSection.values();
+        HydrologyFeatureType[] types = HydrologyFeatureType.values();
+        HydrologyCandidateKind[] candidateKinds = HydrologyCandidateKind.values();
         int lineHeight = 18;
-        int width = 148;
-        int height = sections.length * lineHeight + CARD_PADDING * 2;
+        int width = 188;
+        int height = (types.length + candidateKinds.length + 1) * lineHeight + CARD_PADDING * 2;
         int x = getWidth() - width - CARD_PADDING;
         int y = getHeight() - STATUS_HEIGHT - PROGRESS_HEIGHT - height - CARD_PADDING;
         drawCardBackground(canvas, x, y, width, height);
         canvas.setFont(BODY_FONT);
-        for (int index = 0; index < sections.length; index++) {
-            RiverSection section = sections[index];
-            int rowY = y + CARD_PADDING + index * lineHeight;
-            canvas.setColor(new Color(IrisRenderer.riverColor(section)));
+        int headwaterY = y + CARD_PADDING;
+        canvas.setColor(new Color(IrisRenderer.headwaterColor()));
+        canvas.fillRoundRect(x + CARD_PADDING, headwaterY + 2, 12, 12, 4, 4);
+        canvas.setColor(new Color(IrisRenderer.headwaterDirectionColor()));
+        canvas.drawLine(x + CARD_PADDING + 3, headwaterY + 8, x + CARD_PADDING + 9, headwaterY + 8);
+        canvas.drawLine(x + CARD_PADDING + 9, headwaterY + 8, x + CARD_PADDING + 6, headwaterY + 5);
+        canvas.drawLine(x + CARD_PADDING + 9, headwaterY + 8, x + CARD_PADDING + 6, headwaterY + 11);
+        canvas.setColor(TEXT_SECONDARY);
+        canvas.drawString("headwater / source flow", x + CARD_PADDING + 20, headwaterY + 13);
+        for (int index = 0; index < types.length; index++) {
+            HydrologyFeatureType type = types[index];
+            int rowY = y + CARD_PADDING + (index + 1) * lineHeight;
+            canvas.setColor(new Color(IrisRenderer.hydrologyFeatureColor(type)));
             canvas.fillRoundRect(x + CARD_PADDING, rowY + 2, 12, 12, 4, 4);
             canvas.setColor(TEXT_SECONDARY);
-            String label = section.name().toLowerCase(Locale.ROOT).replace('_', ' ');
+            String label = type.name().toLowerCase(Locale.ROOT).replace('_', ' ');
+            canvas.drawString(label, x + CARD_PADDING + 20, rowY + 13);
+        }
+        for (int index = 0; index < candidateKinds.length; index++) {
+            HydrologyCandidateKind kind = candidateKinds[index];
+            int rowY = y + CARD_PADDING + (types.length + index + 1) * lineHeight;
+            canvas.setColor(new Color(IrisRenderer.hydrologyDiagnosticColor(kind)));
+            canvas.fillRoundRect(x + CARD_PADDING, rowY + 2, 12, 12, 4, 4);
+            canvas.setColor(TEXT_SECONDARY);
+            String label = "projected " + kind.name().toLowerCase(Locale.ROOT).replace('_', ' ');
             canvas.drawString(label, x + CARD_PADDING + 20, rowY + 13);
         }
     }
@@ -783,12 +814,16 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         try {
             List<GuiMarker> nextPlayers = overlay.players();
             players = nextPlayers == null ? List.of() : List.copyOf(nextPlayers);
-            overlay.requestEntities(next -> EventQueue.invokeLater(() -> {
-                if (!closed) {
-                    entities = next == null ? List.of() : List.copyOf(next);
-                    repaint();
-                }
-            }));
+            if (entitiesVisible) {
+                overlay.requestEntities(next -> EventQueue.invokeLater(() -> {
+                    if (!closed && entitiesVisible) {
+                        entities = next == null ? List.of() : List.copyOf(next);
+                        repaint();
+                    }
+                }));
+            } else if (!entities.isEmpty()) {
+                entities = List.of();
+            }
             if (follow && !players.isEmpty()) {
                 GuiMarker player = players.get(0);
                 if (Math.abs(centerX - player.worldX()) > 0.5D || Math.abs(centerZ - player.worldZ()) > 0.5D) {
@@ -852,6 +887,22 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
         notifyUser(IrisLanguage.plain(grid ? DesktopUiMessages.VISION_GRID_ENABLED : DesktopUiMessages.VISION_GRID_DISABLED));
     }
 
+    private void toggleEntities() {
+        entitiesVisible = !entitiesVisible;
+        if (entitiesVisible) {
+            refreshMarkers();
+        } else {
+            entities = List.of();
+            repaint();
+        }
+        syncControls();
+        notifyUser(IrisLanguage.plain(
+                entitiesVisible
+                        ? DesktopUiMessages.VISION_ENTITIES_ENABLED
+                        : DesktopUiMessages.VISION_ENTITIES_DISABLED
+        ));
+    }
+
     private void toggleFollow() {
         follow = !follow;
         if (follow && players.isEmpty()) {
@@ -880,6 +931,9 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
             }
             if (gridToggle != null) {
                 gridToggle.setSelected(grid);
+            }
+            if (entitiesToggle != null) {
+                entitiesToggle.setSelected(entitiesVisible);
             }
             if (followToggle != null) {
                 followToggle.setSelected(follow);

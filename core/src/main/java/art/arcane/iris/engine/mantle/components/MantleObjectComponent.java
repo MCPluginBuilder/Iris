@@ -48,7 +48,7 @@ import art.arcane.iris.engine.object.IrisProceduralPlacement;
 import art.arcane.iris.engine.object.IrisProceduralTree;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.ObjectPlaceMode;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
@@ -65,6 +65,7 @@ import art.arcane.iris.util.project.noise.NoiseType;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.iris.util.common.math.IrisBlockVector;
 
 import java.io.IOException;
@@ -83,8 +84,15 @@ public class MantleObjectComponent extends IrisMantleComponent {
     private static final Map<String, CaveRejectLogState> CAVE_REJECT_LOG_STATE = new ConcurrentHashMap<>();
     private static final Set<String> MISSING_LOAD_KEY_WARNED = ConcurrentHashMap.newKeySet();
 
+    private final Object collisionRuleLock;
+    private final ObjectSourcePlanCache sourcePlans;
+    private volatile int collisionRuleState;
+
     public MantleObjectComponent(EngineMantle engineMantle) {
         super(engineMantle, ReservedFlag.OBJECT, 2);
+        this.collisionRuleLock = new Object();
+        this.sourcePlans = new ObjectSourcePlanCache();
+        this.collisionRuleState = -1;
     }
 
     private static String placementMarker(IrisObject object, int id, String context) {
@@ -113,7 +121,67 @@ public class MantleObjectComponent extends IrisMantleComponent {
     }
 
     @Override
+    public int getOutputRadius() {
+        return hasCollisionRules() ? 0 : getRadius();
+    }
+
+    @Override
+    public int getInputRadius() {
+        return hasCollisionRules() ? calculateInputRadius(getRadius(), true) : 0;
+    }
+
+    @Override
+    public void hotload() {
+        super.hotload();
+        synchronized (collisionRuleLock) {
+            collisionRuleState = -1;
+            sourcePlans.clear();
+        }
+    }
+
+    @Override
     public void generateLayer(MantleWriter writer, int x, int z, ChunkContext context) {
+        if (!hasCollisionRules()) {
+            generateOrigin(writer, x, z, context);
+            return;
+        }
+        ObjectDestinationTransaction transaction = new ObjectDestinationTransaction(writer, x, z);
+        replaySourceChunks(
+                x,
+                z,
+                getRadius(),
+                (sourceX, sourceZ) -> transaction.apply(sourcePlans.get(
+                        sourceX,
+                        sourceZ,
+                        () -> buildSourcePlan(writer, sourceX, sourceZ, context)
+                ))
+        );
+        transaction.commit();
+    }
+
+    private ObjectSourcePlan buildSourcePlan(
+            MantleWriter writer,
+            int sourceChunkX,
+            int sourceChunkZ,
+            ChunkContext context
+    ) {
+        ObjectDestinationTransaction scratch = new ObjectDestinationTransaction(
+                writer,
+                sourceChunkX,
+                sourceChunkZ
+        );
+        replaySourcePredecessors(
+                sourceChunkX,
+                sourceChunkZ,
+                getRadius(),
+                (predecessorX, predecessorZ) -> generateOrigin(scratch, predecessorX, predecessorZ, context)
+        );
+        int checkpoint = scratch.mutationCheckpoint();
+        generateOrigin(scratch, sourceChunkX, sourceChunkZ, context);
+        return scratch.sourcePlanSince(checkpoint);
+    }
+
+    void generateOrigin(ObjectPassPlacer writer, int x, int z, ChunkContext context) {
         IrisComplex complex = context.getComplex();
         boolean traceRegen = isRegenTraceThread();
         RNG rng = applyNoise(x, z, Cache.key(x, z) + seed());
@@ -177,6 +245,117 @@ public class MantleObjectComponent extends IrisMantleComponent {
         }
     }
 
+    static int sourceChunkRadius(int radius) {
+        return radius > 0 ? Math.ceilDiv(radius, 16) : 0;
+    }
+
+    static int calculateInputRadius(int radius, boolean sourceAnchoredCollisions) {
+        int normalizedRadius = Math.max(0, radius);
+        long sourceChunkRadius = sourceChunkRadius(normalizedRadius);
+        long sourceLegs = sourceAnchoredCollisions ? 2L : 1L;
+        long inputRadius = (sourceChunkRadius * 16L * sourceLegs) + normalizedRadius + 1L;
+        return inputRadius >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) inputRadius;
+    }
+
+    static void replaySourceChunks(
+            int destinationChunkX,
+            int destinationChunkZ,
+            int radius,
+            SourceChunkConsumer consumer
+    ) {
+        int chunkRadius = sourceChunkRadius(radius);
+        for (int offsetX = -chunkRadius; offsetX <= chunkRadius; offsetX++) {
+            int sourceChunkX = destinationChunkX + offsetX;
+            for (int offsetZ = -chunkRadius; offsetZ <= chunkRadius; offsetZ++) {
+                consumer.accept(sourceChunkX, destinationChunkZ + offsetZ);
+            }
+        }
+    }
+
+    static void replaySourcePredecessors(
+            int sourceChunkX,
+            int sourceChunkZ,
+            int radius,
+            SourceChunkConsumer consumer
+    ) {
+        int chunkRadius = sourceChunkRadius(radius);
+        for (int offsetX = -chunkRadius; offsetX <= 0; offsetX++) {
+            int predecessorX = sourceChunkX + offsetX;
+            int maximumOffsetZ = offsetX < 0 ? chunkRadius : -1;
+            for (int offsetZ = -chunkRadius; offsetZ <= maximumOffsetZ; offsetZ++) {
+                consumer.accept(predecessorX, sourceChunkZ + offsetZ);
+            }
+        }
+    }
+
+    private boolean hasCollisionRules() {
+        int state = collisionRuleState;
+        if (state >= 0) {
+            return state == 1;
+        }
+        synchronized (collisionRuleLock) {
+            state = collisionRuleState;
+            if (state < 0) {
+                state = scanCollisionRules() ? 1 : 0;
+                collisionRuleState = state;
+            }
+            return state == 1;
+        }
+    }
+
+    private boolean scanCollisionRules() {
+        if (scanCollisionRules(getDimension(), this::getData)) {
+            return true;
+        }
+        UpperDimensionContext upperContext = activeUpperContext();
+        return upperContext != null && scanCollisionRules(upperContext.getDimension(), upperContext);
+    }
+
+    private static boolean scanCollisionRules(IrisDimension dimension, DataProvider dataProvider) {
+        for (IrisRegion region : dimension.getAllRegions(dataProvider)) {
+            if (region != null && (hasCollisionRules(region.getObjects())
+                    || hasCollisionRules(region.getProceduralObjects()))) {
+                return true;
+            }
+        }
+        for (IrisBiome biome : dimension.getReachableBiomes(dataProvider)) {
+            if (biome != null && (hasCollisionRules(biome.getObjects())
+                    || hasCollisionRules(biome.getProceduralObjects()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasCollisionRules(KList<IrisObjectPlacement> placements) {
+        if (placements == null) {
+            return false;
+        }
+        for (IrisObjectPlacement placement : placements) {
+            if (hasCollisionRules(placement)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasCollisionRules(IrisObjectPlacement placement) {
+        return placement != null && (!placement.getAllowedCollisions().isEmpty()
+                || !placement.getForbiddenCollisions().isEmpty());
+    }
+
+    private static boolean hasCollisionRules(IrisProceduralObjects proceduralObjects) {
+        if (proceduralObjects == null || proceduralObjects.isEmpty()) {
+            return false;
+        }
+        for (IrisProceduralPlacement placement : proceduralObjects.getAllPlacements()) {
+            if (placement != null && hasCollisionRules(placement.asPlacement())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private RNG applyNoise(int x, int z, long seed) {
         CNG noise = CNG.signatureFast(new RNG(seed), NoiseType.WHITE, NoiseType.GLOB);
         return new RNG((long) (seed * noise.noise(x, z)));
@@ -218,7 +397,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
     }
 
     @ChunkCoordinates
-    private ObjectPlacementSummary placeObjects(MantleWriter writer, RNG rng, int x, int z, IrisBiome surfaceBiome, IrisBiome caveBiome, IrisRegion region, IrisComplex complex, boolean traceRegen) {
+    private ObjectPlacementSummary placeObjects(ObjectPassPlacer writer, RNG rng, int x, int z, IrisBiome surfaceBiome, IrisBiome caveBiome, IrisRegion region, IrisComplex complex, boolean traceRegen) {
         int biomeSurfaceChecked = 0;
         int biomeSurfaceTriggered = 0;
         int biomeCaveChecked = 0;
@@ -380,7 +559,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
     }
 
     @ChunkCoordinates
-    private void placeProceduralObjects(MantleWriter writer, RNG rng, int x, int z, IrisBiome surfaceBiome, IrisBiome caveBiome, IrisRegion region) {
+    private void placeProceduralObjects(ObjectPassPlacer writer, RNG rng, int x, int z, IrisBiome surfaceBiome, IrisBiome caveBiome, IrisRegion region) {
         IrisCaveProfile surfaceCaveProfile = resolveCaveProfile(surfaceBiome.getCaveProfile(), region.getCaveProfile());
         IrisCaveProfile regionCaveProfile = resolveCaveProfile(region.getCaveProfile(), caveBiome == null ? null : caveBiome.getCaveProfile());
         placeProceduralFrom(writer, rng, x, z, surfaceBiome.getProceduralObjects(), surfaceBiome.getName(), surfaceCaveProfile, surfaceBiome.getLoadKey());
@@ -393,7 +572,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
     @ChunkCoordinates
     private void placeProceduralFrom(
-            MantleWriter writer,
+            ObjectPassPlacer writer,
             RNG rng,
             int x,
             int z,
@@ -552,7 +731,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
     }
 
     private CavePlacementAnchor findCavePlacementAnchor(
-            MantleWriter writer,
+            ObjectPassPlacer writer,
             RNG rng,
             int minX,
             int minZ,
@@ -577,9 +756,9 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     minDepthBelowSurface,
                     anchorCache
             );
-            RiverCaveHydrology hydrology = candidateY < 0
+            HydrologyCaveCell hydrology = candidateY < 0
                     ? null
-                    : writer.getDataIfPresent(candidateX, candidateY, candidateZ, RiverCaveHydrology.class);
+                    : writer.getDataIfPresent(candidateX, candidateY, candidateZ, HydrologyCaveCell.class);
             MatterCavern cavern = candidateY < 0
                     ? null
                     : writer.getDataIfPresent(candidateX, candidateY, candidateZ, MatterCavern.class);
@@ -605,7 +784,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
     static boolean acceptsCaveAnchorFluid(
             boolean underwater,
             MatterCavern cavern,
-            RiverCaveHydrology hydrology,
+            HydrologyCaveCell hydrology,
             int y,
             int lavaHeight
     ) {
@@ -660,7 +839,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
     @BlockCoordinates
     private ObjectPlacementResult placeObject(
-            MantleWriter writer,
+            ObjectPassPlacer writer,
             RNG rng,
             int x,
             int z,
@@ -788,7 +967,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
     }
 
     private ObjectPlacementResult placeCaveObject(
-            MantleWriter writer,
+            ObjectPassPlacer writer,
             RNG rng,
             int chunkX,
             int chunkZ,
@@ -982,7 +1161,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
     @ChunkCoordinates
     private void placeUpperObjects(
-            MantleWriter writer,
+            ObjectPassPlacer writer,
             RNG rng,
             int chunkX,
             int chunkZ,
@@ -1034,7 +1213,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
     @ChunkCoordinates
     private void placeUpperObject(
-            MantleWriter writer,
+            ObjectPassPlacer writer,
             RNG rng,
             int chunkX,
             int chunkZ,
@@ -1256,7 +1435,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
         return maxAnchorY + 1;
     }
 
-    private int findCaveAnchorY(MantleWriter writer, RNG rng, int x, int z, IrisCaveAnchorMode anchorMode, int anchorScanStep, int objectMinDepthBelowSurface, CaveAnchorCache anchorCache) {
+    private int findCaveAnchorY(ObjectPassPlacer writer, RNG rng, int x, int z, IrisCaveAnchorMode anchorMode, int anchorScanStep, int objectMinDepthBelowSurface, CaveAnchorCache anchorCache) {
         KList<Integer> anchors = anchorCache.get(writer, anchorMode, anchorScanStep, objectMinDepthBelowSurface, x, z);
         if (anchors.isEmpty()) {
             return -1;
@@ -1269,7 +1448,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
         return anchors.get(rng.i(anchors.size()));
     }
 
-    private KList<Integer> scanCaveAnchorColumn(MantleWriter writer, IrisCaveAnchorMode anchorMode, int anchorScanStep, int objectMinDepthBelowSurface, int x, int z, CaveAnchorCache anchorCache) {
+    private KList<Integer> scanCaveAnchorColumn(ObjectPassPlacer writer, IrisCaveAnchorMode anchorMode, int anchorScanStep, int objectMinDepthBelowSurface, int x, int z, CaveAnchorCache anchorCache) {
         int height = getEngineMantle().getEngine().getHeight();
         int step = Math.max(1, anchorScanStep);
         int surfaceY = anchorCache.getSurfaceHeight(x, z);
@@ -1471,30 +1650,56 @@ public class MantleObjectComponent extends IrisMantleComponent {
     }
 
     protected int computeRadius() {
-        IrisDimension dimension = getDimension();
-        KMap<String, IrisBlockVector> sizeCache = new KMap<>();
         KSet<String> warnedLargeObjects = new KSet<>();
+        int radius = computeDimensionRadius(getDimension(), this::getData, warnedLargeObjects);
+        UpperDimensionContext upperContext = activeUpperContext();
+        if (upperContext != null) {
+            radius = Math.max(radius, computeDimensionRadius(
+                    upperContext.getDimension(),
+                    upperContext,
+                    warnedLargeObjects
+            ));
+        }
+        return radius;
+    }
+
+    private int computeDimensionRadius(
+            IrisDimension dimension,
+            DataProvider dataProvider,
+            KSet<String> warnedLargeObjects
+    ) {
+        KMap<String, IrisBlockVector> sizeCache = new KMap<>();
         int radius = 0;
-        for (IrisRegion region : dimension.getAllRegions(this::getData)) {
+        for (IrisRegion region : dimension.getAllRegions(dataProvider)) {
             if (region == null) {
                 continue;
             }
-            radius = Math.max(radius, computePlacementRadius(region.getObjects(), sizeCache, warnedLargeObjects));
-            radius = Math.max(radius, computeProceduralRadius(region.getProceduralObjects()));
+            radius = Math.max(radius, computePlacementRadius(
+                    region.getObjects(),
+                    dataProvider,
+                    sizeCache,
+                    warnedLargeObjects
+            ));
+            radius = Math.max(radius, computeProceduralRadius(region.getProceduralObjects(), dataProvider));
         }
-        for (IrisBiome biome : dimension.getReachableBiomes(this::getData)) {
+        for (IrisBiome biome : dimension.getReachableBiomes(dataProvider)) {
             if (biome == null) {
                 continue;
             }
-            radius = Math.max(radius, computePlacementRadius(biome.getObjects(), sizeCache, warnedLargeObjects));
-            radius = Math.max(radius, computeProceduralRadius(biome.getProceduralObjects()));
+            radius = Math.max(radius, computePlacementRadius(
+                    biome.getObjects(),
+                    dataProvider,
+                    sizeCache,
+                    warnedLargeObjects
+            ));
+            radius = Math.max(radius, computeProceduralRadius(biome.getProceduralObjects(), dataProvider));
         }
-
         return radius;
     }
 
     private int computePlacementRadius(
             KList<IrisObjectPlacement> placements,
+            DataProvider dataProvider,
             KMap<String, IrisBlockVector> sizeCache,
             KSet<String> warnedLargeObjects
     ) {
@@ -1505,7 +1710,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             }
             for (String objectKey : placement.getPlace()) {
                 try {
-                    IrisBlockVector size = loadObjectSize(sizeCache, objectKey);
+                    IrisBlockVector size = loadObjectSize(dataProvider, sizeCache, objectKey);
                     if (size == null) {
                         continue;
                     }
@@ -1522,7 +1727,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
         return radius;
     }
 
-    private int computeProceduralRadius(IrisProceduralObjects procedural) {
+    private int computeProceduralRadius(IrisProceduralObjects procedural, DataProvider dataProvider) {
         if (procedural == null || procedural.isEmpty()) {
             return 0;
         }
@@ -1531,7 +1736,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             if (placement == null) {
                 continue;
             }
-            KList<IrisObject> variants = placement.getVariantObjects(getData());
+            KList<IrisObject> variants = placement.getVariantObjects(dataProvider.getData());
             if (variants == null) {
                 continue;
             }
@@ -1596,16 +1801,28 @@ public class MantleObjectComponent extends IrisMantleComponent {
         return rotateY ? (int) Math.ceil(Math.hypot(x, z)) : (int) Math.max(Math.abs(x), Math.abs(z));
     }
 
-    private IrisBlockVector loadObjectSize(KMap<String, IrisBlockVector> sizeCache, String objectKey) {
+    private IrisBlockVector loadObjectSize(
+            DataProvider dataProvider,
+            KMap<String, IrisBlockVector> sizeCache,
+            String objectKey
+    ) {
         return sizeCache.computeIfAbsent(objectKey, k -> {
             try {
-                return IrisObject.sampleSize(getData().getObjectLoader().findFile(objectKey));
+                return IrisObject.sampleSize(dataProvider.getData().getObjectLoader().findFile(objectKey));
             } catch (IOException e) {
                 IrisLogging.reportError(e);
             }
 
             return null;
         });
+    }
+
+    private UpperDimensionContext activeUpperContext() {
+        if (!getDimension().isUpperDimensionObjects()) {
+            return null;
+        }
+        UpperDimensionContext upperContext = getEngineMantle().getEngine().getUpperContext();
+        return upperContext == null || upperContext.isSelfReferencing() ? null : upperContext;
     }
 
     private final class CaveAnchorCache {
@@ -1620,7 +1837,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             this.surfaceHeights.defaultReturnValue(Integer.MIN_VALUE);
         }
 
-        private KList<Integer> get(MantleWriter writer, IrisCaveAnchorMode anchorMode, int anchorScanStep, int objectMinDepthBelowSurface, int x, int z) {
+        private KList<Integer> get(ObjectPassPlacer writer, IrisCaveAnchorMode anchorMode, int anchorScanStep, int objectMinDepthBelowSurface, int x, int z) {
             if (anchorScanStep > 65535 || objectMinDepthBelowSurface > 65535) {
                 return scanCaveAnchorColumn(writer, anchorMode, anchorScanStep, objectMinDepthBelowSurface, x, z, this);
             }
@@ -1643,7 +1860,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             return anchors;
         }
 
-        private byte[] getCarvedColumn(MantleWriter writer, int x, int z, int height) {
+        private byte[] getCarvedColumn(ObjectPassPlacer writer, int x, int z, int height) {
             long columnKey = Cache.key(x, z);
             byte[] carvedColumn = carvedColumns.get(columnKey);
             if (carvedColumn != null && carvedColumn.length == height) {
@@ -1666,6 +1883,11 @@ public class MantleObjectComponent extends IrisMantleComponent {
             surfaceHeights.put(columnKey, surfaceY);
             return surfaceY;
         }
+    }
+
+    @FunctionalInterface
+    interface SourceChunkConsumer {
+        void accept(int chunkX, int chunkZ);
     }
 
 }

@@ -22,7 +22,14 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
+import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyNaturalSample;
+import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
+import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntimeContext;
 import art.arcane.iris.engine.image.IrisImageMapRuntime;
+import art.arcane.iris.engine.mantle.components.MantleHydrologyCaveVoxelView;
 import art.arcane.iris.engine.object.InferredType;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDecorationPart;
@@ -31,20 +38,11 @@ import art.arcane.iris.engine.object.IrisGenerator;
 import art.arcane.iris.engine.object.IrisInterpolator;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.engine.object.IrisRiverCaves;
-import art.arcane.iris.engine.object.IrisRiverDeepPools;
-import art.arcane.iris.engine.object.IrisRiverNetwork;
-import art.arcane.iris.engine.object.IrisRiverOverride;
-import art.arcane.iris.engine.object.IrisRiverRoutingPolicy;
-import art.arcane.iris.engine.object.IrisRiverWater;
+import art.arcane.iris.engine.object.IrisDeepFluidConfig;
+import art.arcane.iris.engine.object.IrisHydrology;
+import art.arcane.iris.engine.object.IrisRiverHydrology;
+import art.arcane.iris.engine.object.IrisRiverProfile;
 import art.arcane.iris.engine.object.IrisShapedGeneratorStyle;
-import art.arcane.iris.engine.river.runtime.IrisRiverRuntime;
-import art.arcane.iris.engine.river.runtime.IrisRiverRuntimeContext;
-import art.arcane.iris.engine.river.runtime.IrisRiverSurfaceSample;
-import art.arcane.iris.engine.river.RiverRouteState;
-import art.arcane.iris.engine.river.RiverSample;
-import art.arcane.iris.engine.river.RiverSection;
-import art.arcane.iris.engine.river.cave.RiverCaveFluidKind;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBiome;
@@ -67,36 +65,48 @@ import lombok.ToString;
 import java.io.File;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiFunction;
 
 @Data
-@EqualsAndHashCode(exclude = {"data", "gridBoundsCache", "frozenInterpolators", "frozenGenerators", "riverRuntime", "imageMapRuntime"})
-@ToString(exclude = {"data", "gridBoundsCache", "frozenInterpolators", "frozenGenerators", "riverRuntime", "imageMapRuntime"})
+@EqualsAndHashCode(exclude = {"data", "gridBoundsCache", "frozenInterpolators", "frozenGenerators", "inferredBiomeStreams", "hydrologyRuntime", "imageMapRuntime"})
+@ToString(exclude = {"data", "gridBoundsCache", "frozenInterpolators", "frozenGenerators", "inferredBiomeStreams", "hydrologyRuntime", "imageMapRuntime"})
 public class IrisComplex implements DataProvider {
     private static final NoiseBounds ZERO_NOISE_BOUNDS = new NoiseBounds(0D, 0D);
     private static final AtomicLong lastBoundsFailureLog = new AtomicLong(0L);
     private static final int GRID_BOUNDS_CACHE_SIZE = 8192;
     private static final int HEIGHT_BOUNDS_GRID = 4;
+    private static final Comparator<IrisInterpolator> INTERPOLATOR_ORDER = Comparator
+            .comparing((IrisInterpolator interpolator) -> interpolator.getFunction().name())
+            .thenComparingDouble(IrisInterpolator::getHorizontalScale);
+    private static final Comparator<IrisGenerator> GENERATOR_ORDER = Comparator.comparing(
+            IrisGenerator::getLoadKey,
+            Comparator.nullsFirst(Comparator.naturalOrder())
+    );
+    private static final InferredType[] INFERRED_BIOME_PREPARATION_ORDER = {
+            InferredType.LAND,
+            InferredType.CAVE,
+            InferredType.SEA,
+            InferredType.SHORE
+    };
     @Getter(AccessLevel.NONE)
     private final transient ThreadLocal<GridBoundsCache> gridBoundsCache = ThreadLocal.withInitial(GridBoundsCache::new);
-    /**
-     * Immutable snapshot of {@link #generators} taken once at the end of construction, in the exact
-     * iteration order the map produces. The per-column height paths walk these arrays instead of
-     * allocating map/set iterators, and the frozen order keeps the floating point accumulation order
-     * identical to the map iteration it replaces. Mutating {@link #generators} after construction is
-     * not reflected here.
-     */
     @Getter(AccessLevel.NONE)
     private final transient IrisInterpolator[] frozenInterpolators;
     @Getter(AccessLevel.NONE)
     private final transient IrisGenerator[][] frozenGenerators;
+    @Getter(AccessLevel.NONE)
+    private final transient Map<IrisRegion, Map<InferredType, ProceduralStream<IrisBiome>>> inferredBiomeStreams;
     private RNG rng;
     private double fluidHeight;
     private IrisData data;
@@ -121,9 +131,7 @@ public class IrisComplex implements DataProvider {
     private ProceduralStream<Double> maxHeightStream;
     private ProceduralStream<Double> overlayStream;
     private ProceduralStream<Double> heightFluidStream;
-    private ProceduralStream<Double> naturalSlopeStream;
     private ProceduralStream<Double> slopeStream;
-    private ProceduralStream<IrisRiverSurfaceSample> riverSurfaceStream;
     private ProceduralStream<Double> riverDistanceStream;
     private ProceduralStream<Double> riverFlowStream;
     private ProceduralStream<Double> riverCarveWeightStream;
@@ -138,13 +146,12 @@ public class IrisComplex implements DataProvider {
     private ProceduralStream<IrisDecorator> shoreSurfaceDecoration;
     private ProceduralStream<PlatformBlockState> rockStream;
     private ProceduralStream<PlatformBlockState> fluidStream;
-    private ProceduralStream<PlatformBlockState> riverFluidStream;
-    private ProceduralStream<PlatformBlockState> riverDeepPoolFluidStream;
+    private Map<String, ProceduralStream<PlatformBlockState>> hydrologyFluidStreams;
     private IrisBiome focusBiome;
     private IrisRegion focusRegion;
     private Map<IrisInterpolator, IdentityHashMap<IrisBiome, GeneratorBounds>> generatorBounds;
     private Set<IrisBiome> generatorBiomes;
-    private IrisRiverRuntime riverRuntime;
+    private IrisHydrologyRuntime hydrologyRuntime;
     private transient IrisImageMapRuntime imageMapRuntime;
     // Copy-on-write: reads happen per column on every burst thread; the synchronizedMap
     // monitor was taken on every HIT. Writes are once per biome and bounded, so a fresh map
@@ -170,6 +177,7 @@ public class IrisComplex implements DataProvider {
         focusBiome = engine.getFocus();
         focusRegion = engine.getFocusRegion();
         Map<InferredType, ProceduralStream<IrisBiome>> inferredStreams = new HashMap<>();
+        KList<IrisRegion> preparedRegions = new KList<>();
 
         if (focusBiome != null) {
             focusBiome = focusBiome.withInferredType(InferredType.LAND);
@@ -178,7 +186,7 @@ public class IrisComplex implements DataProvider {
 
         //@builder
         if (focusRegion != null) {
-            prepareInferredBiomes(focusRegion);
+            prepareInferredBiomes(focusRegion, preparedRegions);
             focusRegion.getNaturalBiomes(this).forEach(this::registerGenerators);
         } else {
             engine.getDimension().getRegions().forEach(regionKey -> {
@@ -186,23 +194,26 @@ public class IrisComplex implements DataProvider {
                 if (region == null) {
                     return;
                 }
-                prepareInferredBiomes(region);
+                prepareInferredBiomes(region, preparedRegions);
                 region.getNaturalBiomes(this).forEach(this::registerGenerators);
             });
             for (IrisRegion region : imageMapRuntime.getMappedRegions()) {
-                prepareInferredBiomes(region);
+                prepareInferredBiomes(region, preparedRegions);
                 region.getNaturalBiomes(this).forEach(this::registerGenerators);
             }
             imageMapRuntime.getMappedBiomes().forEach(this::registerGenerators);
         }
-        int interpolatorCount = generators.size();
+        inferredBiomeStreams = compileInferredBiomeStreams(
+                preparedRegions,
+                (region, inferredType) -> compileInferredBiomeStream(engine, region, inferredType, emptyBiome)
+        );
+        GeneratorGroup[] generatorGroups = freezeGeneratorGroups(generators);
+        int interpolatorCount = generatorGroups.length;
         frozenInterpolators = new IrisInterpolator[interpolatorCount];
         frozenGenerators = new IrisGenerator[interpolatorCount][];
-        int frozenIndex = 0;
-        for (Map.Entry<IrisInterpolator, Set<IrisGenerator>> entry : generators.entrySet()) {
-            frozenInterpolators[frozenIndex] = entry.getKey();
-            frozenGenerators[frozenIndex] = entry.getValue().toArray(new IrisGenerator[0]);
-            frozenIndex++;
+        for (int frozenIndex = 0; frozenIndex < generatorGroups.length; frozenIndex++) {
+            frozenInterpolators[frozenIndex] = generatorGroups[frozenIndex].interpolator();
+            frozenGenerators[frozenIndex] = generatorGroups[frozenIndex].generators();
         }
         generatorBounds = buildGeneratorBounds(engine);
         KList<IrisShapedGeneratorStyle> overlayNoise = engine.getDimension().getOverlayNoise();
@@ -221,29 +232,7 @@ public class IrisComplex implements DataProvider {
                 .select(engine.getDimension().getRockPalette().getBlockData(data));
         fluidStream = engine.getDimension().getFluidPalette().getLayerGenerator(rng.nextParallelRNG(78), data).stream()
                 .select(engine.getDimension().getFluidPalette().getBlockData(data));
-        IrisRiverNetwork configuredRivers = engine.getDimension().getRivers();
-        IrisRiverWater configuredRiverWater = configuredRivers == null ? null : configuredRivers.getWater();
-        riverFluidStream = configuredRivers != null && configuredRivers.isEnabled()
-                ? configuredFluidStream(
-                        Objects.requireNonNull(configuredRiverWater).getFluidPalette(),
-                        rng.nextParallelRNG(79),
-                        "River water"
-                )
-                : fluidStream;
-        IrisRiverCaves configuredRiverCaves = configuredRivers == null ? null : configuredRivers.getCaves();
-        IrisRiverDeepPools configuredDeepPools = configuredRiverCaves == null
-                ? null
-                : configuredRiverCaves.getDeepPools();
-        riverDeepPoolFluidStream = configuredRivers != null
-                && configuredRivers.isEnabled()
-                && configuredDeepPools != null
-                && configuredDeepPools.isEnabled()
-                ? configuredFluidStream(
-                        configuredDeepPools.getFluidPalette(),
-                        rng.nextParallelRNG(80),
-                        "River deep-pool"
-                )
-                : riverFluidStream;
+        hydrologyFluidStreams = createHydrologyFluidStreams(engine.getDimension().getHydrology());
         regionStyleStream = engine.getDimension().getRegionStyle().create(rng.nextParallelRNG(883), getData()).stream()
                 .zoom(engine.getDimension().getRegionZoom());
         regionIdentityStream = regionStyleStream.fit(Integer.MIN_VALUE, Integer.MAX_VALUE);
@@ -262,41 +251,22 @@ public class IrisComplex implements DataProvider {
         regionIDStream = regionIdentityStream.convertCached((i) -> new UUID(Double.doubleToLongBits(i),
                 String.valueOf(i * 38445).hashCode() * 3245556666L));
         caveBiomeStream = regionStream.contextInjecting(engine, (c, x, z) -> c.getRegion().get(x, z))
-                .convert((r)
-                        -> engine.getDimension().getCaveBiomeStyle().create(rng.nextParallelRNG(InferredType.CAVE.ordinal()), getData()).stream()
-                        .zoom(engine.getDimension().getBiomeZoom())
-                        .zoom(r.getCaveBiomeZoom())
-                        .selectRarity(loadInferredBiomes(r.getCaveBiomes(), InferredType.CAVE))
-                        .onNull(emptyBiome)
-                ).convertAware2D(ProceduralStream::get).cache2D("caveBiomeStream", engine, cacheSize);
+                .convert((r) -> createInferredBiomeStream(r, InferredType.CAVE))
+                .convertAware2D(ProceduralStream::get).cache2D("caveBiomeStream", engine, cacheSize);
         inferredStreams.put(InferredType.CAVE, caveBiomeStream);
         landBiomeStream = regionStream.contextInjecting(engine, (c, x, z) -> c.getRegion().get(x, z))
-                .convert((r)
-                        -> engine.getDimension().getLandBiomeStyle().create(rng.nextParallelRNG(InferredType.LAND.ordinal()), getData()).stream()
-                        .zoom(engine.getDimension().getBiomeZoom())
-                        .zoom(engine.getDimension().getLandZoom())
-                        .zoom(r.getLandBiomeZoom())
-                        .selectRarity(loadInferredBiomes(r.getLandBiomes(), InferredType.LAND))
-                ).convertAware2D(ProceduralStream::get)
+                .convert((r) -> createInferredBiomeStream(r, InferredType.LAND))
+                .convertAware2D(ProceduralStream::get)
                 .cache2D("landBiomeStream", engine, cacheSize);
         inferredStreams.put(InferredType.LAND, landBiomeStream);
         seaBiomeStream = regionStream.contextInjecting(engine, (c, x, z) -> c.getRegion().get(x, z))
-                .convert((r)
-                        -> engine.getDimension().getSeaBiomeStyle().create(rng.nextParallelRNG(InferredType.SEA.ordinal()), getData()).stream()
-                        .zoom(engine.getDimension().getBiomeZoom())
-                        .zoom(engine.getDimension().getSeaZoom())
-                        .zoom(r.getSeaBiomeZoom())
-                        .selectRarity(loadInferredBiomes(r.getSeaBiomes(), InferredType.SEA))
-                ).convertAware2D(ProceduralStream::get)
+                .convert((r) -> createInferredBiomeStream(r, InferredType.SEA))
+                .convertAware2D(ProceduralStream::get)
                 .cache2D("seaBiomeStream", engine, cacheSize);
         inferredStreams.put(InferredType.SEA, seaBiomeStream);
         shoreBiomeStream = regionStream.contextInjecting(engine, (c, x, z) -> c.getRegion().get(x, z))
-                .convert((r)
-                        -> engine.getDimension().getShoreBiomeStyle().create(rng.nextParallelRNG(InferredType.SHORE.ordinal()), getData()).stream()
-                        .zoom(engine.getDimension().getBiomeZoom())
-                        .zoom(r.getShoreBiomeZoom())
-                        .selectRarity(loadInferredBiomes(r.getShoreBiomes(), InferredType.SHORE))
-                ).convertAware2D(ProceduralStream::get).cache2D("shoreBiomeStream", engine, cacheSize);
+                .convert((r) -> createInferredBiomeStream(r, InferredType.SHORE))
+                .convertAware2D(ProceduralStream::get).cache2D("shoreBiomeStream", engine, cacheSize);
         inferredStreams.put(InferredType.SHORE, shoreBiomeStream);
         bridgeStream = focusBiome != null ? ProceduralStream.of((x, z) -> focusBiome.getInferredType(),
                 Interpolated.of(a -> 0D, a -> focusBiome.getInferredType())) :
@@ -315,13 +285,10 @@ public class IrisComplex implements DataProvider {
                     return mapped == null ? biome : mapped;
                 })
                 .cache2D("imageMappedBaseBiomeStream", engine, cacheSize);
-        naturalHeightStream = ProceduralStream.of((x, z) -> {
-            IrisBiome b = focusBiome != null ? focusBiome : baseBiomeStream.get(x, z);
-            double proceduralHeight = getHeight(engine, b, x, z, engine.getSeedManager().getHeight());
-            return imageMapRuntime.sampleTerrainHeight(x, z, proceduralHeight);
-        }, Interpolated.DOUBLE).cache2DDouble("naturalHeightStream", engine, cacheSize);
-        naturalSlopeStream = naturalHeightStream.slope(3)
-                .cache2DDouble("naturalSlopeStream", engine, cacheSize);
+        naturalHeightStream = ProceduralStream.of(
+                (x, z) -> sampleNaturalTerrainHeight(engine, x, z),
+                Interpolated.DOUBLE
+        ).cache2DDouble("naturalHeightStream", engine, cacheSize);
         naturalTrueBiomeStream = focusBiome != null ? ProceduralStream.of((x, y) -> focusBiome, Interpolated.of(a -> 0D,
                         b -> focusBiome))
                 .cache2D("naturalTrueBiomeStream-focus", engine, cacheSize) : naturalHeightStream
@@ -332,46 +299,20 @@ public class IrisComplex implements DataProvider {
                             : mapped;
                 })
                 .cache2D("naturalTrueBiomeStream", engine, cacheSize);
-        if (engine.getDimension().getRivers() != null && engine.getDimension().getRivers().isEnabled()) {
-            ProceduralStream<Boolean> naturalOceanStream = createNaturalOceanStream(
-                    bridgeStream,
-                    focusBiome
-            ).cache2D("naturalOceanStream", engine, cacheSize);
-            int riverFluidHeight = engine.getDimension().getRivers().getWater().getFluidHeight()
-                    - engine.getDimension().getMinHeight();
-            riverRuntime = new IrisRiverRuntime(new IrisRiverRuntimeContext(
+        IrisHydrology configuredHydrology = engine.getDimension().getHydrology();
+        if (hydrologyActive(configuredHydrology)) {
+            hydrologyRuntime = new IrisHydrologyRuntime(new IrisHydrologyRuntimeContext(
                     engine.getSeedManager().getBodies(),
-                    engine.getDimension().getRivers(),
+                    engine.getHeight(),
+                    engine.getDimension(),
                     data,
-                    riverFluidHeight,
-                    (int) Math.round(fluidHeight),
-                    IrisEngineMantle.isRiverHydrologyEnabled(engine.getDimension()),
-                    IrisEngineMantle.isRiverCaveHydrologyEnabled(engine.getDimension()),
-                    blockingRiverRoutingPossible(engine),
-                    variableMaxIncisionPossible(engine),
-                    biomeRiverOverridesPossible(focusBiome, generatorBiomes),
-                    (blockX, blockZ) -> naturalHeightBounds(engine, overlayNoise, blockX, blockZ),
-                    naturalHeightStream,
-                    naturalSlopeStream,
-                    naturalOceanStream,
-                    naturalTrueBiomeStream,
-                    regionStream
+                    (x, z, naturalHeight) -> sampleHydrologyNatural(engine, x, z, naturalHeight),
+                    (x, z) -> naturalHeightStream.getDouble(x, z),
+                    this::sampleNaturalOcean,
+                    footprint -> new MantleHydrologyCaveVoxelView(engine, this, footprint)
             ));
-            riverSurfaceStream = ProceduralStream.of(
-                            (x, z) -> riverRuntime.sample(x, z),
-                            Interpolated.of(
-                                    IrisRiverSurfaceSample::terrainHeight,
-                                    value -> IrisRiverSurfaceSample.none(value, fluidHeight)
-                            )
-                    )
-                    .cache2D("riverSurfaceStream", engine, cacheSize);
-        } else {
-            riverSurfaceStream = naturalHeightStream.convert(
-                            value -> IrisRiverSurfaceSample.none(value, fluidHeight)
-                    )
-                    .cache2D("riverSurfaceStream-disabled", engine, cacheSize);
         }
-        heightStream = riverSurfaceStream.convert(IrisRiverSurfaceSample::terrainHeight)
+        heightStream = ProceduralStream.ofDouble((x, z) -> resolveHydrologyTerrainHeight(x, z))
                 .cache2DDouble("heightStream", engine, cacheSize);
         roundedHeighteightStream = heightStream.contextInjecting(engine, (c, x, z) -> c.getHeight().getDouble(x, z))
                 .round();
@@ -379,20 +320,18 @@ public class IrisComplex implements DataProvider {
                 .slope(3).cache2DDouble("slopeStream", engine, cacheSize);
         trueBiomeStream = focusBiome != null ? ProceduralStream.of((x, y) -> focusBiome, Interpolated.of(a -> 0D,
                         b -> focusBiome))
-                .cache2D("trueBiomeStream-focus", engine, cacheSize) : riverSurfaceStream
-                .convertAware2D((sample, x, z) -> resolveRiverSurfaceBiome(sample, x, z))
+                .cache2D("trueBiomeStream-focus", engine, cacheSize) : heightStream
+                .convertAware2D((terrainHeight, x, z) -> resolveHydrologySurfaceBiome(terrainHeight, x, z))
                 .cache2D("trueBiomeStream", engine, cacheSize);
         trueBiomeDerivativeStream = trueBiomeStream.contextInjecting(engine, (c, x, z) -> c.getBiome().get(x, z))
                 .convert((b) -> IrisPlatforms.get().registries().biome(b.getDerivativeKey())).cache2D("trueBiomeDerivativeStream", engine, cacheSize);
-        riverDistanceStream = riverSurfaceStream.convert(sample -> sample.river().present()
-                        ? sample.river().distance()
-                        : Double.MAX_VALUE)
+        riverDistanceStream = ProceduralStream.ofDouble(this::resolveHydrologyDistance)
                 .cache2DDouble("riverDistanceStream", engine, cacheSize);
-        riverFlowStream = riverSurfaceStream.convert(sample -> (double) sample.river().flow())
+        riverFlowStream = ProceduralStream.ofDouble(this::resolveHydrologyFlow)
                 .cache2DDouble("riverFlowStream", engine, cacheSize);
-        riverCarveWeightStream = riverSurfaceStream.convert(sample -> sample.river().carveWeight())
+        riverCarveWeightStream = ProceduralStream.ofDouble(this::resolveHydrologyCarveWeight)
                 .cache2DDouble("riverCarveWeightStream", engine, cacheSize);
-        riverWaterSurfaceStream = riverSurfaceStream.convert(IrisRiverSurfaceSample::waterSurfaceY)
+        riverWaterSurfaceStream = ProceduralStream.ofDouble(this::resolveHydrologyFluidSurface)
                 .cache2DDouble("riverWaterSurfaceStream", engine, cacheSize);
         heightFluidStream = ProceduralStream.ofDouble((x, z) -> Math.max(
                         heightStream.get(x, z),
@@ -424,79 +363,204 @@ public class IrisComplex implements DataProvider {
         //@done
     }
 
-    private boolean blockingRiverRoutingPossible(Engine engine) {
-        if (blocksRiverRouting(focusRegion == null ? null : focusRegion.getRiverOverride())
-                || blocksRiverRouting(focusBiome == null ? null : focusBiome.getRiverOverride())) {
-            return true;
-        }
-        KList<IrisRegion> regions = engine.getDimension().getAllRegions(engine);
-        for (IrisRegion loadedRegion : regions) {
-            if (loadedRegion != null && blocksRiverRouting(loadedRegion.getRiverOverride())) {
-                return true;
-            }
-        }
-        KList<IrisBiome> biomes = engine.getDimension().getReachableBiomes(engine);
-        for (IrisBiome biome : biomes) {
-            if (biome != null && blocksRiverRouting(biome.getRiverOverride())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean blocksRiverRouting(IrisRiverOverride override) {
-        return override != null && override.getRoutingPolicy() == IrisRiverRoutingPolicy.BLOCK;
-    }
-
-    private boolean variableMaxIncisionPossible(Engine engine) {
-        if (changesMaxIncision(focusRegion == null ? null : focusRegion.getRiverOverride())
-                || changesMaxIncision(focusBiome == null ? null : focusBiome.getRiverOverride())) {
-            return true;
-        }
-        KList<IrisRegion> regions = engine.getDimension().getAllRegions(engine);
-        for (IrisRegion loadedRegion : regions) {
-            if (loadedRegion != null && changesMaxIncision(loadedRegion.getRiverOverride())) {
-                return true;
-            }
-        }
-        KList<IrisBiome> biomes = engine.getDimension().getReachableBiomes(engine);
-        for (IrisBiome biome : biomes) {
-            if (biome != null && changesMaxIncision(biome.getRiverOverride())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    static boolean changesMaxIncision(IrisRiverOverride override) {
-        if (override == null || override.getMaxIncisionMultiplier() == null) {
-            return false;
-        }
-        double multiplier = override.getMaxIncisionMultiplier();
-        return Double.isFinite(multiplier) && Double.compare(Math.max(0D, multiplier), 1D) != 0;
-    }
-
-    static boolean biomeRiverOverridesPossible(IrisBiome focusBiome, Iterable<IrisBiome> naturalBiomes) {
-        if (focusBiome != null) {
-            return focusBiome.getRiverOverride() != null;
-        }
-        for (IrisBiome biome : naturalBiomes) {
-            if (biome != null && biome.getRiverOverride() != null) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    static ProceduralStream<Boolean> createNaturalOceanStream(
+    static InferredType resolveNaturalInferredType(
             ProceduralStream<InferredType> bridgeStream,
-            IrisBiome focusBiome
+            IrisBiome focusBiome,
+            double x,
+            double z
     ) {
         if (focusBiome != null) {
-            boolean ocean = focusBiome.getInferredType() == InferredType.SEA;
-            return ProceduralStream.of((x, z) -> ocean, Interpolated.BOOLEAN);
+            return focusBiome.getInferredType();
         }
-        return bridgeStream.convert(type -> type == InferredType.SEA);
+        return bridgeStream.get(x, z);
+    }
+
+    private IrisHydrologyNaturalSample sampleHydrologyNatural(
+            Engine engine,
+            int x,
+            int z,
+            double naturalHeight
+    ) {
+        InferredType inferredType = resolveNaturalInferredType(bridgeStream, focusBiome, x, z);
+        IrisRegion region = regionStream.get(x, z);
+        IrisBiome biome = focusBiome == null
+                ? sampleNaturalBiome(inferredType, region, naturalHeight, x, z)
+                : focusBiome;
+        return new IrisHydrologyNaturalSample(
+                naturalHeight,
+                inferredType == InferredType.SEA,
+                biome,
+                region
+        );
+    }
+
+    private boolean sampleNaturalOcean(int x, int z) {
+        return resolveNaturalInferredType(bridgeStream, focusBiome, x, z) == InferredType.SEA;
+    }
+
+    private double sampleNaturalTerrainHeight(Engine engine, double x, double z) {
+        double proceduralHeight = getHeight(engine, x, z, engine.getSeedManager().getHeight());
+        return imageMapRuntime.sampleTerrainHeight(x, z, proceduralHeight);
+    }
+
+    static double calculateNaturalSlope(double naturalHeight, double easternHeight, double southernHeight) {
+        double deltaX = easternHeight - naturalHeight;
+        double deltaZ = southernHeight - naturalHeight;
+        return Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
+    }
+
+    private IrisBiome sampleNaturalBiome(
+            InferredType inferredType,
+            IrisRegion region,
+            double naturalHeight,
+            double x,
+            double z
+    ) {
+        IrisBiome mapped = imageMapRuntime.sampleBiome(x, z);
+        if (mapped != null) {
+            return mapped;
+        }
+        IrisBiome baseBiome = implode(sampleInferredBiome(region, inferredType, x, z), x, z);
+        IrisBiome resolved = resolveNaturalSurfaceBiome(naturalHeight, baseBiome, region, x, z);
+        return resolved == baseBiome ? baseBiome : implode(resolved, x, z);
+    }
+
+    private IrisBiome resolveNaturalSurfaceBiome(
+            double height,
+            IrisBiome biome,
+            IrisRegion region,
+            double x,
+            double z
+    ) {
+        if (biome == null || region == null) {
+            return biome;
+        }
+        double shoreHeight = region.getShoreHeight(x, z);
+        if (height >= fluidHeight - 1 && height <= fluidHeight + shoreHeight && !biome.isShore()) {
+            return sampleInferredBiome(region, InferredType.SHORE, x, z);
+        }
+        if (height > fluidHeight + shoreHeight && !biome.isLand()) {
+            return sampleInferredBiome(region, InferredType.LAND, x, z);
+        }
+        if (height < fluidHeight && !biome.isAquatic()) {
+            return sampleInferredBiome(region, InferredType.SEA, x, z);
+        }
+        if (height == fluidHeight && !biome.isShore()) {
+            return sampleInferredBiome(region, InferredType.SHORE, x, z);
+        }
+        return biome;
+    }
+
+    private IrisBiome sampleInferredBiome(
+            IrisRegion region,
+            InferredType inferredType,
+            double x,
+            double z
+    ) {
+        return createInferredBiomeStream(region, inferredType).get(x, z);
+    }
+
+    private ProceduralStream<IrisBiome> createInferredBiomeStream(
+            IrisRegion region,
+            InferredType inferredType
+    ) {
+        return preparedInferredBiomeStream(inferredBiomeStreams, region, inferredType);
+    }
+
+    private ProceduralStream<IrisBiome> compileInferredBiomeStream(
+            Engine engine,
+            IrisRegion region,
+            InferredType inferredType,
+            IrisBiome emptyBiome
+    ) {
+        return switch (inferredType) {
+            case CAVE -> engine.getDimension().getCaveBiomeStyle()
+                    .create(rng.nextParallelRNG(InferredType.CAVE.ordinal()), getData()).stream()
+                    .zoom(engine.getDimension().getBiomeZoom())
+                    .zoom(region.getCaveBiomeZoom())
+                    .selectRarity(loadInferredBiomes(region.getCaveBiomes(), InferredType.CAVE))
+                    .onNull(emptyBiome);
+            case LAND -> engine.getDimension().getLandBiomeStyle()
+                    .create(rng.nextParallelRNG(InferredType.LAND.ordinal()), getData()).stream()
+                    .zoom(engine.getDimension().getBiomeZoom())
+                    .zoom(engine.getDimension().getLandZoom())
+                    .zoom(region.getLandBiomeZoom())
+                    .selectRarity(loadInferredBiomes(region.getLandBiomes(), InferredType.LAND));
+            case SEA -> engine.getDimension().getSeaBiomeStyle()
+                    .create(rng.nextParallelRNG(InferredType.SEA.ordinal()), getData()).stream()
+                    .zoom(engine.getDimension().getBiomeZoom())
+                    .zoom(engine.getDimension().getSeaZoom())
+                    .zoom(region.getSeaBiomeZoom())
+                    .selectRarity(loadInferredBiomes(region.getSeaBiomes(), InferredType.SEA));
+            case SHORE -> engine.getDimension().getShoreBiomeStyle()
+                    .create(rng.nextParallelRNG(InferredType.SHORE.ordinal()), getData()).stream()
+                    .zoom(engine.getDimension().getBiomeZoom())
+                    .zoom(region.getShoreBiomeZoom())
+                    .selectRarity(loadInferredBiomes(region.getShoreBiomes(), InferredType.SHORE));
+        };
+    }
+
+    private static boolean hydrologyActive(IrisHydrology hydrology) {
+        if (hydrology == null) {
+            return false;
+        }
+        IrisRiverHydrology rivers = hydrology.getRivers();
+        if (rivers != null && rivers.isEnabled()) {
+            return true;
+        }
+        for (IrisDeepFluidConfig deepFluid : hydrology.getDeepFluids()) {
+            if (deepFluid != null
+                    && deepFluid.getDensity() > 0D
+                    && (deepFluid.isContainedPools() || deepFluid.isShortChannels())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Map<String, ProceduralStream<PlatformBlockState>> createHydrologyFluidStreams(IrisHydrology hydrology) {
+        if (hydrology == null) {
+            return Map.of();
+        }
+        LinkedHashMap<String, ProceduralStream<PlatformBlockState>> streams = new LinkedHashMap<>();
+        IrisRiverHydrology rivers = Objects.requireNonNull(hydrology.getRivers(), "hydrology.rivers");
+        int streamIndex = 0;
+        for (IrisRiverProfile profile : rivers.getProfiles()) {
+            if (profile == null) {
+                throw new IllegalArgumentException("hydrology.rivers.profiles cannot contain null entries");
+            }
+            String profileKey = requireHydrologyKey(profile.getId(), "hydrology.rivers.profiles[].id");
+            ProceduralStream<PlatformBlockState> stream = configuredFluidStream(
+                    profile.getFluidPalette(),
+                    rng.nextParallelRNG(7900 + streamIndex++),
+                    "hydrology river profile " + profileKey
+            );
+            if (streams.putIfAbsent(profileKey, stream) != null) {
+                throw new IllegalArgumentException("Duplicate hydrology fluid profile: " + profileKey);
+            }
+        }
+        for (IrisDeepFluidConfig deepFluid : hydrology.getDeepFluids()) {
+            if (deepFluid == null) {
+                throw new IllegalArgumentException("hydrology.deepFluids cannot contain null entries");
+            }
+            String profileKey = requireHydrologyKey(deepFluid.getId(), "hydrology.deepFluids[].id");
+            ProceduralStream<PlatformBlockState> stream = configuredFluidStream(
+                    deepFluid.getFluidPalette(),
+                    rng.nextParallelRNG(8900 + streamIndex++),
+                    "hydrology deep-fluid profile " + profileKey
+            );
+            if (streams.putIfAbsent(profileKey, stream) != null) {
+                throw new IllegalArgumentException("Duplicate hydrology fluid profile: " + profileKey);
+            }
+        }
+        return Collections.unmodifiableMap(streams);
+    }
+
+    private static String requireHydrologyKey(String key, String path) {
+        if (key == null || key.isBlank()) {
+            throw new IllegalArgumentException(path + " must not be blank");
+        }
+        return key.trim();
     }
 
     private ProceduralStream<PlatformBlockState> configuredFluidStream(
@@ -519,19 +583,79 @@ public class IrisComplex implements DataProvider {
         return palette.getLayerGenerator(fluidRng, data).stream().select(blocks);
     }
 
-    public PlatformBlockState resolveRiverCaveFluid(RiverCaveFluidKind fluidKind, double x, double z) {
-        return switch (Objects.requireNonNull(fluidKind)) {
-            case RIVER -> riverFluidStream.get(x, z);
-            case DEEP_POOL -> riverDeepPoolFluidStream.get(x, z);
-        };
+    public PlatformBlockState resolveHydrologyFluid(String profileKey, double x, double z) {
+        String key = Objects.requireNonNull(profileKey, "profileKey").trim();
+        ProceduralStream<PlatformBlockState> stream = hydrologyFluidStreams.get(key);
+        if (stream == null) {
+            throw new IllegalArgumentException("Unknown hydrology fluid profile: " + key);
+        }
+        return stream.get(x, z);
     }
 
     public PlatformBlockState resolveSurfaceFluid(double x, double z) {
-        IrisRiverSurfaceSample sample = riverSurfaceStream.get(x, z);
-        if (sample.river().present() && sample.surfaceFluid()) {
-            return riverFluidStream.get(x, z);
+        HydrologyColumnLayer layer = surfaceFluidLayer(x, z);
+        if (layer != null) {
+            return resolveHydrologyFluid(layer.profileKey(), x, z);
         }
         return fluidStream.get(x, z);
+    }
+
+    private double resolveHydrologyTerrainHeight(double x, double z) {
+        HydrologyColumnSample sample = hydrologySample(x, z);
+        return sample == null ? naturalHeightStream.get(x, z) : sample.terrainHeight();
+    }
+
+    private double resolveHydrologyDistance(double x, double z) {
+        HydrologyColumnLayer layer = surfaceLayer(x, z);
+        if (layer == null) {
+            return Double.MAX_VALUE;
+        }
+        if (layer.channel()) {
+            return 0D;
+        }
+        return layer.shore() ? 1D : 2D;
+    }
+
+    private double resolveHydrologyFlow(double x, double z) {
+        HydrologyColumnLayer layer = surfaceFluidLayer(x, z);
+        if (layer == null) {
+            return 0D;
+        }
+        return layer.feature().flowDeltaX() == 0 && layer.feature().flowDeltaZ() == 0 ? 0D : 1D;
+    }
+
+    private double resolveHydrologyCarveWeight(double x, double z) {
+        HydrologyColumnLayer layer = surfaceLayer(x, z);
+        if (layer == null) {
+            return 0D;
+        }
+        if (layer.channel()) {
+            return 1D;
+        }
+        return layer.shore() ? 0.5D : 0.25D;
+    }
+
+    private double resolveHydrologyFluidSurface(double x, double z) {
+        HydrologyColumnLayer layer = surfaceFluidLayer(x, z);
+        return layer == null ? fluidHeight : layer.fluidHeadY();
+    }
+
+    private HydrologyColumnSample hydrologySample(double x, double z) {
+        return hydrologyRuntime == null ? null : hydrologyRuntime.sample(x, z).orElse(null);
+    }
+
+    private HydrologyColumnLayer surfaceLayer(double x, double z) {
+        HydrologyColumnSample sample = hydrologySample(x, z);
+        return sample == null ? null : sample.primarySurfaceLayer().orElse(null);
+    }
+
+    private HydrologyColumnLayer surfaceFluidLayer(double x, double z) {
+        HydrologyColumnSample sample = hydrologySample(x, z);
+        return sample == null ? null : sample.primarySurfaceFluidLayer().orElse(null);
+    }
+
+    public boolean hasHydrologySurfaceFluid(int x, int z) {
+        return surfaceFluidLayer(x, z) != null;
     }
 
     public ProceduralStream<IrisBiome> getBiomeStream(InferredType type) {
@@ -555,7 +679,7 @@ public class IrisComplex implements DataProvider {
         if (engine == null) {
             throw new IllegalArgumentException("Engine is required to sample procedural terrain height");
         }
-        return getHeight(engine, null, worldX, worldZ, engine.getSeedManager().getHeight());
+        return getHeight(engine, worldX, worldZ, engine.getSeedManager().getHeight());
     }
 
     private IrisRegion findRegion(IrisBiome focus, Engine engine) {
@@ -594,46 +718,29 @@ public class IrisComplex implements DataProvider {
         return null;
     }
 
-    private IrisBiome resolveRiverSurfaceBiome(IrisRiverSurfaceSample sample, double x, double z) {
+    private IrisBiome resolveHydrologySurfaceBiome(double terrainHeight, double x, double z) {
+        HydrologyColumnSample sample = hydrologySample(x, z);
+        HydrologyColumnLayer layer = sample == null ? null : sample.primarySurfaceLayer().orElse(null);
         IrisBiome mapped = imageMapRuntime.sampleBiome(x, z);
-        if (mapped != null && (riverRuntime == null || !sample.river().present())) {
+        if (mapped != null && layer == null) {
             return mapped;
         }
-        if (riverRuntime != null) {
-            if (sample.subterranean()) {
-                return fixBiomeType(
-                        sample.naturalHeight(),
-                        baseBiomeStream.get(x, z),
-                        regionStream.get(x, z),
-                        x,
-                        z,
-                        fluidHeight
-                );
+        if (layer != null) {
+            String biomeKey = hydrologySurfaceBiomeKey(sample);
+            IrisBiome biome = data.getBiomeLoader().load(biomeKey);
+            if (biome == null) {
+                throw new IllegalStateException("Hydrology biome does not exist: " + biomeKey);
             }
-            IrisBiome riverBiome = riverRuntime.selectSurfaceBiome(sample, x, z);
-            if (riverBiome != null) {
-                return implode(riverBiome, x, z);
+            if (layer.biomeKey() == null) {
+                return biome;
             }
-            InferredType directFallback = directRiverFallback(sample.river());
-            if (directFallback != null) {
-                IrisBiome baseBiome = baseBiomeStream.get(x, z);
-                return implode(baseBiome.withInferredType(directFallback), x, z);
-            }
-            if (sample.river().present()
-                    && sample.river().state() == RiverRouteState.WET
-                    && sample.river().section() == RiverSection.BANK) {
-                return fixBiomeType(
-                        sample.terrainHeight(),
-                        baseBiomeStream.get(x, z),
-                        regionStream.get(x, z),
-                        x,
-                        z,
-                        sample.waterSurfaceY()
-                );
-            }
+            InferredType inferredType = layer.shore()
+                    ? InferredType.SHORE
+                    : layer.connectedFluid() ? InferredType.SEA : InferredType.LAND;
+            return implode(biome.withInferredType(inferredType), x, z);
         }
         return fixBiomeType(
-                sample.terrainHeight(),
+                terrainHeight,
                 baseBiomeStream.get(x, z),
                 regionStream.get(x, z),
                 x,
@@ -642,17 +749,14 @@ public class IrisComplex implements DataProvider {
         );
     }
 
-    static InferredType directRiverFallback(RiverSample river) {
-        if (!river.present()) {
-            return null;
+    static String hydrologySurfaceBiomeKey(HydrologyColumnSample sample) {
+        Objects.requireNonNull(sample, "sample");
+        HydrologyColumnLayer layer = sample.primarySurfaceLayer().orElse(null);
+        if (layer == null) {
+            return sample.parentBiomeKey();
         }
-        if (river.state() == RiverRouteState.DRY) {
-            return InferredType.LAND;
-        }
-        return switch (river.section()) {
-            case CHANNEL, MOUTH -> InferredType.SEA;
-            default -> null;
-        };
+        String biomeKey = layer.biomeKey();
+        return biomeKey == null ? sample.parentBiomeKey() : biomeKey;
     }
 
     private IrisBiome fixBiomeType(Double height, IrisBiome biome, IrisRegion region, Double x, Double z, double fluidHeight) {
@@ -713,13 +817,7 @@ public class IrisComplex implements DataProvider {
         double hi = sampledBounds.max();
         double lo = sampledBounds.min();
 
-        double d = 0;
-
-        for (IrisGenerator i : generators) {
-            d += M.lerp(lo, hi, i.getHeight(x, z, seed + 239945));
-        }
-
-        return d / generators.length;
+        return averageGeneratorHeights(generators, lo, hi, x, z, seed + 239945);
     }
 
     private NoiseBounds gridSampleBounds(Engine engine, IrisInterpolator interpolator, int interpolatorIndex, IrisGenerator[] generators, double x, double z) {
@@ -740,6 +838,22 @@ public class IrisComplex implements DataProvider {
         long b00 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx, gz);
         if (fx == 0D && fz == 0D) {
             return new NoiseBounds(boundsLow(b00), boundsHigh(b00));
+        }
+
+        if (fz == 0D) {
+            long b10 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx + grid, gz);
+            return new NoiseBounds(
+                    biLerp(boundsLow(b00), boundsLow(b10), boundsLow(b00), boundsLow(b10), fx, fz),
+                    biLerp(boundsHigh(b00), boundsHigh(b10), boundsHigh(b00), boundsHigh(b10), fx, fz)
+            );
+        }
+
+        if (fx == 0D) {
+            long b01 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx, gz + grid);
+            return new NoiseBounds(
+                    biLerp(boundsLow(b00), boundsLow(b00), boundsLow(b01), boundsLow(b01), fx, fz),
+                    biLerp(boundsHigh(b00), boundsHigh(b00), boundsHigh(b01), boundsHigh(b01), fx, fz)
+            );
         }
 
         long b10 = cornerBounds(cache, engine, interpolator, interpolatorIndex, generators, gx + grid, gz);
@@ -835,15 +949,54 @@ public class IrisComplex implements DataProvider {
         );
     }
 
-    private double getHeight(Engine engine, IrisBiome b, double x, double z, long seed) {
+    private double getHeight(Engine engine, double x, double z, long seed) {
         return Math.max(Math.min(getInterpolatedHeight(engine, x, z, seed) + fluidHeight + overlayStream.get(x, z), engine.getHeight()), 0);
     }
 
-    private void prepareInferredBiomes(IrisRegion region) {
+    private void prepareInferredBiomes(IrisRegion region, KList<IrisRegion> preparedRegions) {
         loadInferredBiomes(region.getLandBiomes(), InferredType.LAND);
         loadInferredBiomes(region.getCaveBiomes(), InferredType.CAVE);
         loadInferredBiomes(region.getSeaBiomes(), InferredType.SEA);
         loadInferredBiomes(region.getShoreBiomes(), InferredType.SHORE);
+        preparedRegions.add(region);
+    }
+
+    static Map<IrisRegion, Map<InferredType, ProceduralStream<IrisBiome>>> compileInferredBiomeStreams(
+            Iterable<IrisRegion> regions,
+            BiFunction<IrisRegion, InferredType, ProceduralStream<IrisBiome>> compiler
+    ) {
+        IdentityHashMap<IrisRegion, Map<InferredType, ProceduralStream<IrisBiome>>> compiled = new IdentityHashMap<>();
+        for (IrisRegion region : regions) {
+            if (compiled.containsKey(region)) {
+                continue;
+            }
+            EnumMap<InferredType, ProceduralStream<IrisBiome>> regionStreams = new EnumMap<>(InferredType.class);
+            for (InferredType inferredType : INFERRED_BIOME_PREPARATION_ORDER) {
+                regionStreams.put(inferredType, Objects.requireNonNull(compiler.apply(region, inferredType)));
+            }
+            compiled.put(region, Collections.unmodifiableMap(regionStreams));
+        }
+        return Collections.unmodifiableMap(compiled);
+    }
+
+    static ProceduralStream<IrisBiome> preparedInferredBiomeStream(
+            Map<IrisRegion, Map<InferredType, ProceduralStream<IrisBiome>>> streams,
+            IrisRegion region,
+            InferredType inferredType
+    ) {
+        Map<InferredType, ProceduralStream<IrisBiome>> regionStreams = streams.get(region);
+        if (regionStreams == null) {
+            String regionKey = region == null || region.getLoadKey() == null || region.getLoadKey().isBlank()
+                    ? "<unkeyed>"
+                    : region.getLoadKey();
+            throw new IllegalStateException("Inferred-biome streams were not prepared for region '"
+                    + regionKey + "'.");
+        }
+        ProceduralStream<IrisBiome> stream = regionStreams.get(inferredType);
+        if (stream == null) {
+            throw new IllegalStateException("Inferred-biome stream was not prepared for type " + inferredType + ".");
+        }
+        return stream;
     }
 
     private KList<IrisBiome> loadInferredBiomes(KList<String> keys, InferredType type) {
@@ -861,6 +1014,37 @@ public class IrisComplex implements DataProvider {
 
     private void registerGenerator(IrisGenerator cachedGenerator) {
         generators.computeIfAbsent(cachedGenerator.getInterpolator(), (k) -> new HashSet<>()).add(cachedGenerator);
+    }
+
+    static GeneratorGroup[] freezeGeneratorGroups(Map<IrisInterpolator, Set<IrisGenerator>> generators) {
+        GeneratorGroup[] groups = new GeneratorGroup[generators.size()];
+        int groupIndex = 0;
+        for (Map.Entry<IrisInterpolator, Set<IrisGenerator>> entry : generators.entrySet()) {
+            IrisGenerator[] groupGenerators = entry.getValue().toArray(new IrisGenerator[0]);
+            Arrays.sort(groupGenerators, GENERATOR_ORDER);
+            groups[groupIndex] = new GeneratorGroup(entry.getKey(), groupGenerators);
+            groupIndex++;
+        }
+        Arrays.sort(groups, Comparator.comparing(GeneratorGroup::interpolator, INTERPOLATOR_ORDER));
+        return groups;
+    }
+
+    static double averageGeneratorHeights(
+            IrisGenerator[] generators,
+            double low,
+            double high,
+            double x,
+            double z,
+            long seed
+    ) {
+        if (generators.length == 0) {
+            return 0D;
+        }
+        double height = 0D;
+        for (IrisGenerator generator : generators) {
+            height += M.lerp(low, high, generator.getHeight(x, z, seed));
+        }
+        return height / generators.length;
     }
 
     private Map<IrisInterpolator, IdentityHashMap<IrisBiome, GeneratorBounds>> buildGeneratorBounds(Engine engine) {
@@ -1265,9 +1449,12 @@ public class IrisComplex implements DataProvider {
         }
     }
 
+    record GeneratorGroup(IrisInterpolator interpolator, IrisGenerator[] generators) {
+    }
+
     public void close() {
-        if (riverRuntime != null) {
-            riverRuntime.close();
+        if (hydrologyRuntime != null) {
+            hydrologyRuntime.close();
         }
     }
 }

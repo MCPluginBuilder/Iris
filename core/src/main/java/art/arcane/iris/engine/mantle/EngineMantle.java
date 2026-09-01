@@ -27,9 +27,10 @@ import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.TreeBlockMaterial;
 import art.arcane.iris.engine.mantle.components.MantleObjectComponent;
 import art.arcane.iris.engine.object.IrisDimension;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrologyStorage;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveStorage;
 import art.arcane.iris.engine.object.IrisPosition;
+import art.arcane.iris.util.project.matter.PreObjectMatterCell;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
@@ -49,6 +50,7 @@ import org.jetbrains.annotations.UnmodifiableView;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 public interface EngineMantle extends MatterGenerator {
@@ -112,7 +114,7 @@ public interface EngineMantle extends MatterGenerator {
     }
 
     default boolean isCarved(int x, int h, int z) {
-        RiverCaveHydrology hydrology = RiverCaveHydrologyStorage.getIfPresent(getMantle(), x, h, z);
+        HydrologyCaveCell hydrology = HydrologyCaveStorage.getIfPresent(getMantle(), x, h, z);
         if (hydrology != null) {
             return hydrology.carves();
         }
@@ -244,7 +246,7 @@ public interface EngineMantle extends MatterGenerator {
     MantleObjectComponent getObjectComponent();
 
     default boolean isCovered(int x, int z) {
-        int s = getRealRadius();
+        int s = Math.max(getRadius(), getRealRadius());
 
         for (int i = -s; i <= s; i++) {
             for (int j = -s; j <= s; j++) {
@@ -259,42 +261,68 @@ public interface EngineMantle extends MatterGenerator {
         return true;
     }
 
-    default void cleanupChunk(int x, int z) {
-        if (!isCovered(x, z)) return;
-        doCleanupChunk(x, z);
+    default boolean cleanupChunk(int x, int z) {
+        return cleanupTargetIfCovered(x, z, false);
     }
 
-    default void forceCleanupChunk(int x, int z) {
+    default boolean forceCleanupChunk(int x, int z) {
+        return cleanupTargetIfCovered(x, z, true);
+    }
+
+    default void cleanupChunksCoveredBy(
+            int newRealX,
+            int newRealZ,
+            boolean force,
+            ChunkCleanupCallback callback
+    ) {
+        Objects.requireNonNull(callback, "callback");
+        int radius = Math.max(getRadius(), getRealRadius());
+        for (int offsetX = -radius; offsetX <= radius; offsetX++) {
+            int candidateX = newRealX + offsetX;
+            for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
+                int candidateZ = newRealZ + offsetZ;
+                if (getMantle().hasFlag(candidateX, candidateZ, MantleFlag.CLEANED)) {
+                    continue;
+                }
+                if (cleanupTargetIfCovered(candidateX, candidateZ, force)) {
+                    callback.onChunkCleaned(candidateX, candidateZ);
+                }
+            }
+        }
+    }
+
+    private boolean cleanupTargetIfCovered(int x, int z, boolean force) {
+        if (getMantle().hasFlag(x, z, MantleFlag.CLEANED) || !isCovered(x, z)) {
+            return false;
+        }
         MantleChunk<Matter> chunk = getMantle().getChunk(x, z).use();
         try {
-            chunk.raiseFlagUnchecked(MantleFlag.CLEANED, () -> {
-                MantleSliceRetention.deleteUnlessRetained(chunk, PlatformBlockState.class);
-                MantleSliceRetention.deleteUnlessRetained(chunk, String.class);
-                MantleSliceRetention.deleteUnlessRetained(chunk, UpdateMatter.class);
-                MantleSliceRetention.deleteUnlessRetained(chunk, MatterCavern.class);
-                MantleSliceRetention.deleteUnlessRetained(chunk, MatterFluidBody.class);
-                MantleSliceRetention.deleteUnlessRetained(chunk, MatterMarker.class);
-                MantleSliceRetention.deleteUnlessRetained(chunk, TreeBlockMaterial.class);
-                chunk.trimSlices();
-            });
+            synchronized (chunk) {
+                if (chunk.isFlagged(MantleFlag.CLEANED)) {
+                    return false;
+                }
+                chunk.raiseFlagUnchecked(MantleFlag.CLEANED, () -> cleanupSlices(chunk, force));
+                return true;
+            }
         } finally {
             chunk.release();
         }
     }
 
-    private void doCleanupChunk(int x, int z) {
-        MantleChunk<Matter> chunk = getMantle().getChunk(x, z).use();
-        try {
-            chunk.raiseFlagUnchecked(MantleFlag.CLEANED, () -> {
-                MantleSliceRetention.deleteUnlessRetained(chunk, PlatformBlockState.class);
-                MantleSliceRetention.deleteUnlessRetained(chunk, UpdateMatter.class);
-                MantleSliceRetention.deleteUnlessRetained(chunk, MatterCavern.class);
-                MantleSliceRetention.deleteUnlessRetained(chunk, MatterFluidBody.class);
-                chunk.trimSlices();
-            });
-        } finally {
-            chunk.release();
+    private void cleanupSlices(MantleChunk<Matter> chunk, boolean force) {
+        MantleSliceRetention.deleteUnlessRetained(chunk, PlatformBlockState.class);
+        if (force) {
+            MantleSliceRetention.deleteUnlessRetained(chunk, String.class);
         }
+        MantleSliceRetention.deleteUnlessRetained(chunk, UpdateMatter.class);
+        MantleSliceRetention.deleteUnlessRetained(chunk, MatterCavern.class);
+        MantleSliceRetention.deleteUnlessRetained(chunk, MatterFluidBody.class);
+        if (force) {
+            MantleSliceRetention.deleteUnlessRetained(chunk, MatterMarker.class);
+            MantleSliceRetention.deleteUnlessRetained(chunk, TreeBlockMaterial.class);
+        }
+        chunk.deleteSlices(PreObjectMatterCell.class);
+        chunk.trimSlices();
     }
 
     default int getUnloadRegionCount() {
@@ -303,5 +331,13 @@ public interface EngineMantle extends MatterGenerator {
 
     default double getAdjustedIdleDuration() {
         return getMantle().getAdjustedIdleDuration();
+    }
+
+    @FunctionalInterface
+    interface ChunkCleanupCallback {
+        ChunkCleanupCallback NONE = (x, z) -> {
+        };
+
+        void onChunkCleaned(int x, int z);
     }
 }

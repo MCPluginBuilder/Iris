@@ -118,8 +118,8 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     private double caveBiomeZoom = 1;
     @Desc("Profile-driven 3D cave configuration")
     private IrisCaveProfile caveProfile = new IrisCaveProfile();
-    @Desc("Region-level river routing, shape, cave-entry, and biome-pool overrides. Omit to inherit dimension settings.")
-    private IrisRiverOverride riverOverride = null;
+    @Desc("Region-level river placement, routing, profile, biome, and geometry policy. Omit to inherit dimension settings.")
+    private IrisRiverPolicy riverPolicy = null;
     @RegistryListResource(IrisBiome.class)
     @Required
     @ArrayType(min = 1, type = String.class)
@@ -280,8 +280,8 @@ public class IrisRegion extends IrisRegistrant implements IRare {
 
     public KSet<String> getAllBiomeIds() {
         KSet<String> names = getNaturalBiomeIds();
-        if (riverOverride != null) {
-            names.addAll(riverOverride.getAllBiomeIds());
+        if (riverPolicy != null) {
+            names.addAll(riverPolicy.getAllBiomeIds());
         }
         return names;
     }

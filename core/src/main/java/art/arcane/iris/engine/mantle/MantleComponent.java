@@ -34,6 +34,10 @@ public interface MantleComponent extends Comparable<MantleComponent> {
 
     int getRadius();
 
+    default int getOutputRadius() {
+        return getRadius();
+    }
+
     default int getInputRadius() {
         return 0;
     }

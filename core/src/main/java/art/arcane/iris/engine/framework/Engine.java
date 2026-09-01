@@ -42,8 +42,8 @@ import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisStructure;
 import art.arcane.iris.engine.object.IrisWorld;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrologyStorage;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveStorage;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -246,7 +246,7 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default IrisBiome getCaveOrMantleBiome(int x, int y, int z) {
-        RiverCaveHydrology hydrology = RiverCaveHydrologyStorage.getIfPresent(
+        HydrologyCaveCell hydrology = HydrologyCaveStorage.getIfPresent(
                 getMantle().getMantle(), x, y, z);
         if (hydrology != null && !hydrology.floodedBiomeKey().isEmpty()) {
             IrisBiome biome = getData().getBiomeLoader().load(hydrology.floodedBiomeKey());
@@ -455,6 +455,10 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     default PlacedObject getObjectPlacement(int x, int y, int z, MantleChunk<Matter> chunk) {
         String objectAt = chunk.get(x & 15, y, z & 15, String.class);
+        return resolveObjectPlacementMarker(x, z, objectAt);
+    }
+
+    default PlacedObject resolveObjectPlacementMarker(int x, int z, @Nullable String objectAt) {
         if (objectAt == null || objectAt.isEmpty()) {
             return null;
         }
@@ -562,7 +566,12 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
             return;
         }
         if (IrisSettings.get().getPerformance().isTrimMantleInStudio() || !isStudio()) {
-            getMantle().cleanupChunk(x, z);
+            getMantle().cleanupChunksCoveredBy(
+                    x,
+                    z,
+                    false,
+                    EngineMantle.ChunkCleanupCallback.NONE
+            );
         }
     }
 }

@@ -26,9 +26,10 @@ import art.arcane.iris.engine.decorator.IrisSurfaceDecorator;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedActuator;
 import art.arcane.iris.engine.framework.EngineDecorator;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
 import art.arcane.iris.engine.object.IrisBiome;
-import art.arcane.iris.engine.river.RiverRouteState;
-import art.arcane.iris.engine.river.runtime.IrisRiverSurfaceSample;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
@@ -52,7 +53,7 @@ public class IrisDecorantActuator extends EngineAssignedActuator<PlatformBlockSt
     @Getter
     private final EngineDecorator seaFloorDecorator;
     @Getter
-    private final EngineDecorator shoreLineDecorator;
+    private final IrisShoreLineDecorator shoreLineDecorator;
     private final boolean shouldRay;
 
     public IrisDecorantActuator(Engine engine) {
@@ -66,10 +67,82 @@ public class IrisDecorantActuator extends EngineAssignedActuator<PlatformBlockSt
         seaFloorDecorator = new IrisSeaFloorDecorator(getEngine());
     }
 
-    static boolean shouldDecorateShoreline(IrisRiverSurfaceSample sample, int height) {
-        return !sample.subterranean()
-                && height == Math.round(sample.waterSurfaceY())
-                && (!sample.river().present() || sample.river().state() != RiverRouteState.DRY);
+    static ShorelineDecorationMode shorelineDecorationMode(
+            HydrologyColumnSample sample,
+            int height,
+            int fluidHeight
+    ) {
+        HydrologyColumnLayer surfaceLayer = sample == null
+                ? null
+                : sample.primarySurfaceLayer().orElse(null);
+        if (surfaceLayer != null) {
+            return surfaceLayer.shore()
+                    ? ShorelineDecorationMode.ACCEPTED
+                    : ShorelineDecorationMode.NONE;
+        }
+        return height == fluidHeight
+                ? ShorelineDecorationMode.LEGACY
+                : ShorelineDecorationMode.NONE;
+    }
+
+    static boolean hasConnectedSurfaceWater(
+            Hunk<PlatformBlockState> output,
+            int x,
+            int z,
+            int height,
+            int fluidHeight
+    ) {
+        return height < fluidHeight
+                && height + 1 < output.getHeight()
+                && IrisSurfaceDecorator.hasConnectedWater(output, x, height + 1, z);
+    }
+
+    static boolean hasConnectedWaterColumn(
+            Hunk<PlatformBlockState> output,
+            int x,
+            int z,
+            int lowerY,
+            int upperY
+    ) {
+        int boundedLowerY = Math.max(0, lowerY);
+        int boundedUpperY = Math.min(output.getHeight() - 1, upperY);
+        if (boundedLowerY > boundedUpperY) {
+            return false;
+        }
+        for (int y = boundedLowerY; y <= boundedUpperY; y++) {
+            if (!IrisSurfaceDecorator.hasConnectedWater(output, x, y, z)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static void restoreUnsupportedAquaticPlacement(
+            Hunk<PlatformBlockState> output,
+            int x,
+            int y,
+            int z,
+            PlatformBlockState original
+    ) {
+        PlatformBlockState placed = output.get(x, y, z);
+        if (placed != original && IrisSurfaceDecorator.isAquaticPlacement(placed)) {
+            output.set(x, y, z, original);
+        }
+    }
+
+    static boolean isFallingWaterfallThroat(HydrologyColumnSample sample) {
+        if (sample == null) {
+            return false;
+        }
+        for (HydrologyColumnLayer layer : sample.layers()) {
+            if ((layer.feature().type() == HydrologyFeatureType.WATERFALL
+                    || layer.feature().type() == HydrologyFeatureType.SINKHOLE)
+                    && layer.channel()
+                    && layer.fallingFluid()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @BlockCoordinates
@@ -80,7 +153,6 @@ public class IrisDecorantActuator extends EngineAssignedActuator<PlatformBlockSt
         }
 
         PrecisionStopwatch p = PrecisionStopwatch.start();
-
         for (int i = 0; i < output.getWidth(); i++) {
             int height;
             int realX = Math.round(x + i);
@@ -94,25 +166,57 @@ public class IrisDecorantActuator extends EngineAssignedActuator<PlatformBlockSt
                 height = context.getRoundedHeight(i, j);
                 biome = context.getBiome().get(i, j);
                 cave = shouldRay ? context.getCave().get(i, j) : null;
-                IrisRiverSurfaceSample riverSurface = getComplex().getRiverSurfaceStream().get(realX, realZ);
-                int surfaceFluidHeight = (int) Math.round(riverSurface.waterSurfaceY());
+                HydrologyColumnSample hydrology = getComplex().getHydrologyRuntime() == null
+                        ? null
+                        : getComplex().getHydrologyRuntime().sample(realX, realZ).orElse(null);
+                if (isFallingWaterfallThroat(hydrology)) {
+                    continue;
+                }
+                int surfaceFluidHeight = (int) Math.round(
+                        getComplex().getRiverWaterSurfaceStream().get(realX, realZ));
 
                 if (biome.getDecorators().isEmpty() && (cave == null || cave.getDecorators().isEmpty())) {
                     continue;
                 }
 
-                if (height < surfaceFluidHeight && PREDICATE_SOLID.test(output.get(i, height, j))
-                        && height + 1 < output.getHeight() && B.isFluid(output.get(i, height + 1, j))) {
+                if (PREDICATE_SOLID.test(output.get(i, height, j))
+                        && hasConnectedSurfaceWater(output, i, j, height, surfaceFluidHeight)) {
+                    int seaSurfaceY = surfaceFluidHeight + 1;
+                    PlatformBlockState seaSurfaceOriginal = seaSurfaceY < output.getHeight()
+                            ? output.get(i, seaSurfaceY, j)
+                            : null;
                     getSeaSurfaceDecorator().decorate(i, j,
                             realX, Math.round(i + 1), Math.round(x + i - 1),
                             realZ, Math.round(z + j + 1), Math.round(z + j - 1),
                             output, biome, surfaceFluidHeight, getEngine().getHeight());
-                    getSeaFloorDecorator().decorate(i, j,
-                            realX, realZ, output, biome, height + 1,
-                            surfaceFluidHeight + 1);
+                    if (seaSurfaceY < output.getHeight()) {
+                        restoreUnsupportedAquaticPlacement(
+                                output, i, seaSurfaceY, j, seaSurfaceOriginal);
+                    }
+                    if (hasConnectedWaterColumn(output, i, j, height + 1, surfaceFluidHeight)) {
+                        getSeaFloorDecorator().decorate(i, j,
+                                realX, realZ, output, biome, height + 1,
+                                surfaceFluidHeight + 1);
+                    }
                 }
 
-                if (shouldDecorateShoreline(riverSurface, height)) {
+                ShorelineDecorationMode shorelineMode = shorelineDecorationMode(
+                        hydrology,
+                        height,
+                        surfaceFluidHeight
+                );
+                if (shorelineMode == ShorelineDecorationMode.ACCEPTED) {
+                    getShoreLineDecorator().decorateAcceptedShore(
+                            i,
+                            j,
+                            realX,
+                            realZ,
+                            output,
+                            biome,
+                            height,
+                            getEngine().getHeight()
+                    );
+                } else if (shorelineMode == ShorelineDecorationMode.LEGACY) {
                     getShoreLineDecorator().decorate(i, j,
                             realX, Math.round(x + i + 1), Math.round(x + i - 1),
                             realZ, Math.round(z + j + 1), Math.round(z + j - 1),
@@ -149,5 +253,11 @@ public class IrisDecorantActuator extends EngineAssignedActuator<PlatformBlockSt
 
     private boolean shouldRayDecorate() {
         return false; // TODO CAVES
+    }
+
+    enum ShorelineDecorationMode {
+        NONE,
+        LEGACY,
+        ACCEPTED
     }
 }

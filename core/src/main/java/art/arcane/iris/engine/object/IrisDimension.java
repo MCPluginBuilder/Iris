@@ -165,8 +165,10 @@ public class IrisDimension extends IrisRegistrant {
     private KList<IrisDimensionCarvingEntry> carving = new KList<>();
     @Desc("Profile-driven 3D cave configuration")
     private IrisCaveProfile caveProfile = new IrisCaveProfile();
-    @Desc("Connected surface rivers and contained river cave-water generation.")
-    private IrisRiverNetwork rivers = new IrisRiverNetwork();
+    @Desc("Dimension-owned surface, underground, grotto, and deep-fluid hydrology configuration.")
+    private IrisHydrology hydrology = new IrisHydrology();
+    @Desc("Dimension-level river placement, routing, profile, biome, and geometry policy.")
+    private IrisRiverPolicy riverPolicy = new IrisRiverPolicy();
     @Desc("Refuse to place surface objects and trees over carved surface openings.")
     private boolean requireObjectSurfaceSupport = true;
     @MinNumber(0)
@@ -515,17 +517,27 @@ public class IrisDimension extends IrisRegistrant {
         }
 
         Deque<String> pending = new ArrayDeque<>();
-        IrisRiverNetwork riverNetwork = getRivers();
-        boolean riversEnabled = riverNetwork != null && riverNetwork.isEnabled();
-        if (riversEnabled && riverNetwork.getBiomes() != null) {
-            addReachableBiomeKeys(pending, riverNetwork.getBiomes().getAllBiomeIds());
+        IrisHydrology configuredHydrology = getHydrology();
+        IrisRiverHydrology configuredRivers = configuredHydrology == null ? null : configuredHydrology.getRivers();
+        boolean hydrologyPoliciesActive = configuredRivers != null && configuredRivers.isEnabled();
+        if (!hydrologyPoliciesActive && configuredHydrology != null) {
+            for (IrisDeepFluidConfig deepFluid : configuredHydrology.getDeepFluids()) {
+                if (deepFluid != null && deepFluid.getDensity() > 0D
+                        && (deepFluid.isContainedPools() || deepFluid.isShortChannels())) {
+                    hydrologyPoliciesActive = true;
+                    break;
+                }
+            }
+        }
+        if (hydrologyPoliciesActive && getRiverPolicy() != null) {
+            addReachableBiomeKeys(pending, getRiverPolicy().getAllBiomeIds());
         }
         for (IrisRegion region : getAllRegions(g)) {
             if (region == null) {
                 continue;
             }
             addReachableBiomeKeys(pending,
-                    riversEnabled ? region.getAllBiomeIds() : region.getNaturalBiomeIds());
+                    hydrologyPoliciesActive ? region.getAllBiomeIds() : region.getNaturalBiomeIds());
         }
         for (IrisImageMapBinding binding : getImageMaps()) {
             if (binding == null || binding.getApplication() != IrisImageMapApplication.BIOME) {
@@ -571,8 +583,8 @@ public class IrisDimension extends IrisRegistrant {
             biomes.put(loadKey, biome);
             addReachableBiomeKeys(pending, biome.getChildren());
             addReachableBiomeKey(pending, biome.getCarvingBiome());
-            if (riversEnabled && biome.getRiverOverride() != null) {
-                addReachableBiomeKeys(pending, biome.getRiverOverride().getAllBiomeIds());
+            if (hydrologyPoliciesActive && biome.getRiverPolicy() != null) {
+                addReachableBiomeKeys(pending, biome.getRiverPolicy().getAllBiomeIds());
             }
 
             KList<IrisFloatingChildBiomes> floatingChildren = biome.getFloatingChildBiomes();

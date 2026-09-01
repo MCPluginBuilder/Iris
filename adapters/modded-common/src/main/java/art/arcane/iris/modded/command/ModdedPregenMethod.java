@@ -341,8 +341,7 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
             }
             markCompleted();
             listener.onChunkGenerated(x, z);
-            cleanupMantleChunk(x, z);
-            listener.onChunkCleaned(x, z);
+            cleanupMantleChunksCoveredBy(x, z, listener);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (TimeoutException | ExecutionException e) {
@@ -406,8 +405,7 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
                 onSuccess();
                 markCompleted();
                 listener.onChunkGenerated(x, z);
-                cleanupMantleChunk(x, z);
-                listener.onChunkCleaned(x, z);
+                cleanupMantleChunksCoveredBy(x, z, listener);
             } finally {
                 markFinished();
                 semaphore.release();
@@ -494,9 +492,9 @@ public final class ModdedPregenMethod implements PregeneratorMethod {
         }
     }
 
-    private void cleanupMantleChunk(int x, int z) {
+    private void cleanupMantleChunksCoveredBy(int x, int z, PregenListener listener) {
         try {
-            engine.getMantle().forceCleanupChunk(x, z);
+            engine.getMantle().cleanupChunksCoveredBy(x, z, true, listener::onChunkCleaned);
         } catch (Throwable e) {
             ModdedIrisLog.debug("Iris pregen mantle cleanup skipped for {},{}: {}", x, z, e.toString());
         }

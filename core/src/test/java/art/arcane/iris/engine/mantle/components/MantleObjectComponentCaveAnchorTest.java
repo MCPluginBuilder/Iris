@@ -1,8 +1,8 @@
 package art.arcane.iris.engine.mantle.components;
 
 import art.arcane.iris.engine.object.IrisBiome;
-import art.arcane.iris.engine.river.cave.RiverCaveAction;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.volmlib.util.matter.MatterCavern;
 import org.junit.Test;
 
@@ -49,15 +49,18 @@ public class MantleObjectComponentCaveAnchorTest {
     }
 
     @Test
-    public void protectedRiverHydrologyCannotBecomeAnObjectAnchor() {
+    public void plannedHydrologyCannotBecomeAnObjectAnchor() {
         MatterCavern water = new MatterCavern(true, "", (byte) 1);
+        MatterCavern forcedAir = new MatterCavern(true, "", (byte) 3);
 
         assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
-                true, water, RiverCaveHydrology.of(RiverCaveAction.WET_SOURCE), 20, 8));
+                true, water, HydrologyCaveCell.of(HydrologyCaveAction.WET_SOURCE), 20, 8));
         assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
-                true, water, RiverCaveHydrology.of(RiverCaveAction.FALLING_FLUID), 20, 8));
+                true, water, HydrologyCaveCell.of(HydrologyCaveAction.FALLING_FLUID), 20, 8));
         assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
-                true, null, RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD), 20, 8));
+                true, null, HydrologyCaveCell.of(HydrologyCaveAction.SEAL_GUARD), 20, 8));
+        assertFalse(MantleObjectComponent.acceptsCaveAnchorFluid(
+                false, forcedAir, HydrologyCaveCell.of(HydrologyCaveAction.DRY_AIR), 20, 8));
     }
 
     private static IrisBiome biome(String loadKey) {

@@ -1,317 +1,282 @@
 package art.arcane.iris.engine.object;
 
-import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.volmlib.util.collection.KList;
 import com.google.gson.Gson;
 import org.junit.Test;
 
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 public class IrisRiverConfigurationTest {
     @Test
-    public void defaultsKeepRiverGenerationDisabledAndContained() {
+    public void defaultsExposeCanonicalHydrologyHierarchy() {
         IrisDimension dimension = new IrisDimension();
 
-        assertNotNull(dimension.getRivers());
-        assertFalse(dimension.getRivers().isEnabled());
-        assertEquals(IrisRiverWaterMode.FIXED, dimension.getRivers().getWater().getMode());
-        assertEquals(63, dimension.getRivers().getWater().getFluidHeight());
-        assertEquals("water", dimension.getRivers().getWater().getFluidPalette().getPalette().getFirst().getBlock());
-        assertFalse(dimension.getRivers().getTopology().isRequireOcean());
-        assertEquals(512, dimension.getRivers().getTopology().getCellSize());
-        assertEquals(16, dimension.getRivers().getTopology().getMaxRouteReaches());
-        assertEquals(0, dimension.getRivers().getTopology().getMinimumSourcesPerTile());
-        assertEquals(64, dimension.getRivers().getTopology().getRoutingBasinCells());
-        assertEquals(8D, dimension.getRivers().getTopology().getRoutingPlateauHeight(), 0D);
-        assertEquals(0.05D, dimension.getRivers().getTopology().getSource().getChance(), 0D);
-        assertEquals(0.035D, dimension.getRivers().getTopology().getSource().getInfluence(), 0D);
-        assertEquals(10D, dimension.getRivers().getTerrain().getMaxChannelWidth(), 0D);
-        assertEquals(4D, dimension.getRivers().getTerrain().getMaxBankWidth(), 0D);
-        assertEquals(10D, dimension.getRivers().getTerrain().getMaxDepth(), 0D);
-        assertTrue(dimension.getRivers().getTerrain().getWorms().isEmpty());
-        assertEquals(IrisRiverCaveMode.SEALED, dimension.getRivers().getCaves().getMode());
-        assertEquals(IrisRiverCaveFallback.SEALED, dimension.getRivers().getCaves().getFallback());
-        assertEquals(IrisRiverExistingFluidPolicy.REJECT,
-                dimension.getRivers().getCaves().getExistingFluidPolicy());
-        assertNotNull(dimension.getRivers().getCaves().getDeepPools());
-        assertFalse(dimension.getRivers().getCaves().getDeepPools().isEnabled());
-        assertEquals(-224, dimension.getRivers().getCaves().getDeepPools().getMinimumFluidY());
-        assertEquals(-104, dimension.getRivers().getCaves().getDeepPools().getMaximumFluidY());
-        assertEquals("lava", dimension.getRivers().getCaves().getDeepPools()
+        assertNotNull(dimension.getHydrology());
+        assertNotNull(dimension.getHydrology().getRivers());
+        assertFalse(dimension.getHydrology().getRivers().isEnabled());
+        assertNotNull(dimension.getHydrology().getRivers().getRouting());
+        assertNotNull(dimension.getHydrology().getRivers().getSurface());
+        assertNotNull(dimension.getHydrology().getRivers().getUnderground());
+        assertNotNull(dimension.getHydrology().getRivers().getGrottos());
+        assertEquals(1, dimension.getHydrology().getRivers().getProfiles().size());
+        assertEquals("default", dimension.getHydrology().getRivers().getProfiles().getFirst().getId());
+        assertEquals("water", dimension.getHydrology().getRivers().getProfiles().getFirst()
                 .getFluidPalette().getPalette().getFirst().getBlock());
-        assertTrue(dimension.getRivers().getBiomes().getAllBiomeIds().isEmpty());
-        assertNull(new IrisRegion().getRiverOverride());
-        assertNull(new IrisBiome().getRiverOverride());
+        assertTrue(dimension.getHydrology().getDeepFluids().isEmpty());
+
+        IrisRiverRoutingConfig routing = dimension.getHydrology().getRivers().getRouting();
+        assertEquals(2048, routing.getTileSize());
+        assertEquals(16384, routing.getMaximumRouteLength());
+        assertEquals(384, routing.getBranching().getMinimumSurfaceCourseLength());
+        assertEquals(192, routing.getBranching().getMinimumUndergroundCourseLength());
+
+        IrisSurfaceRiverConfig surface = dimension.getHydrology().getRivers().getSurface();
+        assertTrue(surface.isEnabled());
+        assertEquals(0.5D, surface.getSources().getDensity(), 0D);
+        assertEquals(0, surface.getSources().getMinimumPerTile());
+        assertEquals(384, surface.getSources().getMinimumSpacing());
+        assertEquals(4D, surface.getChannel().getWidth().getMin(), 0D);
+        assertEquals(8D, surface.getChannel().getWidth().getMax(), 0D);
+        assertEquals(1D, surface.getChannel().getDepth().getMin(), 0D);
+        assertEquals(4D, surface.getChannel().getDepth().getMax(), 0D);
+        assertEquals(2D, surface.getChannel().getDepth().getStyle().getExponent(), 0D);
+        assertEquals(3D, surface.getChannel().getSurfaceInset().getMin(), 0D);
+        assertEquals(7D, surface.getChannel().getSurfaceInset().getMax(), 0D);
+        assertEquals(2D, surface.getChannel().getSurfaceInset().getStyle().getExponent(), 0D);
+        assertEquals(6, surface.getChannel().getMaximumIncision());
+        assertEquals(2D, surface.getChannel().getShoreWidth(), 0D);
+        assertEquals(64, surface.getMouths().getLevelingDistance());
+        assertEquals(8, surface.getMouths().getMaximumOceanApron());
+        assertEquals(80D, surface.getHydraulics().getTargetPoolLength().getMin(), 0D);
+        assertEquals(180D, surface.getHydraulics().getTargetPoolLength().getMax(), 0D);
+        assertEquals(8, surface.getHydraulics().getWaterfallMinimumDrop());
+        IrisRiverDropShapeConfig drops = dimension.getHydrology().getRivers().getGeometry().getDrops();
+        assertEquals(2, drops.getCascadeRunPerBlock());
+        assertEquals(1.4D, drops.getCascadeExponent(), 0D);
+        assertEquals(2, drops.getMaximumCascadeStep());
+        assertEquals(0.45D, drops.getFlowWidthRatio(), 0D);
+        assertEquals(2, drops.getMaximumFlowDepth());
+        assertEquals(1.8D, drops.getBasinWidthRatio(), 0D);
+        assertEquals(8, drops.getMaximumBasinDepth());
+
+        IrisUndergroundRiverConfig underground = dimension.getHydrology().getRivers().getUnderground();
+        assertTrue(underground.isEnabled());
+        assertEquals(0.25D, underground.getSources().getDensity(), 0D);
+        assertEquals(0, underground.getSources().getMinimumPerTile());
+        assertEquals(512, underground.getSources().getMinimumSpacing());
+        assertEquals(-48D, underground.getFluidLevel().getMin(), 0D);
+        assertEquals(50D, underground.getFluidLevel().getMax(), 0D);
+        assertEquals(3D, underground.getChannelWidth().getMin(), 0D);
+        assertEquals(8D, underground.getChannelWidth().getMax(), 0D);
+        assertTrue(underground.isConnectToExistingCaves());
+
+        IrisCoastalRiverGrottoConfig coastal = dimension.getHydrology().getRivers().getGrottos().getCoastal();
+        IrisInlandRiverGrottoConfig inland = dimension.getHydrology().getRivers().getGrottos().getInland();
+        assertEquals(12, coastal.getHorizontalRadius());
+        assertEquals(7, coastal.getVerticalRadius());
+        assertEquals(10, coastal.getHeadroom());
+        assertEquals(8192, coastal.getMaximumVolume());
+        assertEquals(10, inland.getHorizontalRadius());
+        assertEquals(6, inland.getVerticalRadius());
+        assertEquals(10, inland.getHeadroom());
+        assertEquals(8192, inland.getMaximumVolume());
+        assertFalse(inland.isConnectSurfaceRivers());
+
+        IrisDeepFluidConfig deepFluid = new IrisDeepFluidConfig();
+        assertEquals(0.125D, deepFluid.getDensity(), 0D);
+        assertEquals(768, deepFluid.getSpacing());
+        assertEquals(14, deepFluid.getHorizontalRadius());
+        assertEquals(6, deepFluid.getVerticalRadius());
+        assertEquals(3, deepFluid.getChannelWidth());
+        assertEquals(1, deepFluid.getDepth());
+        assertEquals(6, deepFluid.getHeadroom());
+        assertFalse(deepFluid.isShortChannels());
+        assertNotNull(dimension.getRiverPolicy());
+        assertNull(dimension.getRiverPolicy().getPlacement());
+        assertNull(dimension.getRiverPolicy().getRouting());
+        assertNull(dimension.getRiverPolicy().getOutletAdmission());
+        assertNull(new IrisRegion().getRiverPolicy());
+        assertNull(new IrisBiome().getRiverPolicy());
     }
 
     @Test
-    public void deserializesTypedDimensionRegionAndBiomeSettings() {
+    public void deserializesCanonicalDimensionRegionAndBiomeConfiguration() {
         Gson gson = new Gson();
         IrisDimension dimension = gson.fromJson("""
                 {
-                  "rivers": {
-                    "enabled": true,
-                    "topology": {
-                      "cellSize": 512,
-                      "minimumSourcesPerTile": 2,
-                      "routingBasinCells": 96,
-                      "routingPlateauHeight": 12,
-                      "requireOcean": false,
-                      "source": {"chance": 0.27, "influence": 0.4}
-                    },
-                    "terrain": {
-                      "channelRadiusBonus": 3,
-                      "maxChannelWidth": 9,
-                      "maxBankWidth": 2.5,
-                      "maxDepth": 8,
-                      "maxIncision": 36,
-                      "worms": [
-                        {
-                          "seed": 73,
-                          "weight": 2.5,
-                          "wavelength": 1536,
-                          "detailWavelength": 192,
-                          "tortuosity": 0.65,
-                          "detailTortuosity": 0.2,
-                          "maxOffset": 420,
-                          "segments": 56,
-                          "widthMultiplier": 1.4,
-                          "bankMultiplier": 1.2,
-                          "depthMultiplier": 0.8,
-                          "bodyWavelength": 704,
-                          "bodyDetailWavelength": 18,
-                          "bodyDetailInfluence": 0.82,
-                          "widthVariation": 0.75,
-                          "bankVariation": 0.65,
-                          "depthVariation": 0.55,
-                          "roofVariation": 0.45
-                        }
-                      ],
-                      "terminalMode": "SUPPRESS"
-                    },
-                    "water": {
-                      "mode": "TERRACED",
-                      "fluidHeight": -48,
-                      "fluidPalette": {
-                        "palette": [{"block": "minecraft:lava"}]
-                      },
-                      "poolLength": 80
-                    },
-                    "biomes": {
-                      "channel": ["river/channel"],
-                      "floodedCave": ["river/grotto"]
-                    },
-                    "caves": {
-                      "mode": "FLOOD_CLOSED_COMPONENT",
-                      "maxFloodVolume": 2048,
-                      "existingFluidPolicy": "ALLOW_SAME",
-                      "deepPools": {
-                        "enabled": true,
-                        "reach": {
-                          "chance": 0.4,
-                          "influence": 0.1
+                  "hydrology": {
+                    "rivers": {
+                      "enabled": true,
+                      "routing": {
+                        "tileSize": 4096,
+                        "sampleSpacing": 96,
+                        "refinementSpacing": 6,
+                        "branching": {
+                          "minimumSurfaceCourseLength": 640,
+                          "minimumUndergroundCourseLength": 480
                         },
-                        "minimumSpacing": 896,
-                        "maximumPerReach": 2,
-                        "minimumFluidY": -220,
-                        "maximumFluidY": -112,
-                        "searchRadius": 24,
-                        "searchAttempts": 18,
-                        "horizontalRadius": 28,
-                        "verticalRadius": 11,
-                        "dryHeadroom": 5,
-                        "shapeVariation": 0.7,
-                        "warpStrength": 9,
-                        "maximumVolume": 65536,
-                        "fluidPalette": {
-                          "palette": [{"block": "minecraft:lava"}]
+                        "maximumRouteLength": 32768,
+                        "maximumOutletsPerTile": 3,
+                        "oceanOutlets": true,
+                        "inlandOutlets": ["SINKHOLE_GROTTO"]
+                      },
+                      "geometry": {
+                        "drops": {
+                          "cascadeRunPerBlock": 5,
+                          "cascadeExponent": 2.4,
+                          "maximumCascadeStep": 3,
+                          "flowWidthRatio": 0.6,
+                          "maximumFlowDepth": 4,
+                          "basinWidthRatio": 2.2,
+                          "maximumBasinDepth": 11
                         }
-                      }
-                    }
+                      },
+                      "surface": {
+                        "sources": {"density": 0.75, "minimumElevation": 104, "minimumPerTile": 2,
+                          "minimumSpacing": 768},
+                        "channel": {
+                          "width": {"min": 5, "max": 24},
+                          "depth": {"min": 2, "max": 6},
+                          "surfaceInset": {"min": 5, "max": 9},
+                          "maximumIncision": 14,
+                          "shoreWidth": 1.5,
+                          "terrainBlendWidth": {"min": 8, "max": 10}
+                        },
+                        "hydraulics": {
+                          "targetPoolLength": {"min": 64, "max": 192},
+                          "riffleDrop": 1,
+                          "maximumGradualDrop": 4,
+                          "maximumGradualLength": 12,
+                          "waterfallMinimumDrop": 5
+                        },
+                        "ridgeTunnels": {"enabled": true, "maximumLength": 224, "headroom": 12},
+                        "mouths": {"levelingDistance": 80, "maximumOceanApron": 1}
+                      },
+                      "underground": {
+                        "sources": {"density": 0.4, "minimumPerTile": 3, "minimumSpacing": 896},
+                        "fluidLevel": {"min": -96, "max": 12},
+                        "channelWidth": {"min": 4, "max": 16},
+                        "depth": {"min": 2, "max": 4},
+                        "headroom": {"min": 7, "max": 15},
+                        "connectToExistingCaves": false
+                      },
+                      "grottos": {
+                        "coastal": {
+                          "enabled": true,
+                          "poolLevel": "SEA_LEVEL",
+                          "horizontalRadius": 40,
+                          "verticalRadius": 18,
+                          "headroom": 9,
+                          "maximumVolume": 70000
+                        },
+                        "inland": {
+                          "enabled": true,
+                          "connectSurfaceRivers": true,
+                          "horizontalRadius": 30,
+                          "verticalRadius": 15,
+                          "headroom": 7,
+                          "maximumVolume": 60000
+                        }
+                      },
+                      "profiles": [{
+                        "id": "underworld",
+                        "fluidPalette": {"palette": [{"block": "minecraft:lava"}]}
+                      }]
+                    },
+                    "deepFluids": [{
+                      "id": "deep_lava",
+                      "fluidPalette": {"palette": [{"block": "minecraft:lava"}]},
+                      "density": 0.3,
+                      "spacing": 896,
+                      "height": {"min": -220, "max": -112},
+                      "horizontalRadius": 36,
+                      "verticalRadius": 12,
+                      "channelWidth": 6,
+                      "depth": 3,
+                      "headroom": 7,
+                      "containedPools": true,
+                      "shortChannels": false
+                    }]
+                  },
+                  "riverPolicy": {
+                    "placement": "PREFERRED_HEADWATER",
+                    "routing": "PREFER",
+                    "outletAdmission": false,
+                    "profiles": ["underworld"],
+                    "surfaceBiomes": ["river/surface"],
+                    "shoreBiomes": ["river/shore"],
+                    "widthMultiplier": 1.5,
+                    "incisionMultiplier": 0.75
                   }
                 }
                 """, IrisDimension.class);
         IrisRegion region = gson.fromJson("""
-                {
-                  "riverOverride": {
-                    "allowSources": false,
-                    "routingPolicy": "AVOID",
-                    "widthMultiplier": 0.75,
-                    "bankBiomes": ["river/region-bank"]
-                  }
-                }
+                {"riverPolicy": {
+                  "placement": "TRANSIT_ONLY",
+                  "routing": "AVOID",
+                  "mouthBiomes": ["river/mouth"],
+                  "routingMultiplier": 2.5
+                }}
                 """, IrisRegion.class);
         IrisBiome biome = gson.fromJson("""
-                {
-                  "riverOverride": {
-                    "routingPolicy": "BLOCK",
-                    "caveEntryMultiplier": 0.2,
-                    "floodedCaveBiomes": []
-                  }
-                }
+                {"riverPolicy": {
+                  "placement": "REQUIRED_HEADWATER",
+                  "routing": "BLOCK",
+                  "floodedCaveBiomes": [],
+                  "depthMultiplier": 0.8
+                }}
                 """, IrisBiome.class);
 
-        assertTrue(dimension.getRivers().isEnabled());
-        assertEquals(512, dimension.getRivers().getTopology().getCellSize());
-        assertEquals(2, dimension.getRivers().getTopology().getMinimumSourcesPerTile());
-        assertEquals(96, dimension.getRivers().getTopology().getRoutingBasinCells());
-        assertEquals(12D, dimension.getRivers().getTopology().getRoutingPlateauHeight(), 0D);
-        assertFalse(dimension.getRivers().getTopology().isRequireOcean());
-        assertEquals(0.27D, dimension.getRivers().getTopology().getSource().getChance(), 0D);
-        assertEquals(9D, dimension.getRivers().getTerrain().getMaxChannelWidth(), 0D);
-        assertEquals(3D, dimension.getRivers().getTerrain().getChannelRadiusBonus(), 0D);
-        assertEquals(2.5D, dimension.getRivers().getTerrain().getMaxBankWidth(), 0D);
-        assertEquals(8D, dimension.getRivers().getTerrain().getMaxDepth(), 0D);
-        assertEquals(36, dimension.getRivers().getTerrain().getMaxIncision());
-        IrisRiverWorm worm = dimension.getRivers().getTerrain().getWorms().get(0);
-        assertEquals(73L, worm.getSeed());
-        assertEquals(2.5D, worm.getWeight(), 0D);
-        assertEquals(1536D, worm.getWavelength(), 0D);
-        assertEquals(192D, worm.getDetailWavelength(), 0D);
-        assertEquals(0.65D, worm.getTortuosity(), 0D);
-        assertEquals(0.2D, worm.getDetailTortuosity(), 0D);
-        assertEquals(420D, worm.getMaxOffset(), 0D);
-        assertEquals(56, worm.getSegments());
-        assertEquals(1.4D, worm.getWidthMultiplier(), 0D);
-        assertEquals(1.2D, worm.getBankMultiplier(), 0D);
-        assertEquals(0.8D, worm.getDepthMultiplier(), 0D);
-        assertEquals(704D, worm.getBodyWavelength(), 0D);
-        assertEquals(18D, worm.getBodyDetailWavelength(), 0D);
-        assertEquals(0.82D, worm.getBodyDetailInfluence(), 0D);
-        assertEquals(0.75D, worm.getWidthVariation(), 0D);
-        assertEquals(0.65D, worm.getBankVariation(), 0D);
-        assertEquals(0.55D, worm.getDepthVariation(), 0D);
-        assertEquals(0.45D, worm.getRoofVariation(), 0D);
-        assertEquals(IrisRiverTerminalMode.SUPPRESS,
-                dimension.getRivers().getTerrain().getTerminalMode());
-        assertEquals(IrisRiverWaterMode.TERRACED, dimension.getRivers().getWater().getMode());
-        assertEquals(-48, dimension.getRivers().getWater().getFluidHeight());
-        assertEquals("minecraft:lava",
-                dimension.getRivers().getWater().getFluidPalette().getPalette().getFirst().getBlock());
-        assertEquals(Set.of("river/channel", "river/grotto"),
-                Set.copyOf(dimension.getRivers().getBiomes().getAllBiomeIds()));
-        assertEquals(IrisRiverCaveMode.FLOOD_CLOSED_COMPONENT,
-                dimension.getRivers().getCaves().getMode());
-        assertEquals(IrisRiverExistingFluidPolicy.ALLOW_SAME,
-                dimension.getRivers().getCaves().getExistingFluidPolicy());
-        IrisRiverDeepPools deepPools = dimension.getRivers().getCaves().getDeepPools();
-        assertTrue(deepPools.isEnabled());
-        assertEquals(0.4D, deepPools.getReach().getChance(), 0D);
-        assertEquals(0.1D, deepPools.getReach().getInfluence(), 0D);
-        assertEquals(896, deepPools.getMinimumSpacing());
-        assertEquals(2, deepPools.getMaximumPerReach());
-        assertEquals(-220, deepPools.getMinimumFluidY());
-        assertEquals(-112, deepPools.getMaximumFluidY());
-        assertEquals(24, deepPools.getSearchRadius());
-        assertEquals(18, deepPools.getSearchAttempts());
-        assertEquals(28, deepPools.getHorizontalRadius());
-        assertEquals(11, deepPools.getVerticalRadius());
-        assertEquals(5, deepPools.getDryHeadroom());
-        assertEquals(0.7D, deepPools.getShapeVariation(), 0D);
-        assertEquals(9D, deepPools.getWarpStrength(), 0D);
-        assertEquals(65536, deepPools.getMaximumVolume());
-        assertEquals("minecraft:lava", deepPools.getFluidPalette().getPalette().getFirst().getBlock());
+        IrisRiverHydrology rivers = dimension.getHydrology().getRivers();
+        assertTrue(rivers.isEnabled());
+        assertEquals(4096, rivers.getRouting().getTileSize());
+        assertEquals(32768, rivers.getRouting().getMaximumRouteLength());
+        assertEquals(3, rivers.getRouting().getMaximumOutletsPerTile());
+        assertEquals(640, rivers.getRouting().getBranching().getMinimumSurfaceCourseLength());
+        assertEquals(480, rivers.getRouting().getBranching().getMinimumUndergroundCourseLength());
+        assertEquals(new KList<>(IrisRiverInlandOutlet.SINKHOLE_GROTTO), rivers.getRouting().getInlandOutlets());
+        assertEquals(24D, rivers.getSurface().getChannel().getWidth().getMax(), 0D);
+        assertEquals(9D, rivers.getSurface().getChannel().getSurfaceInset().getMax(), 0D);
+        assertEquals(5, rivers.getSurface().getHydraulics().getWaterfallMinimumDrop());
+        assertEquals(768, rivers.getSurface().getSources().getMinimumSpacing());
+        assertEquals(5, rivers.getGeometry().getDrops().getCascadeRunPerBlock());
+        assertEquals(2.4D, rivers.getGeometry().getDrops().getCascadeExponent(), 0D);
+        assertEquals(3, rivers.getGeometry().getDrops().getMaximumCascadeStep());
+        assertEquals(0.6D, rivers.getGeometry().getDrops().getFlowWidthRatio(), 0D);
+        assertEquals(4, rivers.getGeometry().getDrops().getMaximumFlowDepth());
+        assertEquals(2.2D, rivers.getGeometry().getDrops().getBasinWidthRatio(), 0D);
+        assertEquals(11, rivers.getGeometry().getDrops().getMaximumBasinDepth());
+        assertEquals(224, rivers.getSurface().getRidgeTunnels().getMaximumLength());
+        assertEquals(-96D, rivers.getUnderground().getFluidLevel().getMin(), 0D);
+        assertEquals(896, rivers.getUnderground().getSources().getMinimumSpacing());
+        assertFalse(rivers.getUnderground().isConnectToExistingCaves());
+        assertEquals(40, rivers.getGrottos().getCoastal().getHorizontalRadius());
+        assertTrue(rivers.getGrottos().getInland().isEnabled());
+        assertTrue(rivers.getGrottos().getInland().isConnectSurfaceRivers());
+        assertEquals("underworld", rivers.getProfiles().getFirst().getId());
 
-        assertEquals(Boolean.FALSE, region.getRiverOverride().getAllowSources());
-        assertEquals(IrisRiverRoutingPolicy.AVOID, region.getRiverOverride().getRoutingPolicy());
-        assertEquals(Double.valueOf(0.75D), region.getRiverOverride().getWidthMultiplier());
-        assertNull(region.getRiverOverride().getChannelBiomes());
-        assertEquals(new KList<>("river/region-bank"), region.getRiverOverride().getBankBiomes());
+        IrisDeepFluidConfig configuredDeepFluid = dimension.getHydrology().getDeepFluids().getFirst();
+        assertEquals("deep_lava", configuredDeepFluid.getId());
+        assertEquals(0.3D, configuredDeepFluid.getDensity(), 0D);
+        assertEquals(896, configuredDeepFluid.getSpacing());
+        assertEquals(-220D, configuredDeepFluid.getHeight().getMin(), 0D);
+        assertEquals(36, configuredDeepFluid.getHorizontalRadius());
+        assertEquals(6, configuredDeepFluid.getChannelWidth());
+        assertFalse(configuredDeepFluid.isShortChannels());
 
-        assertEquals(IrisRiverRoutingPolicy.BLOCK, biome.getRiverOverride().getRoutingPolicy());
-        assertNull(biome.getRiverOverride().getChannelBiomes());
-        assertNotNull(biome.getRiverOverride().getFloodedCaveBiomes());
-        assertTrue(biome.getRiverOverride().getFloodedCaveBiomes().isEmpty());
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    public void resolvesRiverPoolsOnlyWhenRiversAreEnabled() {
-        IrisRiverBiomes dimensionBiomes = new IrisRiverBiomes()
-                .setChannel(new KList<>("dimension-channel"));
-        IrisRiverOverride regionOverride = new IrisRiverOverride()
-                .setBankBiomes(new KList<>("region-bank"));
-        IrisRiverOverride biomeOverride = new IrisRiverOverride()
-                .setMouthBiomes(new KList<>("biome-mouth"))
-                .setFloodedCaveBiomes(new KList<>("biome-grotto"));
-        IrisDimension dimension = new IrisDimension()
-                .setRegions(new KList<>("region"))
-                .setRivers(new IrisRiverNetwork()
-                        .setEnabled(true)
-                        .setTerrain(new IrisRiverTerrain()
-                                .setWorms(new KList<>(new IrisRiverWorm())))
-                        .setBiomes(dimensionBiomes));
-        IrisRegion region = new IrisRegion()
-                .setLandBiomes(new KList<>("natural"))
-                .setRiverOverride(regionOverride);
-        IrisBiome natural = biome("natural").setRiverOverride(biomeOverride);
-
-        IrisData data = mock(IrisData.class);
-        ResourceLoader<IrisRegion> regionLoader = mock(ResourceLoader.class);
-        ResourceLoader<IrisBiome> biomeLoader = mock(ResourceLoader.class);
-        when(data.getRegionLoader()).thenReturn(regionLoader);
-        when(data.getBiomeLoader()).thenReturn(biomeLoader);
-        when(regionLoader.load("region")).thenReturn(region);
-        when(biomeLoader.load("natural")).thenReturn(natural);
-        when(biomeLoader.load("dimension-channel")).thenReturn(biome("dimension-channel"));
-        when(biomeLoader.load("region-bank")).thenReturn(biome("region-bank"));
-        when(biomeLoader.load("biome-mouth")).thenReturn(biome("biome-mouth"));
-        when(biomeLoader.load("biome-grotto")).thenReturn(biome("biome-grotto"));
-
-        Set<String> enabledKeys = keys(dimension.getReachableBiomes(() -> data));
-        dimension.getRivers().setEnabled(false);
-        Set<String> disabledKeys = keys(dimension.getReachableBiomes(() -> data));
-
-        assertEquals(Set.of("natural", "dimension-channel", "region-bank", "biome-mouth", "biome-grotto"),
-                enabledKeys);
-        assertEquals(Set.of("natural"), disabledKeys);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    public void separatesNaturalAndRiverOnlyRegionBiomes() {
-        IrisRegion region = new IrisRegion()
-                .setLandBiomes(new KList<>("natural-parent"))
-                .setRiverOverride(new IrisRiverOverride()
-                        .setChannelBiomes(new KList<>("river-parent")));
-        IrisBiome naturalParent = biome("natural-parent").setChildren(new KList<>("natural-child"));
-        IrisBiome naturalChild = biome("natural-child");
-        IrisBiome riverParent = biome("river-parent").setChildren(new KList<>("river-child"));
-        IrisBiome riverChild = biome("river-child");
-
-        IrisData data = mock(IrisData.class);
-        ResourceLoader<IrisBiome> biomeLoader = mock(ResourceLoader.class);
-        when(data.getBiomeLoader()).thenReturn(biomeLoader);
-        when(biomeLoader.load("natural-parent")).thenReturn(naturalParent);
-        when(biomeLoader.load("natural-child")).thenReturn(naturalChild);
-        when(biomeLoader.load("river-parent")).thenReturn(riverParent);
-        when(biomeLoader.load("river-child")).thenReturn(riverChild);
-
-        assertEquals(Set.of("natural-parent"), Set.copyOf(region.getNaturalBiomeIds()));
-        assertEquals(Set.of("natural-parent", "river-parent"), Set.copyOf(region.getAllBiomeIds()));
-        assertEquals(Set.of("natural-parent", "natural-child"),
-                keys(region.getNaturalBiomes(() -> data)));
-        assertEquals(Set.of("natural-parent", "natural-child", "river-parent", "river-child"),
-                keys(region.getAllBiomes(() -> data)));
-    }
-
-    private static IrisBiome biome(String loadKey) {
-        IrisBiome biome = new IrisBiome();
-        biome.setLoadKey(loadKey);
-        return biome;
-    }
-
-    private static Set<String> keys(KList<IrisBiome> biomes) {
-        return biomes.stream().map(IrisBiome::getLoadKey).collect(Collectors.toSet());
+        assertEquals(IrisRiverPlacementMode.PREFERRED_HEADWATER, dimension.getRiverPolicy().getPlacement());
+        assertEquals(IrisRiverRoutingMode.PREFER, dimension.getRiverPolicy().getRouting());
+        assertFalse(dimension.getRiverPolicy().getOutletAdmission());
+        assertEquals(Set.of("river/surface", "river/shore"), dimension.getRiverPolicy().getAllBiomeIds());
+        assertEquals(IrisRiverPlacementMode.TRANSIT_ONLY, region.getRiverPolicy().getPlacement());
+        assertEquals(new KList<>("river/mouth"), region.getRiverPolicy().getMouthBiomes());
+        assertEquals(IrisRiverPlacementMode.REQUIRED_HEADWATER, biome.getRiverPolicy().getPlacement());
+        assertTrue(biome.getRiverPolicy().getFloodedCaveBiomes().isEmpty());
     }
 }

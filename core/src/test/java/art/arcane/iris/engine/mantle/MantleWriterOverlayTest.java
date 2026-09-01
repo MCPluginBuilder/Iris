@@ -1,8 +1,10 @@
 package art.arcane.iris.engine.mantle;
 
 import art.arcane.iris.core.link.Identifier;
-import art.arcane.iris.engine.river.cave.RiverCaveAction;
-import art.arcane.iris.engine.river.cave.RiverCaveHydrology;
+import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -19,6 +21,8 @@ import org.junit.Test;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -37,7 +41,8 @@ public class MantleWriterOverlayTest {
     private MatterSlice<PlatformBlockState> blockSlice;
     private MatterSlice<Identifier> identifierSlice;
     private MatterSlice<MatterCavern> cavernSlice;
-    private MatterSlice<RiverCaveHydrology> hydrologySlice;
+    private MatterSlice<HydrologyCaveCell> hydrologySlice;
+    private IrisDimension dimension;
 
     @Before
     @SuppressWarnings("unchecked")
@@ -51,6 +56,8 @@ public class MantleWriterOverlayTest {
         IrisPlatforms.bind(platform);
 
         EngineMantle engineMantle = mock(EngineMantle.class);
+        Engine engine = mock(Engine.class);
+        dimension = mock(IrisDimension.class);
         Mantle<Matter> mantle = mock(Mantle.class);
         chunk = mock(MantleChunk.class);
         matter = mock(Matter.class);
@@ -60,6 +67,8 @@ public class MantleWriterOverlayTest {
         hydrologySlice = mock(MatterSlice.class);
 
         when(mantle.getWorldHeight()).thenReturn(64);
+        when(engineMantle.getEngine()).thenReturn(engine);
+        when(engine.getDimension()).thenReturn(dimension);
         when(mantle.getChunk(0, 0)).thenReturn(chunk);
         when(chunk.use()).thenReturn(chunk);
         when(chunk.getOrCreate(0)).thenReturn(matter);
@@ -72,8 +81,9 @@ public class MantleWriterOverlayTest {
         when(matter.getSlice(Identifier.class)).thenReturn(identifierSlice);
         when(matter.getSlice(MatterCavern.class)).thenReturn(cavernSlice);
         doReturn(blockSlice).when(matter).slice(PlatformBlockState.class);
+        doReturn(identifierSlice).when(matter).slice(Identifier.class);
         doReturn(cavernSlice).when(matter).slice(MatterCavern.class);
-        doReturn(hydrologySlice).when(matter).getSlice(RiverCaveHydrology.class);
+        doReturn(hydrologySlice).when(matter).getSlice(HydrologyCaveCell.class);
 
         writer = new MantleWriter(engineMantle, mantle, 0, 0, 0, false);
     }
@@ -118,12 +128,51 @@ public class MantleWriterOverlayTest {
     }
 
     @Test
+    public void customBlockWritesBaseAndIdentifierTogether() {
+        PlatformBlockState base = mock(PlatformBlockState.class);
+        PlatformBlockState custom = customState(base);
+        Identifier identifier = Identifier.fromString("iris:custom_block");
+
+        writer.set(X, Y, Z, custom);
+
+        verify(blockSlice).set(X, Y, Z, base);
+        verify(identifierSlice).set(X, Y, Z, identifier);
+    }
+
+    @Test
+    public void protectedHydrologyRejectsBothPartsOfCustomBlock() {
+        PlatformBlockState base = mock(PlatformBlockState.class);
+        PlatformBlockState custom = customState(base);
+        when(matter.hasSlice(HydrologyCaveCell.class)).thenReturn(true);
+        when(hydrologySlice.get(X, Y, Z))
+                .thenReturn(HydrologyCaveCell.of(HydrologyCaveAction.SEAL_GUARD));
+
+        writer.set(X, Y, Z, custom);
+
+        verify(blockSlice, never()).set(X, Y, Z, base);
+        verify(identifierSlice, never()).set(anyInt(), anyInt(), anyInt(), any(Identifier.class));
+    }
+
+    @Test
+    public void bedrockAndWorldBoundsRejectBothPartsOfCustomBlock() {
+        PlatformBlockState base = mock(PlatformBlockState.class);
+        PlatformBlockState custom = customState(base);
+        when(dimension.isBedrock()).thenReturn(true);
+
+        writer.set(X, 0, Z, custom);
+        writer.set(X, 64, Z, custom);
+
+        verify(blockSlice, never()).set(anyInt(), anyInt(), anyInt(), any(PlatformBlockState.class));
+        verify(identifierSlice, never()).set(anyInt(), anyInt(), anyInt(), any(Identifier.class));
+    }
+
+    @Test
     public void protectedHydrologyRejectsLaterBlockAndCavernWrites() {
         PlatformBlockState replacement = mock(PlatformBlockState.class);
         MatterCavern cavern = new MatterCavern(true, "", (byte) 3);
-        when(matter.hasSlice(RiverCaveHydrology.class)).thenReturn(true);
+        when(matter.hasSlice(HydrologyCaveCell.class)).thenReturn(true);
         when(hydrologySlice.get(X, Y, Z))
-                .thenReturn(RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD));
+                .thenReturn(HydrologyCaveCell.of(HydrologyCaveAction.SEAL_GUARD));
 
         writer.setData(X, Y, Z, replacement);
         assertFalse(writer.carveDataIfAbsent(X, Y, Z, cavern));
@@ -138,12 +187,12 @@ public class MantleWriterOverlayTest {
     @Test
     public void hydrologyOverridesBaselineCarvedQueriesWithoutChangingIt() {
         MatterCavern baseline = new MatterCavern(true, "", (byte) 0);
-        when(matter.hasSlice(RiverCaveHydrology.class)).thenReturn(true);
+        when(matter.hasSlice(HydrologyCaveCell.class)).thenReturn(true);
         when(cavernSlice.get(X, Y, Z)).thenReturn(baseline);
         when(hydrologySlice.get(X, Y, Z))
-                .thenReturn(RiverCaveHydrology.of(RiverCaveAction.SEAL_GUARD));
+                .thenReturn(HydrologyCaveCell.of(HydrologyCaveAction.SEAL_GUARD));
         when(hydrologySlice.get(X, Y + 1, Z))
-                .thenReturn(RiverCaveHydrology.of(RiverCaveAction.DRY_AIR));
+                .thenReturn(HydrologyCaveCell.of(HydrologyCaveAction.DRY_AIR));
 
         assertFalse(writer.isCarved(X, Y, Z));
         assertTrue(writer.isCarved(X, Y + 1, Z));
@@ -152,5 +201,13 @@ public class MantleWriterOverlayTest {
         assertEquals(0, column[Y]);
         assertEquals(1, column[Y + 1]);
         assertEquals(0, baseline.getLiquid());
+    }
+
+    private static PlatformBlockState customState(PlatformBlockState base) {
+        PlatformBlockState custom = mock(PlatformBlockState.class);
+        when(custom.isCustom()).thenReturn(true);
+        when(custom.deferredPlacementKey()).thenReturn("iris:custom_block");
+        when(custom.placementBaseState()).thenReturn(base);
+        return custom;
     }
 }

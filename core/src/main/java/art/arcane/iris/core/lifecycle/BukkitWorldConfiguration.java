@@ -2,6 +2,7 @@ package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.WorldSlotKey;
+import art.arcane.iris.engine.IrisEngineMantle;
 import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
@@ -253,7 +254,9 @@ public final class BukkitWorldConfiguration {
         if (Files.isDirectory(worldRoot.resolve("iris"), LinkOption.NOFOLLOW_LINKS)) {
             return true;
         }
-        for (String directory : new String[]{"region", "entities", "poi", "mantle"}) {
+        for (String directory : new String[]{
+                "region", "entities", "poi", IrisEngineMantle.STORAGE_FOLDER_NAME
+        }) {
             if (hasEntries(worldRoot.resolve(directory))) {
                 return true;
             }

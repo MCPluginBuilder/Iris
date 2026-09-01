@@ -92,6 +92,7 @@ import static art.arcane.iris.util.common.misc.ServerProperties.BUKKIT_YML;
 @Accessors(fluent = true, chain = true)
 public class IrisCreator {
     private static final long WORLD_CREATE_TIMEOUT_SECONDS = 120L;
+    private static final long INITIAL_SPAWN_TIMEOUT_SECONDS = 600L;
     private static final long WORLD_ENTRY_TELEPORT_TIMEOUT_SECONDS = 60L;
     private static final long ROLLBACK_PHASE_TIMEOUT_SECONDS = 120L;
 
@@ -619,7 +620,7 @@ public class IrisCreator {
                 generator.getInitialSpawnReady(),
                 "Initial spawn preparation future");
         try {
-            initialSpawnReady.get(WORLD_CREATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            initialSpawnReady.get(INITIAL_SPAWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (TimeoutException failure) {
             throw new TimeoutException("Initial spawn preparation timed out for world \""
                     + worldName + "\".");

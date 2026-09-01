@@ -34,6 +34,7 @@ public class IrisObjectSurfaceSupportPlacementTest {
 
     private IrisData data;
     private Engine engine;
+    private IrisComplex complex;
 
     @Before
     public void bindPlatform() {
@@ -48,11 +49,12 @@ public class IrisObjectSurfaceSupportPlacementTest {
         @SuppressWarnings("unchecked")
         ProceduralStream<Double> heightStream = mock(ProceduralStream.class);
         when(heightStream.get(anyDouble(), anyDouble())).thenReturn((double) SURFACE_Y);
-        IrisComplex complex = mock(IrisComplex.class);
+        complex = mock(IrisComplex.class);
         when(complex.getHeightStream()).thenReturn(heightStream);
         engine = mock(Engine.class);
         when(engine.getHeight()).thenReturn(256);
         when(engine.getComplex()).thenReturn(complex);
+        when(engine.getDimension()).thenReturn(new IrisDimension());
         data = mock(IrisData.class);
         when(data.getEngine()).thenReturn(engine);
     }
@@ -100,6 +102,35 @@ public class IrisObjectSurfaceSupportPlacementTest {
         SurfacePlacer placer = new SurfacePlacer();
 
         assertTrue(place(placer, placement(ObjectPlaceMode.CENTER_HEIGHT), -1) >= 0);
+    }
+
+    @Test
+    public void automaticSurfaceObjectCannotOverlapRiverWater() {
+        when(complex.hasHydrologySurfaceFluid(0, 0)).thenReturn(true);
+        SurfacePlacer placer = new SurfacePlacer(engine);
+
+        assertEquals(-1, place(placer, placement(ObjectPlaceMode.CENTER_HEIGHT), -1));
+        assertTrue(placer.written().isEmpty());
+    }
+
+    @Test
+    public void automaticForcePlacementCannotOverlapRiverWater() {
+        when(complex.hasHydrologySurfaceFluid(0, 0)).thenReturn(true);
+        SurfacePlacer placer = new SurfacePlacer(engine);
+        IrisObjectPlacement placement = placement(ObjectPlaceMode.CENTER_HEIGHT);
+        placement.setForcePlace(true);
+
+        assertEquals(-1, place(placer, placement, -1));
+        assertTrue(placer.written().isEmpty());
+    }
+
+    @Test
+    public void explicitObjectPlacementRemainsAllowedInsideRiverWater() {
+        when(complex.hasHydrologySurfaceFluid(0, 0)).thenReturn(true);
+        SurfacePlacer placer = new SurfacePlacer(engine);
+
+        assertTrue(place(placer, placement(ObjectPlaceMode.CENTER_HEIGHT), SURFACE_Y) >= 0);
+        assertFalse(placer.written().isEmpty());
     }
 
     @Test

@@ -40,6 +40,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -91,13 +92,23 @@ public final class StubPlatform implements IrisPlatform {
     private static final class StubBlockState implements PlatformBlockState {
         private static final ConcurrentHashMap<String, StubBlockState> CACHE = new ConcurrentHashMap<>();
         private final String key;
+        private final String blockKey;
+        private final LinkedHashMap<String, String> properties;
 
-        private StubBlockState(String key) {
+        private StubBlockState(String key, ParsedState parsed) {
             this.key = key;
+            this.blockKey = parsed.blockKey();
+            this.properties = new LinkedHashMap<>(parsed.properties());
         }
 
         static StubBlockState of(String key) {
-            return CACHE.computeIfAbsent(key, StubBlockState::new);
+            StubBlockState cached = key == null ? null : CACHE.get(key);
+            return cached == null ? of(ParsedState.parse(key)) : cached;
+        }
+
+        static StubBlockState of(ParsedState parsed) {
+            String key = parsed.serialize();
+            return CACHE.computeIfAbsent(key, ignored -> new StubBlockState(key, parsed));
         }
 
         @Override
@@ -147,7 +158,7 @@ public final class StubPlatform implements IrisPlatform {
 
         @Override
         public boolean isWaterLogged() {
-            return false;
+            return "true".equals(properties.get("waterlogged"));
         }
 
         @Override
@@ -227,9 +238,14 @@ public final class StubPlatform implements IrisPlatform {
 
         @Override
         public PlatformBlockState withProperty(String name, String value) {
-            ParsedState parsed = ParsedState.parse(key);
-            parsed.properties().put(normalizeProperty(name), normalizeProperty(value));
-            return of(parsed.serialize());
+            String propertyName = normalizeProperty(name);
+            String propertyValue = normalizeProperty(value);
+            if (propertyValue.equals(properties.get(propertyName))) {
+                return this;
+            }
+            ParsedState parsed = parsed();
+            parsed.properties().put(propertyName, propertyValue);
+            return of(parsed);
         }
 
         @Override
@@ -238,8 +254,11 @@ public final class StubPlatform implements IrisPlatform {
         }
 
         private String blockKey() {
-            int properties = key.indexOf('[');
-            return properties >= 0 ? key.substring(0, properties) : key;
+            return blockKey;
+        }
+
+        private ParsedState parsed() {
+            return new ParsedState(blockKey, new LinkedHashMap<>(properties));
         }
     }
 
@@ -248,18 +267,33 @@ public final class StubPlatform implements IrisPlatform {
         if (state == null || rotation == null || !rotation.canRotate()) {
             return state;
         }
-        ParsedState parsed = ParsedState.parse(state.key());
+        ParsedState parsed = parsedState(state);
         Map<String, String> properties = parsed.properties();
         if (properties.containsKey("facing")) {
-            properties.put("facing", rotateFace(rotation, properties.get("facing"), spinX, spinY, spinZ));
+            String facing = properties.get("facing");
+            String rotated = rotateFace(rotation, facing, spinX, spinY, spinZ);
+            if (facing.equals(rotated)) {
+                return state;
+            }
+            properties.put("facing", rotated);
         } else if (properties.containsKey("rotation")) {
-            properties.put("rotation", rotateSegment(rotation, properties.get("rotation"), spinX, spinY, spinZ));
+            String segment = properties.get("rotation");
+            String rotated = rotateSegment(rotation, segment, spinX, spinY, spinZ);
+            if (segment.equals(rotated)) {
+                return state;
+            }
+            properties.put("rotation", rotated);
         } else if (properties.containsKey("axis")) {
-            properties.put("axis", rotateAxis(rotation, properties.get("axis"), spinX, spinY, spinZ));
-        } else {
-            rotateFaceProperties(rotation, properties, spinX, spinY, spinZ);
+            String axis = properties.get("axis");
+            String rotated = rotateAxis(rotation, axis, spinX, spinY, spinZ);
+            if (axis.equals(rotated)) {
+                return state;
+            }
+            properties.put("axis", rotated);
+        } else if (!rotateFaceProperties(rotation, properties, spinX, spinY, spinZ)) {
+            return state;
         }
-        return StubBlockState.of(parsed.serialize());
+        return StubBlockState.of(parsed);
     }
 
     private static PlatformBlockState mergeStates(PlatformBlockState base, PlatformBlockState update) {
@@ -269,13 +303,21 @@ public final class StubPlatform implements IrisPlatform {
         if (update == null) {
             return base;
         }
-        ParsedState parsedBase = ParsedState.parse(base.key());
-        ParsedState parsedUpdate = ParsedState.parse(update.key());
+        ParsedState parsedBase = parsedState(base);
+        ParsedState parsedUpdate = parsedState(update);
         if (!parsedBase.blockKey().equals(parsedUpdate.blockKey())) {
             return update;
         }
+        if (parsedUpdate.properties().isEmpty()) {
+            return base;
+        }
+        LinkedHashMap<String, String> original = new LinkedHashMap<>(parsedBase.properties());
         parsedBase.properties().putAll(parsedUpdate.properties());
-        return StubBlockState.of(parsedBase.serialize());
+        return original.equals(parsedBase.properties()) ? base : StubBlockState.of(parsedBase);
+    }
+
+    private static ParsedState parsedState(PlatformBlockState state) {
+        return state instanceof StubBlockState stub ? stub.parsed() : ParsedState.parse(state.key());
     }
 
     private static String rotateFace(IrisObjectRotation rotation, String face,
@@ -327,8 +369,8 @@ public final class StubPlatform implements IrisPlatform {
         return Integer.toString(Math.floorMod(rotatedSegment, 16));
     }
 
-    private static void rotateFaceProperties(IrisObjectRotation rotation, Map<String, String> properties,
-                                             int spinX, int spinY, int spinZ) {
+    private static boolean rotateFaceProperties(IrisObjectRotation rotation, Map<String, String> properties,
+                                                int spinX, int spinY, int spinZ) {
         List<String> faces = List.of("north", "east", "south", "west", "up", "down");
         int present = 0;
         for (String face : faces) {
@@ -337,7 +379,7 @@ public final class StubPlatform implements IrisPlatform {
             }
         }
         if (present < 2) {
-            return;
+            return false;
         }
         Map<String, String> rotated = new LinkedHashMap<>();
         for (String face : faces) {
@@ -346,13 +388,16 @@ public final class StubPlatform implements IrisPlatform {
                 rotated.put(rotateFace(rotation, face, spinX, spinY, spinZ), value);
             }
         }
+        boolean changed = false;
         for (String face : faces) {
             if (properties.containsKey(face)) {
                 String defaultValue = "true".equals(properties.get(face)) || "false".equals(properties.get(face))
                         ? "false" : "none";
-                properties.put(face, rotated.getOrDefault(face, defaultValue));
+                String value = rotated.getOrDefault(face, defaultValue);
+                changed |= !Objects.equals(properties.put(face, value), value);
             }
         }
+        return changed;
     }
 
     private static IrisBlockVector faceVector(String face) {
@@ -392,14 +437,19 @@ public final class StubPlatform implements IrisPlatform {
                 return new ParsedState(normalized, new LinkedHashMap<>());
             }
             LinkedHashMap<String, String> properties = new LinkedHashMap<>();
-            String body = normalized.substring(open + 1, normalized.length() - 1);
-            if (!body.isBlank()) {
-                for (String property : body.split(",")) {
-                    int separator = property.indexOf('=');
-                    if (separator > 0 && separator < property.length() - 1) {
-                        properties.put(property.substring(0, separator), property.substring(separator + 1));
-                    }
+            int end = normalized.length() - 1;
+            int start = open + 1;
+            while (start < end) {
+                int comma = normalized.indexOf(',', start);
+                int propertyEnd = comma < 0 || comma > end ? end : comma;
+                int separator = normalized.indexOf('=', start);
+                if (separator > start && separator < propertyEnd - 1) {
+                    properties.put(
+                            normalized.substring(start, separator),
+                            normalized.substring(separator + 1, propertyEnd)
+                    );
                 }
+                start = propertyEnd + 1;
             }
             return new ParsedState(normalized.substring(0, open), properties);
         }

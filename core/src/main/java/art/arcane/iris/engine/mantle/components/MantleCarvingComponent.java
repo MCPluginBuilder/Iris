@@ -472,12 +472,12 @@ public class MantleCarvingComponent extends IrisMantleComponent {
     }
 
     private void prefillProfileFieldSamples(int startX, int startZ, IrisComplex complex, BlendScratch blendScratch) {
-        fillFieldHeights(complex.getHeightStream(), startX, startZ, blendScratch.fieldSurfaceHeights);
-        fillFieldHeights(complex.getRiverWaterSurfaceStream(), startX, startZ, blendScratch.fieldFluidHeights);
+        fillFieldHeights(complex.getNaturalHeightStream(), startX, startZ, blendScratch.fieldSurfaceHeights);
+        Arrays.fill(blendScratch.fieldFluidHeights, complex.getFluidHeight());
         fillFieldFluidPresence(complex, startX, startZ, blendScratch.fieldSurfaceHeights,
                 blendScratch.fieldFluidHeights, blendScratch.fieldHasFluid);
         fillFieldObjects(complex.getRegionStream(), startX, startZ, blendScratch.fieldRegions);
-        fillFieldObjects(complex.getTrueBiomeStream(), startX, startZ, blendScratch.fieldSurfaceBiomes);
+        fillFieldObjects(complex.getNaturalTrueBiomeStream(), startX, startZ, blendScratch.fieldSurfaceBiomes);
         fillFieldObjects(complex.getCaveBiomeStream(), startX, startZ, blendScratch.fieldCaveBiomes);
     }
 
@@ -511,7 +511,7 @@ public class MantleCarvingComponent extends IrisMantleComponent {
             int worldX = startX + fieldX;
             for (int fieldZ = 0; fieldZ < FIELD_SIZE; fieldZ++) {
                 int fieldIndex = (fieldX * FIELD_SIZE) + fieldZ;
-                target[fieldIndex] = B.isFluid(complex.resolveSurfaceFluid(worldX, startZ + fieldZ))
+                target[fieldIndex] = B.isFluid(complex.getFluidStream().get(worldX, startZ + fieldZ))
                         && Math.round(surfaceHeights[fieldIndex]) < Math.round(fluidHeights[fieldIndex]);
             }
         }
@@ -545,36 +545,26 @@ public class MantleCarvingComponent extends IrisMantleComponent {
         return 1;
     }
 
-    private int[] prepareChunkSurfaceHeights(int chunkX, int chunkZ, ChunkContext context, int[] scratch) {
+    static int[] prepareChunkSurfaceHeights(int chunkX, int chunkZ, ChunkContext context, int[] scratch) {
         int[] surfaceHeights = scratch;
         int baseX = PowerOfTwoCoordinates.chunkToBlock(chunkX);
         int baseZ = PowerOfTwoCoordinates.chunkToBlock(chunkZ);
-        boolean useContextHeight = context != null
-                && context.getHeight() != null
-                && context.getX() == baseX
-                && context.getZ() == baseZ;
+        ProceduralStream<Double> naturalHeight = context.getComplex().getNaturalHeightStream();
         double[] cachedChunkHeights = null;
-        if (!useContextHeight && context != null) {
-            ProceduralStream<Double> heightStream = context.getComplex().getHeightStream();
-            if (heightStream instanceof ChunkFillableDoubleStream2D cachedHeightStream) {
-                cachedChunkHeights = BLEND_SCRATCH.get().chunkSurfaceHeightSamples;
-                cachedHeightStream.fillChunkDoubles(baseX, baseZ, cachedChunkHeights);
-            }
+        if (naturalHeight instanceof ChunkFillableDoubleStream2D cachedHeightStream) {
+            cachedChunkHeights = BLEND_SCRATCH.get().chunkSurfaceHeightSamples;
+            cachedHeightStream.fillChunkDoubles(baseX, baseZ, cachedChunkHeights);
         }
         for (int localX = 0; localX < CHUNK_SIZE; localX++) {
             int worldX = baseX + localX;
             for (int localZ = 0; localZ < CHUNK_SIZE; localZ++) {
                 int worldZ = baseZ + localZ;
                 int columnIndex = PowerOfTwoCoordinates.packLocal16(localX, localZ);
-                if (useContextHeight) {
-                    surfaceHeights[columnIndex] = context.getRoundedHeight(localX, localZ);
-                    continue;
-                }
                 if (cachedChunkHeights != null) {
                     surfaceHeights[columnIndex] = (int) Math.round(cachedChunkHeights[(localZ << 4) + localX]);
                     continue;
                 }
-                surfaceHeights[columnIndex] = getEngineMantle().getEngine().getHeight(worldX, worldZ);
+                surfaceHeights[columnIndex] = (int) Math.round(naturalHeight.getDouble(worldX, worldZ));
             }
         }
         return surfaceHeights;

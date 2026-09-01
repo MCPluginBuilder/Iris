@@ -6,8 +6,8 @@ import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBlockData;
 import art.arcane.iris.engine.object.IrisExpression;
-import art.arcane.iris.engine.object.IrisRiverNetwork;
-import art.arcane.iris.engine.object.IrisRiverOverride;
+import art.arcane.iris.engine.object.IrisHydrology;
+import art.arcane.iris.engine.object.IrisRiverPolicy;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.json.JSONArray;
@@ -53,91 +53,134 @@ public class IrisRiverSchemaTest {
     }
 
     @Test
-    public void riverNetworkSchemaExposesNestedNoiseLimitsModesAndBiomePools() {
-        JSONObject schema = new SchemaBuilder(IrisRiverNetwork.class, schemaData()).construct();
+    public void hydrologySchemaExposesTypedPhysicalHierarchy() {
+        JSONObject schema = new SchemaBuilder(IrisHydrology.class, schemaData()).construct();
         JSONObject definitions = schema.getJSONObject("definitions");
         JSONObject properties = schema.getJSONObject("properties");
-        JSONObject topology = referencedProperties(definitions, properties.getJSONObject("topology"));
-        JSONObject source = referencedProperties(definitions, topology.getJSONObject("source"));
-        JSONObject terrainDefinition = referencedDefinition(definitions, properties.getJSONObject("terrain"));
-        JSONObject terrain = terrainDefinition.getJSONObject("properties");
-        JSONObject worms = terrain.getJSONObject("worms");
-        JSONObject worm = referencedProperties(definitions, worms.getJSONObject("items"));
-        JSONObject water = referencedProperties(definitions, properties.getJSONObject("water"));
-        JSONObject biomes = referencedProperties(definitions, properties.getJSONObject("biomes"));
-        JSONObject caves = referencedProperties(definitions, properties.getJSONObject("caves"));
-        JSONObject deepPools = referencedProperties(definitions, caves.getJSONObject("deepPools"));
+        JSONObject rivers = referencedProperties(definitions, properties.getJSONObject("rivers"));
+        JSONObject routing = referencedProperties(definitions, rivers.getJSONObject("routing"));
+        JSONObject branching = referencedProperties(definitions, routing.getJSONObject("branching"));
+        JSONObject geometry = referencedProperties(definitions, rivers.getJSONObject("geometry"));
+        JSONObject drops = referencedProperties(definitions, geometry.getJSONObject("drops"));
+        JSONObject surface = referencedProperties(definitions, rivers.getJSONObject("surface"));
+        JSONObject sources = referencedProperties(definitions, surface.getJSONObject("sources"));
+        JSONObject channel = referencedProperties(definitions, surface.getJSONObject("channel"));
+        JSONObject hydraulics = referencedProperties(definitions, surface.getJSONObject("hydraulics"));
+        JSONObject ridgeTunnels = referencedProperties(definitions, surface.getJSONObject("ridgeTunnels"));
+        JSONObject mouths = referencedProperties(definitions, surface.getJSONObject("mouths"));
+        JSONObject underground = referencedProperties(definitions, rivers.getJSONObject("underground"));
+        JSONObject undergroundSources = referencedProperties(definitions, underground.getJSONObject("sources"));
+        JSONObject grottos = referencedProperties(definitions, rivers.getJSONObject("grottos"));
+        JSONObject coastal = referencedProperties(definitions, grottos.getJSONObject("coastal"));
+        JSONObject inland = referencedProperties(definitions, grottos.getJSONObject("inland"));
+        JSONObject profiles = rivers.getJSONObject("profiles");
+        JSONObject profile = referencedProperties(definitions, profiles.getJSONObject("items"));
+        JSONObject deepFluids = properties.getJSONObject("deepFluids");
+        JSONObject deepFluid = referencedProperties(definitions, deepFluids.getJSONObject("items"));
 
-        assertEquals("boolean", properties.getJSONObject("enabled").getString("type"));
-        assertEquals(64, topology.getJSONObject("cellSize").getInt("minimum"));
-        assertEquals(4096, topology.getJSONObject("cellSize").getInt("maximum"));
-        assertEquals(7, topology.getJSONObject("sinkSearchReaches").getInt("maximum"));
-        assertEquals(8, topology.getJSONObject("routingBasinCells").getInt("minimum"));
-        assertEquals(256, topology.getJSONObject("routingBasinCells").getInt("maximum"));
-        assertEquals(0D, source.getJSONObject("chance").getDouble("minimum"), 0D);
-        assertEquals(1D, source.getJSONObject("chance").getDouble("maximum"), 0D);
-        assertEquals(1D, terrain.getJSONObject("maxChannelWidth").getDouble("minimum"), 0D);
-        assertEquals(2048D, terrain.getJSONObject("maxChannelWidth").getDouble("maximum"), 0D);
-        assertEquals(0D, terrain.getJSONObject("maxBankWidth").getDouble("minimum"), 0D);
-        assertEquals(512D, terrain.getJSONObject("maxDepth").getDouble("maximum"), 0D);
-        assertTrue(arrayContains(terrainDefinition.getJSONArray("required"), "worms"));
-        assertEquals("array", worms.getString("type"));
-        assertEquals(1, worms.getInt("minItems"));
-        assertEquals(0.000001D, worm.getJSONObject("weight").getDouble("minimum"), 0D);
-        assertEquals(16384D, worm.getJSONObject("wavelength").getDouble("maximum"), 0D);
-        assertEquals(1D, worm.getJSONObject("tortuosity").getDouble("maximum"), 0D);
-        assertEquals(1024D, worm.getJSONObject("maxOffset").getDouble("maximum"), 0D);
-        assertEquals(64, worm.getJSONObject("segments").getInt("maximum"));
-        assertEquals(0.125D, worm.getJSONObject("widthMultiplier").getDouble("minimum"), 0D);
-        assertEquals(8D, worm.getJSONObject("bankMultiplier").getDouble("maximum"), 0D);
-        assertEquals(8D, worm.getJSONObject("depthMultiplier").getDouble("maximum"), 0D);
-        assertEquals(8D, worm.getJSONObject("bodyWavelength").getDouble("minimum"), 0D);
-        assertEquals(16384D, worm.getJSONObject("bodyDetailWavelength").getDouble("maximum"), 0D);
-        assertEquals(1D, worm.getJSONObject("bodyDetailInfluence").getDouble("maximum"), 0D);
-        assertEquals(0.875D, worm.getJSONObject("widthVariation").getDouble("maximum"), 0D);
-        assertEquals(0.875D, worm.getJSONObject("bankVariation").getDouble("maximum"), 0D);
-        assertEquals(0.875D, worm.getJSONObject("depthVariation").getDouble("maximum"), 0D);
-        assertEquals(0.875D, worm.getJSONObject("roofVariation").getDouble("maximum"), 0D);
-        assertEquals(8, worm.getJSONObject("branchCap").getInt("maximum"));
-        assertEquals(1D, worm.getJSONObject("branchDecay").getDouble("maximum"), 0D);
-        assertEquals(8D, worm.getJSONObject("confluenceMultiplier").getDouble("maximum"), 0D);
-        assertEquals(1D, worm.getJSONObject("childChance").getDouble("maximum"), 0D);
-        assertEquals(1D, worm.getJSONObject("branchChildChance").getDouble("maximum"), 0D);
-        assertEquals("array", worm.getJSONObject("children").getString("type"));
-        assertEquals(List.of("FIXED", "TERRACED"), enumValues(definitions, water.getJSONObject("mode")));
-        assertEquals(-2048, water.getJSONObject("fluidHeight").getInt("minimum"));
-        assertEquals(2048, water.getJSONObject("fluidHeight").getInt("maximum"));
-        assertTrue(water.has("fluidPalette"));
-        assertEquals(64D, terrain.getJSONObject("channelRadiusBonus").getDouble("maximum"), 0D);
-        assertEquals("array", biomes.getJSONObject("channel").getString("type"));
-        assertEquals("#/definitions/erzbiomes",
-                biomes.getJSONObject("channel").getJSONObject("items").getString("$ref"));
-        assertTrue(properties.has("terrain"));
-        assertTrue(properties.has("caves"));
-        assertEquals("boolean", deepPools.getJSONObject("enabled").getString("type"));
-        assertEquals(-2048, deepPools.getJSONObject("minimumFluidY").getInt("minimum"));
-        assertEquals(2048, deepPools.getJSONObject("maximumFluidY").getInt("maximum"));
-        assertEquals(128, deepPools.getJSONObject("horizontalRadius").getInt("maximum"));
-        assertEquals(64, deepPools.getJSONObject("verticalRadius").getInt("maximum"));
-        assertEquals(0.75D, deepPools.getJSONObject("shapeVariation").getDouble("maximum"), 0D);
-        assertEquals(64D, deepPools.getJSONObject("warpStrength").getDouble("maximum"), 0D);
-        assertTrue(deepPools.has("reach"));
-        assertTrue(deepPools.has("shapeStyle"));
-        assertTrue(deepPools.has("warpStyle"));
-        assertTrue(deepPools.has("fluidPalette"));
+        assertEquals(8192, routing.getJSONObject("tileSize").getInt("maximum"));
+        assertEquals(64, routing.getJSONObject("refinementSpacing").getInt("maximum"));
+        assertEquals(32768, routing.getJSONObject("maximumRouteLength").getInt("maximum"));
+        assertEquals(32768, branching.getJSONObject("minimumSurfaceCourseLength").getInt("maximum"));
+        assertEquals(32768, branching.getJSONObject("minimumUndergroundCourseLength").getInt("maximum"));
+        JSONObject meanders = referencedProperties(definitions, geometry.getJSONObject("meanders"));
+        assertEquals(10D, meanders.getJSONObject("maximumTurnDegrees").getDouble("minimum"), 0D);
+        assertEquals(List.of("SINKHOLE_GROTTO"),
+                enumValues(definitions, routing.getJSONObject("inlandOutlets").getJSONObject("items")));
+        assertEquals(64D, sources.getJSONObject("density").getDouble("maximum"), 0D);
+        assertEquals(64D, undergroundSources.getJSONObject("density").getDouble("maximum"), 0D);
+        assertEquals(8192, sources.getJSONObject("minimumSpacing").getInt("maximum"));
+        assertEquals(8192, undergroundSources.getJSONObject("minimumSpacing").getInt("maximum"));
+        assertEquals(16, drops.getJSONObject("cascadeRunPerBlock").getInt("maximum"));
+        assertEquals(6D, drops.getJSONObject("cascadeExponent").getDouble("maximum"), 0D);
+        assertEquals(4, drops.getJSONObject("maximumCascadeStep").getInt("maximum"));
+        assertEquals(1D, drops.getJSONObject("flowWidthRatio").getDouble("maximum"), 0D);
+        assertEquals(16, drops.getJSONObject("maximumFlowDepth").getInt("maximum"));
+        assertEquals(4D, drops.getJSONObject("basinWidthRatio").getDouble("maximum"), 0D);
+        assertEquals(32, drops.getJSONObject("maximumBasinDepth").getInt("maximum"));
+        assertSnippetBackedObjectReference(channel.getJSONObject("width"));
+        assertSnippetBackedObjectReference(channel.getJSONObject("depth"));
+        assertSnippetBackedObjectReference(channel.getJSONObject("surfaceInset"));
+        assertSnippetBackedObjectReference(channel.getJSONObject("terrainBlendWidth"));
+        assertEquals(64, channel.getJSONObject("maximumIncision").getInt("maximum"));
+        assertEquals(1D, channel.getJSONObject("shoreWidth").getDouble("minimum"), 0D);
+        assertEquals(2D, channel.getJSONObject("shoreWidth").getDouble("maximum"), 0D);
+        assertEquals(0, hydraulics.getJSONObject("riffleDrop").getInt("minimum"));
+        assertEquals(16, hydraulics.getJSONObject("riffleDrop").getInt("maximum"));
+        assertEquals(0, hydraulics.getJSONObject("maximumGradualDrop").getInt("minimum"));
+        assertEquals(1024, hydraulics.getJSONObject("maximumGradualLength").getInt("maximum"));
+        assertEquals(1, hydraulics.getJSONObject("waterfallMinimumDrop").getInt("minimum"));
+        assertEquals(128, hydraulics.getJSONObject("waterfallMinimumDrop").getInt("maximum"));
+        assertEquals(4096, ridgeTunnels.getJSONObject("maximumLength").getInt("maximum"));
+        assertEquals(0, mouths.getJSONObject("levelingDistance").getInt("minimum"));
+        assertEquals(64, mouths.getJSONObject("maximumOceanApron").getInt("maximum"));
+        assertSnippetBackedObjectReference(underground.getJSONObject("fluidLevel"));
+        assertSnippetBackedObjectReference(underground.getJSONObject("channelWidth"));
+        assertSnippetBackedObjectReference(underground.getJSONObject("headroom"));
+
+        assertGrottoBounds(coastal);
+        assertGrottoBounds(inland);
+        assertEquals("boolean", inland.getJSONObject("connectSurfaceRivers").getString("type"));
+        assertEquals("array", profiles.getString("type"));
+        assertEquals(1, profiles.getInt("minItems"));
+        assertTrue(profile.has("id"));
+        assertTrue(profile.has("fluidPalette"));
+
+        assertEquals("array", deepFluids.getString("type"));
+        assertTrue(deepFluid.has("id"));
+        assertTrue(deepFluid.has("fluidPalette"));
+        assertTrue(deepFluid.has("height"));
+        assertEquals(64D, deepFluid.getJSONObject("density").getDouble("maximum"), 0D);
+        assertEquals(8192, deepFluid.getJSONObject("spacing").getInt("maximum"));
+        assertEquals(16, deepFluid.getJSONObject("spacing").getInt("minimum"));
+        assertEquals(128, deepFluid.getJSONObject("horizontalRadius").getInt("maximum"));
+        assertEquals(2, deepFluid.getJSONObject("horizontalRadius").getInt("minimum"));
+        assertEquals(64, deepFluid.getJSONObject("verticalRadius").getInt("maximum"));
+        assertEquals(2, deepFluid.getJSONObject("verticalRadius").getInt("minimum"));
+        assertEquals(32, deepFluid.getJSONObject("channelWidth").getInt("maximum"));
+        assertEquals(32, deepFluid.getJSONObject("depth").getInt("maximum"));
+        assertEquals(63, deepFluid.getJSONObject("headroom").getInt("maximum"));
     }
 
     @Test
-    public void overrideSchemaKeepsEveryFieldOptionalAndTyped() {
-        JSONObject schema = new SchemaBuilder(IrisRiverOverride.class, schemaData()).construct();
+    public void riverPolicySchemaKeepsEveryOverlayOptionalAndTyped() {
+        JSONObject schema = new SchemaBuilder(IrisRiverPolicy.class, schemaData()).construct();
+        JSONObject definitions = schema.getJSONObject("definitions");
         JSONObject properties = schema.getJSONObject("properties");
 
         assertTrue(!schema.has("required") || schema.getJSONArray("required").length() == 0);
-        assertEquals("boolean", properties.getJSONObject("allowSources").getString("type"));
-        assertEquals("number", properties.getJSONObject("routingCostMultiplier").getString("type"));
-        assertEquals("array", properties.getJSONObject("channelBiomes").getString("type"));
+        assertEquals(List.of(
+                        "DISABLED",
+                        "TRANSIT_ONLY",
+                        "NATURAL",
+                        "PREFERRED_HEADWATER",
+                        "REQUIRED_HEADWATER"
+                ),
+                enumValues(definitions, properties.getJSONObject("placement")));
+        assertEquals(List.of("BLOCK", "AVOID", "ALLOW", "PREFER"),
+                enumValues(definitions, properties.getJSONObject("routing")));
+        assertEquals("boolean", properties.getJSONObject("outletAdmission").getString("type"));
+        assertEquals("array", properties.getJSONObject("profiles").getString("type"));
+        assertEquals("array", properties.getJSONObject("surfaceBiomes").getString("type"));
+        assertEquals("array", properties.getJSONObject("mouthBiomes").getString("type"));
+        assertEquals("array", properties.getJSONObject("shoreBiomes").getString("type"));
+        assertEquals("array", properties.getJSONObject("dryBiomes").getString("type"));
+        assertEquals("array", properties.getJSONObject("floodedCaveBiomes").getString("type"));
+        assertEquals(16D, properties.getJSONObject("widthMultiplier").getDouble("maximum"), 0D);
+        assertEquals(0D, properties.getJSONObject("incisionMultiplier").getDouble("minimum"), 0D);
+        assertEquals(64D, properties.getJSONObject("routingMultiplier").getDouble("maximum"), 0D);
         assertEquals("#/definitions/erzbiomes",
-                properties.getJSONObject("floodedCaveBiomes").getJSONObject("items").getString("$ref"));
+                properties.getJSONObject("shoreBiomes").getJSONObject("items").getString("$ref"));
+    }
+
+    private static void assertGrottoBounds(JSONObject grotto) {
+        assertEquals(1, grotto.getJSONObject("horizontalRadius").getInt("minimum"));
+        assertEquals(1, grotto.getJSONObject("verticalRadius").getInt("minimum"));
+        assertEquals(128, grotto.getJSONObject("horizontalRadius").getInt("maximum"));
+        assertEquals(64, grotto.getJSONObject("verticalRadius").getInt("maximum"));
+        assertEquals(63, grotto.getJSONObject("headroom").getInt("maximum"));
+        assertEquals(1, grotto.getJSONObject("maximumVolume").getInt("minimum"));
+        assertEquals(1048576, grotto.getJSONObject("maximumVolume").getInt("maximum"));
     }
 
     @SuppressWarnings("unchecked")
@@ -152,7 +195,7 @@ public class IrisRiverSchemaTest {
         when(data.getBlockLoader()).thenReturn(blockLoader);
         when(data.getLoaders()).thenReturn(loaders);
         when(data.getPossibleSnippets(anyString())).thenReturn(new KList<>());
-        when(biomeLoader.getPossibleKeys()).thenReturn(new String[]{"river/channel"});
+        when(biomeLoader.getPossibleKeys()).thenReturn(new String[]{"river/surface"});
         when(biomeLoader.getFolderName()).thenReturn("biomes");
         when(biomeLoader.getResourceTypeName()).thenReturn("Biome");
         when(blockLoader.getPossibleKeys()).thenReturn(new String[0]);
@@ -163,29 +206,33 @@ public class IrisRiverSchemaTest {
     }
 
     private static JSONObject referencedProperties(JSONObject definitions, JSONObject reference) {
-        return referencedDefinition(definitions, reference).getJSONObject("properties");
-    }
-
-    private static JSONObject referencedDefinition(JSONObject definitions, JSONObject reference) {
         String key = reference.getString("$ref").substring("#/definitions/".length());
-        return definitions.getJSONObject(key);
+        return definitions.getJSONObject(key).getJSONObject("properties");
     }
 
-    private static boolean arrayContains(JSONArray values, String expected) {
-        for (int index = 0; index < values.length(); index++) {
-            if (expected.equals(values.getString(index))) {
-                return true;
+    private static void assertSnippetBackedObjectReference(JSONObject property) {
+        JSONArray variants = property.getJSONArray("anyOf");
+        boolean hasObjectReference = false;
+        boolean hasSnippetReference = false;
+        for (int index = 0; index < variants.length(); index++) {
+            JSONObject variant = variants.getJSONObject(index);
+            if ("object".equals(variant.getString("type")) && variant.has("$ref")) {
+                hasObjectReference = true;
+            }
+            if ("string".equals(variant.getString("type")) && variant.has("$ref")) {
+                hasSnippetReference = true;
             }
         }
-        return false;
+        assertTrue(hasObjectReference);
+        assertTrue(hasSnippetReference);
     }
 
     private static List<String> enumValues(JSONObject definitions, JSONObject reference) {
         String key = reference.getString("$ref").substring("#/definitions/".length());
-        JSONArray values = definitions.getJSONObject(key).getJSONArray("oneOf");
+        JSONArray values = definitions.getJSONObject(key).getJSONArray("enum");
         List<String> names = new ArrayList<>(values.length());
         for (int index = 0; index < values.length(); index++) {
-            names.add(values.getJSONObject(index).getString("const"));
+            names.add(values.getString(index));
         }
         return names;
     }

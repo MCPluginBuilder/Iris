@@ -23,6 +23,8 @@ import art.arcane.iris.engine.framework.EngineAssignedActuator;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.UpperDimensionContext;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisOreGenerator;
@@ -117,7 +119,15 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
             }
 
             int topY = Math.min(hf, chunkHeight - 1);
-            PlatformBlockState fluid = complex.resolveSurfaceFluid(realX, realZ);
+            HydrologyColumnSample hydrology = complex.getHydrologyRuntime() == null
+                    ? null
+                    : complex.getHydrologyRuntime().sample(realX, realZ).orElse(null);
+            HydrologyColumnLayer hydrologyFluid = hydrology == null
+                    ? null
+                    : hydrology.primarySurfaceFluidLayer().orElse(null);
+            PlatformBlockState fluid = hydrologyFluid == null
+                    ? complex.resolveSurfaceFluid(realX, realZ)
+                    : complex.resolveHydrologyFluid(hydrologyFluid.profileKey(), realX, realZ);
             PlatformBlockState rock = rockCache.get(xf, zf);
             PlatformBlockState mappedSurfaceBlock = complex.getImageMapRuntime().sampleSurfaceBlock(realX, realZ);
             KList<IrisOreGenerator> biomeSurfaceOres = hideOres ? null : biome.getSurfaceOreGenerators();
@@ -159,15 +169,15 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
 
                 if (i > he && i <= hf) {
                     int fdepth = hf - i;
-                    if (fblocks == null) {
+                    if (hydrologyFluid == null && fblocks == null) {
                         fblocks = biome.generateSeaLayers(realX, realZ, localRng, hf - he, data);
                     }
-
-                    if (fblocks.hasIndex(fdepth)) {
-                        h.setRaw(xf, i, zf, fblocks.get(fdepth));
-                    } else {
-                        h.setRaw(xf, i, zf, fluid);
-                    }
+                    h.setRaw(xf, i, zf, HydrologyFluidLayerSelector.select(
+                            fblocks,
+                            fdepth,
+                            fluid,
+                            hydrologyFluid != null
+                    ));
                     continue;
                 }
 

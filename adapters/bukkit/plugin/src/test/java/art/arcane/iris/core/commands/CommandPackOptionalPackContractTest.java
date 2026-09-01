@@ -1,10 +1,12 @@
 package art.arcane.iris.core.commands;
 
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.volmlib.util.director.compat.DirectorAnnotationCompatibility;
 import art.arcane.volmlib.util.director.runtime.DirectorNodeDescriptor;
 import art.arcane.volmlib.util.director.runtime.DirectorParameterDescriptor;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
@@ -52,8 +54,23 @@ public class CommandPackOptionalPackContractTest {
         assertFalse(CommandPack.wantsAllPacks("overworld"));
     }
 
-    private static java.lang.reflect.Method findMethod(String name) {
-        for (java.lang.reflect.Method method : CommandPack.class.getDeclaredMethods()) {
+    @Test
+    public void packageCommandIsOwnedByPackNamespace() throws Exception {
+        Method method = CommandPack.class.getDeclaredMethod(
+                "pkg",
+                IrisDimension.class,
+                boolean.class,
+                boolean.class
+        );
+        DirectorNodeDescriptor descriptor = DirectorAnnotationCompatibility.fromMethod(method).orElseThrow();
+        assertTrue(descriptor.getAliases().contains("package"));
+        for (Method studioMethod : CommandStudio.class.getDeclaredMethods()) {
+            assertFalse("Studio must not retain the package command", studioMethod.getName().equals("pkg"));
+        }
+    }
+
+    private static Method findMethod(String name) {
+        for (Method method : CommandPack.class.getDeclaredMethods()) {
             if (method.getName().equals(name)) {
                 return method;
             }
