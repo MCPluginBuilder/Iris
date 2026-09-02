@@ -70,13 +70,13 @@ public record HydrologyColumnLayer(
         return surfaceBiomeKey;
     }
 
+    /** Every owned channel water column is published so steps between stations receive fluid updates. */
     public boolean publishesSurfaceFluid() {
         return feature.type().isSurface()
                 && !oceanApron
                 && channel
                 && fluidOwned
                 && (terrainOwned || fallingFluid)
-                && (feature.type().isDrop() || fallingFluid || receivingPool)
                 && fluidHeadY > bedY;
     }
 

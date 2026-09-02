@@ -284,7 +284,7 @@ public class HydrologyTileCacheTest {
                 63,
                 new HydrologyPlannerSettings.Routing(64, 16, 4, 128, 96,
                         new HydrologyPlannerSettings.Branching(16, 8), 0.5D, 12D, 0.5D, 0.1D),
-                new HydrologyPlannerSettings.Surface(true, surfaceSources, 4, 8, 2, 3, 4, 8, 20, 1.5D, 2, 4, true, 96, 8, HydrologyPlannerSettings.Banks.defaults()),
+                new HydrologyPlannerSettings.Surface(true, surfaceSources, 4, 8, 2, 3, 4, 8, 20, 1.5D, 2, 4, true, 96, 8, tileBoundedBanks()),
                 new HydrologyPlannerSettings.Hydraulics(8, 16, 1, 2, 8, 3),
                 new HydrologyPlannerSettings.Underground(false, disabled, -32, 32, 2, 4, 1, 2, 3, 4, false),
                 new HydrologyPlannerSettings.Outlets(
@@ -300,6 +300,11 @@ public class HydrologyTileCacheTest {
                 HydrologyPlannerSettings.Geometry.defaults(),
                 List.of()
         );
+    }
+
+    // Small-tile settings need a blend envelope that fits inside the bounded cross-tile admission period.
+    private static HydrologyPlannerSettings.Banks tileBoundedBanks() {
+        return new HydrologyPlannerSettings.Banks(1, 1, 3D, 4, 4, 0.25D, 16, 2, 6, 1.6D, true);
     }
 
     private HydrologyTerrainSample featureTerrain(int x, int z) {

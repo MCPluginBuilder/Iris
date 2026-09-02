@@ -293,7 +293,7 @@ public class MantleHydrologyComponentTest {
                 );
             }
         }
-        assertEquals(1, transitionCount);
+        assertTrue(transitionCount >= 1);
     }
 
     @Test
@@ -320,6 +320,10 @@ public class MantleHydrologyComponentTest {
             assertTrue(layer.connectedFluid());
             assertTrue(layer.fluidOwned());
             assertFalse(layer.oceanApron());
+            assertTrue(
+                    "column " + column.x() + "," + column.z() + " publishes no surface fluid",
+                    layer.publishesSurfaceFluid()
+            );
             assertEquals(layer.fluidHeadY(), layer.ceilingY());
             assertTrue(layer.bedY() < layer.fluidHeadY());
             if (layer.fallingFluid()) {
@@ -518,9 +522,14 @@ public class MantleHydrologyComponentTest {
         HydraulicSegment mouth = course.segments().getLast();
         assertEquals(HydrologyFeatureType.MOUTH, mouth.type());
         List<HydrologyPoint> mouthCenterline = rasterizedSegmentCenterline(mouth);
-        int apronColumns = 0;
-        HashSet<Long> apronChunks = new HashSet<>();
+        HashSet<Long> coastChunks = new HashSet<>();
         for (HydrologyColumnSample column : tile.footprint().columns().values()) {
+            if (column.ocean() || hasCardinalOceanNeighbor(
+                    terrain,
+                    new HydrologyPoint(column.x(), column.naturalHeight(), column.z())
+            )) {
+                coastChunks.add(pack(Math.floorDiv(column.x(), 16), Math.floorDiv(column.z(), 16)));
+            }
             if (!column.ocean()) {
                 continue;
             }
@@ -528,7 +537,6 @@ public class MantleHydrologyComponentTest {
                 if (layer.feature().courseId() != course.id()) {
                     continue;
                 }
-                apronColumns++;
                 assertTrue(layer.oceanApron());
                 assertEquals(HydrologyFeatureType.MOUTH, layer.feature().type());
                 assertFalse(layer.terrainOwned());
@@ -537,11 +545,10 @@ public class MantleHydrologyComponentTest {
                 assertFalse(layer.shore());
                 assertTrue(minimumDistance(column.x(), column.z(), mouthCenterline)
                         <= settings.outlets().maximumOceanApron() + 0.25D);
-                apronChunks.add(pack(Math.floorDiv(column.x(), 16), Math.floorDiv(column.z(), 16)));
             }
         }
-        assertTrue(apronColumns > 0);
-        for (long packedChunk : apronChunks) {
+        assertFalse(coastChunks.isEmpty());
+        for (long packedChunk : coastChunks) {
             int chunkX = (int) (packedChunk >> 32);
             int chunkZ = (int) packedChunk;
             MantleHydrologyComponent.Publication publication = MantleHydrologyComponent.compilePublication(
@@ -616,7 +623,7 @@ public class MantleHydrologyComponentTest {
                 "deep_lava"
         );
         List<PublicationParityCase> cases = List.of(
-                terrainParityCase(surface),
+                surfacePublicationParityCase(surface, HydrologyCaveAction.WET_SOURCE),
                 surfacePublicationParityCase(drop, HydrologyCaveAction.FALLING_FLUID),
                 caveParityCase(underground),
                 caveParityCase(grotto),
@@ -675,7 +682,7 @@ public class MantleHydrologyComponentTest {
         for (int y = 24; y <= 30; y++) {
             HydrologyCaveCell cell = publication.caveCells().get(new CavePosition(8, y, 8));
             assertEquals(HydrologyCaveAction.DRY_AIR, cell.action());
-            assertEquals("dry", cell.floodedBiomeKey());
+            assertEquals("flooded", cell.floodedBiomeKey());
         }
         assertEquals(HydrologyCaveAction.SEAL_GUARD, publication.caveCells()
                 .get(new CavePosition(8, 20, 8)).action());

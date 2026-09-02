@@ -325,11 +325,8 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
                 throw new IllegalStateException("Accepted cave layer is absent from its containment plan at "
                         + position + ".");
             }
-            String biomeKey = action == HydrologyCaveAction.DRY_AIR
-                    ? layer.floodedCaveBiomeKey()
-                    : layer.floodedCaveBiomeKey();
             PlannedCell candidate = new PlannedCell(
-                    new HydrologyCaveCell(action, layer.profileKey(), biomeKey),
+                    new HydrologyCaveCell(action, layer.profileKey(), layer.floodedCaveBiomeKey()),
                     layer.feature().courseId()
             );
             mergeCaveCell(caveCells, position, candidate);

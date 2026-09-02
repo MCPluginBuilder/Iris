@@ -78,6 +78,7 @@ public final class ErosionFieldCompiler {
                 }
             }
         }
+        int oceanStart = oceanStart(centerline, valley, terminal);
         Long2ObjectOpenHashMap<SurfaceColumn> columns = new Long2ObjectOpenHashMap<>(nearest.size());
         LongArrayList wetKeys = new LongArrayList();
         for (long key : nearest.keySet()) {
@@ -95,7 +96,8 @@ public final class ErosionFieldCompiler {
             if (!SurfaceCellAdmission.writable(terrain, seaLevel)) {
                 if (terrain != null && wet && terminal == SurfaceTerminal.OCEAN_MOUTH
                         && station >= valley.exposedStations() - 1
-                        && station - valley.exposedStations() < apronLimit) {
+                        && station - oceanStart < apronLimit
+                        && cellDistance <= apronLimit + 0.25D) {
                     columns.put(key, new SurfaceColumn(
                             cellX, cellZ, terrain, station, SurfaceRole.CHANNEL, terrain.naturalHeight(), seaLevel, true));
                 }
@@ -133,7 +135,32 @@ public final class ErosionFieldCompiler {
             columns.put(key, new SurfaceColumn(cellX, cellZ, terrain, station, SurfaceRole.BANK, height, height, false));
         }
         int uncontained = contain(columns, wetKeys, freeboard);
+        connectSteps(columns, wetKeys);
         return new ErosionField(columns, uncontained);
+    }
+
+    /**
+     * Where the head steps down between neighbouring wet cells, the upper bed is lowered so its water
+     * column reaches the lower head; the water stays one connected body across every step.
+     */
+    private static void connectSteps(Long2ObjectOpenHashMap<SurfaceColumn> columns, LongArrayList wetKeys) {
+        for (int index = 0; index < wetKeys.size(); index++) {
+            long key = wetKeys.getLong(index);
+            SurfaceColumn wet = columns.get(key);
+            int bed = wet.height();
+            for (int[] offset : CARDINALS) {
+                SurfaceColumn neighbour = columns.get(RiverFootprint.pack(wet.x() + offset[0], wet.z() + offset[1]));
+                if (neighbour == null || neighbour.role() != SurfaceRole.CHANNEL || neighbour.apron()) {
+                    continue;
+                }
+                if (neighbour.headY() < wet.headY()) {
+                    bed = Math.min(bed, neighbour.headY() - 1);
+                }
+            }
+            if (bed < wet.height()) {
+                columns.put(key, wet.withBed(bed));
+            }
+        }
     }
 
     /**
@@ -181,6 +208,21 @@ public final class ErosionFieldCompiler {
             }
         }
         return uncontained;
+    }
+
+    /** First mouth station whose center is ocean; the apron is measured from there, not from the mouth segment start. */
+    private int oceanStart(SurfaceCenterline centerline, ValleyProfile valley, SurfaceTerminal terminal) {
+        int count = centerline.size();
+        if (terminal != SurfaceTerminal.OCEAN_MOUTH) {
+            return count;
+        }
+        for (int station = Math.max(0, valley.exposedStations() - 1); station < count; station++) {
+            HydrologyTerrainSample center = sampler.sample(centerline.x()[station], centerline.z()[station]);
+            if (!SurfaceCellAdmission.writable(center, seaLevel)) {
+                return station;
+            }
+        }
+        return count;
     }
 
     private boolean[] basins(ValleyProfile valley, ChannelProfile channel, int count) {

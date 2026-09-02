@@ -262,4 +262,34 @@ public class ErosionFieldCompilerTest {
         assertTrue(low.height() >= center.headY() + 1);
         assertEquals(0, compiled.field().uncontainedWetCells());
     }
+
+    @Test
+    public void oceanApronStartsAtTheFirstOceanStationAndStopsAtTheLimit() {
+        HydrologyTerrainSampler sampler = (int x, int z) -> x >= 200
+                ? HydrologyTerrainSample.ocean(SEA_LEVEL - 4, "sea")
+                : HydrologyTerrainSample.openLand(SEA_LEVEL + 3, 0D, "land");
+        HydrologyPlannerSettings.Surface surface = zeroRoughnessSurface();
+        List<HydrologyPoint> path = List.of(new HydrologyPoint(0, 0, 0), new HydrologyPoint(259, 0, 0));
+        SurfaceCenterline centerline = SurfaceCenterline.densify(path);
+        ChannelProfile channel = new ChannelProfileBuilder(surface, sampler, CONSTANT_GEOMETRY)
+                .build(centerline, "water", true);
+        ValleyProfile valley = new ValleyProfileSolver(surface, sampler, SEA_LEVEL, 64)
+                .solve(centerline, channel, SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
+        assertNull(valley.rejection());
+
+        ErosionField field = new ErosionFieldCompiler(surface, sampler, SEA_LEVEL)
+                .compile(99L, centerline, channel, valley, SurfaceTerminal.OCEAN_MOUTH, 3);
+
+        int firstApron = Integer.MAX_VALUE;
+        int lastApron = Integer.MIN_VALUE;
+        for (SurfaceColumn column : field.columns().values()) {
+            if (column.apron()) {
+                firstApron = Math.min(firstApron, column.x());
+                lastApron = Math.max(lastApron, column.x());
+                assertEquals(column.terrain().naturalHeight(), column.height());
+            }
+        }
+        assertEquals(200, firstApron);
+        assertEquals(202, lastApron);
+    }
 }

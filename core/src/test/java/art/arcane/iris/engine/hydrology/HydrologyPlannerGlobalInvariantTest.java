@@ -482,10 +482,10 @@ public class HydrologyPlannerGlobalInvariantTest {
                 assertTrue(segment.drop() > 0);
                 assertFalse(segment.fallingFluid());
                 assertTrue(segment.width() >= 1);
-                assertTrue(hasChannelLayer(tile, segment.start(), segment.id()));
+                assertTrue(hasCourseChannelLayer(tile, segment.start(), course.id()));
                 assertTrue(
                         segment + " column=" + tile.columnAt(segment.end().x(), segment.end().z()),
-                        hasTransitionLayer(tile, segment.end(), segment.id(), false)
+                        hasChannelHead(tile, segment.end(), course.id(), segment.downstreamHeadY())
                 );
                 assertGradedCenterline(segment, 2);
             }
@@ -894,6 +894,26 @@ public class HydrologyPlannerGlobalInvariantTest {
         for (HydrologyColumnLayer layer : column.layers()) {
             if (layer.feature().segmentId() == segmentId
                     && (falling ? layer.fallingFluid() : layer.receivingPool())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasCourseChannelLayer(HydrologyTile tile, HydrologyPoint point, long courseId) {
+        HydrologyColumnSample column = tile.columnAt(point.x(), point.z()).orElseThrow();
+        for (HydrologyColumnLayer layer : column.layers()) {
+            if (layer.feature().courseId() == courseId && layer.channel()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasChannelHead(HydrologyTile tile, HydrologyPoint point, long courseId, int head) {
+        HydrologyColumnSample column = tile.columnAt(point.x(), point.z()).orElseThrow();
+        for (HydrologyColumnLayer layer : column.layers()) {
+            if (layer.feature().courseId() == courseId && layer.channel() && layer.fluidHeadY() == head) {
                 return true;
             }
         }

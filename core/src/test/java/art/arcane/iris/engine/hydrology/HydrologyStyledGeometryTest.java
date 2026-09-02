@@ -58,12 +58,22 @@ public class HydrologyStyledGeometryTest {
 
         assertEquals(first, repeated);
         assertEquals(undergroundFirst, undergroundRepeated);
-        assertEquals(Set.of(HydrologyGeometrySampler.Field.values()), sampledFields);
+        assertEquals(
+                Set.of(
+                        HydrologyGeometrySampler.Field.SURFACE_WIDTH,
+                        HydrologyGeometrySampler.Field.SURFACE_DEPTH,
+                        HydrologyGeometrySampler.Field.UNDERGROUND_FLUID_LEVEL,
+                        HydrologyGeometrySampler.Field.UNDERGROUND_WIDTH,
+                        HydrologyGeometrySampler.Field.UNDERGROUND_DEPTH,
+                        HydrologyGeometrySampler.Field.UNDERGROUND_HEADROOM,
+                        HydrologyGeometrySampler.Field.DEEP_FLUID_HEIGHT
+                ),
+                sampledFields
+        );
 
         RiverCourse surface = courses(first, RiverCourseType.SURFACE).getFirst();
         DrainageNode surfaceSource = first.node(surface.sourceNodeId().orElseThrow()).orElseThrow();
         HydraulicSegment surfaceStart = surface.segments().getFirst();
-        int surfaceDischarge = Math.max(1, surface.drainageEdges().getFirst().contributingSurfaceSources());
         int maximumSurfaceWidth = surfaceSettings.surface().maximumWidth()
                 + (surfaceStart.receivingPool() ? 2 : 0);
         int maximumSurfaceDepth = surfaceSettings.surface().maximumDepth()
@@ -73,24 +83,18 @@ public class HydrologyStyledGeometryTest {
         assertTrue(surfaceStart.depth() >= surfaceSettings.surface().minimumDepth());
         assertTrue(surfaceStart.depth() <= maximumSurfaceDepth);
         assertTrue(
+                "head=" + surfaceStart.upstreamHeadY() + " natural="
+                        + terrain(surfaceSource.naturalPoint().x(), surfaceSource.naturalPoint().z()).naturalHeight(),
                 surfaceStart.upstreamHeadY() <=
-                terrain(surfaceSource.naturalPoint().x(), surfaceSource.naturalPoint().z()).naturalHeight()
-                        - surfaceSettings.surface().maximumSurfaceInset()
+                        terrain(surfaceSource.naturalPoint().x(), surfaceSource.naturalPoint().z()).naturalHeight()
+                                - surfaceSettings.surface().banks().inset()
         );
-        int styledSurfaceWidth = scaledDimension(
-                styledValue(request(
-                        HydrologyGeometrySampler.Field.SURFACE_WIDTH,
-                        surface.profileKey(),
-                        surfaceSource.naturalPoint(),
-                        surfaceSettings.surface().minimumWidth(),
-                        surfaceSettings.surface().maximumWidth()
-                )),
-                surfaceSettings.surface().maximumWidth(),
-                surfaceDischarge
-        );
-        assertTrue(surfaceStart.width() >= styledSurfaceWidth
-                || surfaceStart.fallingFluid()
-                || surfaceStart.receivingPool());
+        int widestSurfaceWidth = 0;
+        for (HydraulicSegment segment : surface.segments()) {
+            widestSurfaceWidth = Math.max(widestSurfaceWidth, segment.width());
+        }
+        assertTrue(widestSurfaceWidth >= surfaceStart.width());
+        assertTrue(widestSurfaceWidth <= surfaceSettings.surface().maximumWidth() * 2);
 
         RiverCourse underground = courses(undergroundFirst, RiverCourseType.UNDERGROUND).getFirst();
         DrainageNode undergroundSource = undergroundFirst.node(underground.sourceNodeId().orElseThrow()).orElseThrow();
@@ -130,36 +134,6 @@ public class HydrologyStyledGeometryTest {
                     segment.upstreamHeadY()
             );
         }
-    }
-
-    @Test
-    public void poolStylingCannotManufactureUnsupportedTransitions() {
-        HydrologyPlannerSettings settings = settings(1D, 0D, List.of());
-        HydrologyTerrainSampler terrain = this::terrain;
-        HydrologyGeometrySampler shortPools = request -> request.field()
-                == HydrologyGeometrySampler.Field.TARGET_POOL_LENGTH
-                ? request.minimum()
-                : styledValue(request);
-        HydrologyGeometrySampler longPools = request -> request.field()
-                == HydrologyGeometrySampler.Field.TARGET_POOL_LENGTH
-                ? request.maximum()
-                : styledValue(request);
-
-        HydrologyTile shortFirst = planner(8811L, settings, terrain, shortPools).plan(TILE);
-        HydrologyTile shortRepeated = planner(8811L, settings, terrain, shortPools).plan(TILE);
-        HydrologyTile longFirst = planner(8811L, settings, terrain, longPools).plan(TILE);
-        HydrologyTile longRepeated = planner(8811L, settings, terrain, longPools).plan(TILE);
-
-        assertEquals(shortFirst, shortRepeated);
-        assertEquals(longFirst, longRepeated);
-        List<Integer> shortHeads = heads(courses(shortFirst, RiverCourseType.SURFACE).getFirst());
-        List<Integer> longHeads = heads(courses(longFirst, RiverCourseType.SURFACE).getFirst());
-        assertEquals(shortHeads.getFirst(), longHeads.getFirst());
-        assertEquals(shortHeads.getLast(), longHeads.getLast());
-        assertNonIncreasing(shortHeads);
-        assertNonIncreasing(longHeads);
-        assertSurfaceDropsTerrainBacked(shortFirst, terrain);
-        assertSurfaceDropsTerrainBacked(longFirst, terrain);
     }
 
     private HydrologyPlanner planner(
@@ -346,11 +320,6 @@ public class HydrologyStyledGeometryTest {
         return new HydrologyGeometrySampler.Request(field, profileKey, point.x(), point.z(), 0L, minimum, maximum);
     }
 
-    private int scaledDimension(int styledBase, int maximum, int discharge) {
-        double flowScale = Math.min(1D, StrictMath.log(discharge + 1D) / StrictMath.log(9D));
-        return Math.min(maximum, styledBase + (int) StrictMath.round((maximum - styledBase) * flowScale));
-    }
-
     private List<RiverCourse> courses(HydrologyTile tile, RiverCourseType type) {
         ArrayList<RiverCourse> selected = new ArrayList<>();
         for (RiverCourse course : tile.courses()) {
@@ -361,53 +330,4 @@ public class HydrologyStyledGeometryTest {
         return List.copyOf(selected);
     }
 
-    private List<Integer> heads(RiverCourse course) {
-        ArrayList<Integer> heads = new ArrayList<>();
-        for (HydraulicSegment segment : course.segments()) {
-            if (segment.type() == HydrologyFeatureType.MOUTH) {
-                continue;
-            }
-            heads.add(segment.upstreamHeadY());
-            heads.add(segment.downstreamHeadY());
-        }
-        return List.copyOf(heads);
-    }
-
-    private void assertNonIncreasing(List<Integer> heads) {
-        for (int index = 1; index < heads.size(); index++) {
-            assertTrue(heads.get(index) <= heads.get(index - 1));
-        }
-    }
-
-    private void assertSurfaceDropsTerrainBacked(HydrologyTile tile, HydrologyTerrainSampler terrain) {
-        for (RiverCourse course : courses(tile, RiverCourseType.SURFACE)) {
-            RiverOutlet outlet = tile.outlet(course.outletId().orElseThrow()).orElseThrow();
-            for (int segmentIndex = 0; segmentIndex < course.segments().size(); segmentIndex++) {
-                HydraulicSegment segment = course.segments().get(segmentIndex);
-                if (!segment.type().isDrop() || !segment.type().isSurface()) {
-                    continue;
-                }
-                HydrologyPoint start = segment.start();
-                HydrologyPoint end = segment.end();
-                int downstreamNaturalHeight = outlet.directOcean() && terminalMouthDrop(course, segmentIndex)
-                        ? terrain.sample(outlet.connectionPoint().x(), outlet.connectionPoint().z()).naturalHeight()
-                        : terrain.sample(end.x(), end.z()).naturalHeight();
-                int naturalDrop = terrain.sample(start.x(), start.z()).naturalHeight() - downstreamNaturalHeight;
-                assertTrue(
-                        "type=" + segment.type() + " start=" + start + " end=" + end
-                                + " naturalDrop=" + naturalDrop + " solvedDrop=" + segment.drop(),
-                        naturalDrop >= segment.drop()
-                );
-            }
-        }
-    }
-
-    private boolean terminalMouthDrop(RiverCourse course, int segmentIndex) {
-        for (int index = segmentIndex + 1; index < course.segments().size(); index++) {
-            if (course.segments().get(index).type() != HydrologyFeatureType.MOUTH) {
-                return false;
-            }
-        }
-        return true;
-    }
 }

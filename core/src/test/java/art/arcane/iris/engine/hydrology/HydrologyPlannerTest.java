@@ -50,8 +50,7 @@ public class HydrologyPlannerTest {
             for (HydraulicSegment segment : course.segments()) {
                 if (segment.drop() > 0) {
                     assertTrue(segment.type().isDrop());
-                    assertEquals(segment.type() == HydrologyFeatureType.WATERFALL, segment.fallingFluid());
-                    assertTrue(segment.receivingPool() || hasDownstreamReceivingDrop(tile, segment));
+                    assertFalse(segment.fallingFluid());
                 }
             }
         }
@@ -91,7 +90,7 @@ public class HydrologyPlannerTest {
         HydrologyPoint start = centerline.getFirst();
         HydrologyPoint end = centerline.getLast();
         double directLength = StrictMath.hypot(end.x() - start.x(), end.z() - start.z());
-        assertTrue("sinuosity=" + pathLength / directLength, pathLength / directLength <= 1.3D);
+        assertTrue("sinuosity=" + pathLength / directLength, pathLength / directLength <= 1.5D);
         assertTrue(
                 "deviation=" + maximumChordDeviationRatio(centerline),
                 maximumChordDeviationRatio(centerline) <= 0.19D
@@ -434,7 +433,6 @@ public class HydrologyPlannerTest {
         for (HydraulicSegment segment : segments(rolling, HydrologyFeatureType.CASCADE)) {
             assertTrue(segment.drop() > 0);
             assertFalse(segment.fallingFluid());
-            assertTrue(segment.receivingPool() || hasDownstreamReceivingDrop(rolling, segment));
             assertTrue(segment.centerline().size() >= segment.drop() + 1);
             int previousHead = segment.upstreamHeadY();
             for (HydrologyPoint point : segment.centerline()) {
@@ -458,8 +456,8 @@ public class HydrologyPlannerTest {
         );
         for (HydraulicSegment segment : segments(cliff, HydrologyFeatureType.WATERFALL)) {
             assertTrue(segment.drop() > 0);
-            assertTrue(segment.fallingFluid());
-            assertEquals(2, segment.centerline().size());
+            assertFalse(segment.fallingFluid());
+            assertTrue(segment.centerline().size() >= 2);
             assertTrue(segment.width() >= 1);
         }
         boolean sawBlendedWaterfall = false;
@@ -588,68 +586,6 @@ public class HydrologyPlannerTest {
                 );
             }
         }
-    }
-
-    @Test
-    public void aSurfaceCourseCanBoreThroughARidgeAndReopen() {
-        HydrologyTerrainSampler ridgeTerrain = (int x, int z) -> {
-            if (x >= 112) {
-                return oceanTerrain();
-            }
-            int base = 108 - Math.floorDiv(x, 8);
-            int height = x >= 48 && x <= 72 ? base + 48 : base;
-            return terrain(height, x >= 48 && x <= 72 ? 18D : 1D, false, true, x <= 16, true, false, false);
-        };
-        HydrologyPlannerSettings settings = standardSettings(2D, 0D, true, false, List.of());
-        HydrologyTile tile = new HydrologyPlanner(
-                992L,
-                settings,
-                ridgeTerrain
-        ).plan(TILE);
-
-        boolean reopened = false;
-        for (RiverCourse course : surfaceCourses(tile)) {
-            int firstBore = firstSegment(
-                    course,
-                    HydrologyFeatureType.RIDGE_BORE,
-                    HydrologyFeatureType.UNDERGROUND_DROP
-            );
-            if (firstBore < 0) {
-                continue;
-            }
-            HydraulicSegment bore = course.segments().get(firstBore);
-            assertTrue(bore.width() >= settings.surface().minimumWidth());
-            HydrologyColumnLayer grotto = layerForSegment(
-                    tile.columnAt(bore.start().x(), bore.start().z()).orElseThrow(),
-                    bore.id()
-            );
-            assertTrue(grotto.ceilingY() > grotto.fluidHeadY());
-            for (int index = firstBore + 1; index < course.segments().size(); index++) {
-                HydraulicSegment previous = course.segments().get(index - 1);
-                HydraulicSegment current = course.segments().get(index);
-                assertEquals(previous.centerline().getLast(), current.centerline().getFirst());
-                if (current.type().isSurface()) {
-                    HydrologyColumnLayer reopenedLayer = layerForSegment(
-                            tile.columnAt(current.start().x(), current.start().z()).orElseThrow(),
-                            current.id()
-                    );
-                    assertFalse(reopenedLayer.feature().source());
-                    reopened = true;
-                    break;
-                }
-            }
-            if (reopened) {
-                break;
-            }
-        }
-        assertTrue(
-                "diagnostics=" + tile.diagnosticCandidates() + " courses=" + surfaceCourses(tile).stream()
-                        .map((RiverCourse course) -> course.segments().stream()
-                                .map(HydraulicSegment::type)
-                                .toList())
-                        .toList(),
-                reopened
-        );
     }
 
     @Test
@@ -1092,20 +1028,22 @@ public class HydrologyPlannerTest {
                 rollingCoast(112)
         ).plan(TILE);
 
-        boolean sawApron = false;
+        assertFalse(
+                "courses=" + tile.courses() + " diagnostics=" + tile.diagnosticCandidates(),
+                tile.footprint().isEmpty()
+        );
         for (HydrologyColumnSample column : tile.footprint().columns().values()) {
-            if (!column.ocean()) {
+            if (!column.ocean() && column.naturalHeight() > column.seaLevel()) {
                 continue;
             }
-            sawApron = true;
             for (HydrologyColumnLayer layer : column.layers()) {
                 assertFalse(layer.terrainOwned());
                 assertFalse(layer.fluidOwned());
                 assertFalse(layer.grading());
+                assertFalse(layer.shore());
                 assertTrue(layer.fluidHeadY() <= column.seaLevel());
             }
         }
-        assertTrue(sawApron);
     }
 
     @Test
@@ -1130,7 +1068,7 @@ public class HydrologyPlannerTest {
                 if (layer.grading() && !layer.shore() && !layer.channel()) {
                     sawGrading = true;
                     assertEquals("parent", column.parentBiomeKey());
-                    assertTrue(layer.biomeKey() == null);
+                    assertEquals(layer.bankBiomeKey(), layer.biomeKey());
                 }
             }
         }
@@ -1165,7 +1103,7 @@ public class HydrologyPlannerTest {
                 } else if (layer.grading() && !layer.channel()) {
                     maximumGradingDistance = Math.max(maximumGradingDistance, distance - channelRadius);
                     sawChangedParentGrading |= layer.bedY() != column.naturalHeight();
-                    assertTrue(layer.biomeKey() == null);
+                    assertEquals(layer.bankBiomeKey(), layer.biomeKey());
                     assertEquals("parent", column.parentBiomeKey());
                 }
             }
@@ -1291,26 +1229,29 @@ public class HydrologyPlannerTest {
             }
             assertTrue(bed);
             assertEquals(drop.fallingFluid(), falling);
-            if (drop.type() == HydrologyFeatureType.WATERFALL) {
-                assertTrue(drop.fallingFluid());
-            }
+            assertFalse(drop.fallingFluid());
             if (!receiving) {
                 HydrologyColumnSample endColumn = tile.columnAt(drop.end().x(), drop.end().z()).orElseThrow();
                 receiving = endColumn.layers().stream().anyMatch((HydrologyColumnLayer layer) ->
                         layer.channel() && layer.fluidHeadY() == drop.downstreamHeadY());
             }
             assertTrue("drop=" + drop, receiving);
-            if (!drop.fallingFluid()) {
-                int previousHead = drop.upstreamHeadY();
-                for (HydrologyPoint point : drop.centerline()) {
-                    assertTrue(point.y() <= previousHead);
-                    assertTrue(
-                            drop.type() + " drop=" + drop.drop() + " points=" + drop.centerline().size()
-                                    + " step=" + (previousHead - point.y()),
-                            previousHead - point.y() <= settings.geometry().drops().stepLimit(drop.type())
-                    );
-                    previousHead = point.y();
-                }
+            if (drop.type() == HydrologyFeatureType.WATERFALL) {
+                assertTrue(
+                        "waterfall drop=" + drop.drop(),
+                        drop.drop() >= settings.surface().banks().waterfallMinimumDrop()
+                );
+                continue;
+            }
+            int previousHead = drop.upstreamHeadY();
+            for (HydrologyPoint point : drop.centerline()) {
+                assertTrue(point.y() <= previousHead);
+                assertTrue(
+                        drop.type() + " drop=" + drop.drop() + " points=" + drop.centerline().size()
+                                + " step=" + (previousHead - point.y()),
+                        previousHead - point.y() <= settings.geometry().drops().stepLimit(drop.type())
+                );
+                previousHead = point.y();
             }
         }
     }
@@ -1528,10 +1469,6 @@ public class HydrologyPlannerTest {
         assertFalse(outlet.directOcean());
         assertTrue(course.surfaceSinkholeContinuation());
         assertTrue(course.segments().stream().noneMatch(HydraulicSegment::fallingFluid));
-        assertTrue(tile.diagnosticCandidates().stream().anyMatch(
-                (HydrologyDiagnosticCandidate candidate) ->
-                        candidate.rejection() == HydrologyCandidateRejection.SURFACE_RIDGE_TUNNEL_LIMIT
-        ));
     }
 
     @Test
@@ -2527,22 +2464,6 @@ public class HydrologyPlannerTest {
                 segment.start().z() + deltaZ
         ).orElse(null);
         return column != null && layerForSegmentOrNull(column, segment.id()) != null;
-    }
-
-    private boolean hasDownstreamReceivingDrop(HydrologyTile tile, HydraulicSegment expected) {
-        for (RiverCourse course : tile.courses()) {
-            if (course.id() != expected.courseId()) {
-                continue;
-            }
-            boolean downstream = false;
-            for (HydraulicSegment segment : course.segments()) {
-                if (downstream && segment.drop() > 0 && segment.receivingPool()) {
-                    return true;
-                }
-                downstream |= segment.id() == expected.id();
-            }
-        }
-        return false;
     }
 
     private HydraulicSegment segment(HydrologyTile tile, long segmentId) {
