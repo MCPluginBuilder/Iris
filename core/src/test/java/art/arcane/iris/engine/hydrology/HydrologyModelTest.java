@@ -496,7 +496,7 @@ public class HydrologyModelTest {
     @Test
     public void featureQuerySuggestionsIncludeConfiguredDeepFluidsWithoutHardcodedProfiles() {
         List<String> suggestions = HydrologyFeatureQuery.suggestions(
-                List.of("acid", "deep_lava", "acid", "surface", "ridge-tunnel")
+                List.of("acid", "deep_lava", "acid", "surface", "coastal-grotto")
         );
 
         assertEquals(List.of(
@@ -508,7 +508,6 @@ public class HydrologyModelTest {
                 "coastal_grotto",
                 "inland_grotto",
                 "mouth",
-                "ridge_tunnel",
                 "deep",
                 "pool",
                 "acid",
@@ -527,7 +526,6 @@ public class HydrologyModelTest {
                 "coastal_grotto",
                 "inland_grotto",
                 "mouth",
-                "ridge_tunnel",
                 "deep",
                 "pool"
         );
@@ -538,6 +536,8 @@ public class HydrologyModelTest {
             assertTrue(keyword, HydrologyFeatureQuery.isReservedKeyword(keyword.replace('_', '-')));
         }
         assertFalse(HydrologyFeatureQuery.isReservedKeyword("acid"));
+        assertFalse(HydrologyFeatureQuery.isReservedKeyword("ridge_tunnel"));
+        assertFalse(HydrologyFeatureQuery.isReservedKeyword("ridge-tunnel"));
         assertFalse(HydrologyFeatureQuery.isReservedKeyword(null));
         assertEquals(Set.of(HydrologyFeatureType.SINKHOLE), HydrologyFeatureQuery.parse("sinkhole").types());
     }

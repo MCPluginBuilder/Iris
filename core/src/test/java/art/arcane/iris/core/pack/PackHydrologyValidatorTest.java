@@ -1090,8 +1090,6 @@ public class PackHydrologyValidatorTest {
                 "inland_grotto",
                 "inland-grotto",
                 "mouth",
-                "ridge_tunnel",
-                "ridge-tunnel",
                 "deep"
         )) {
             File pack = pack("""

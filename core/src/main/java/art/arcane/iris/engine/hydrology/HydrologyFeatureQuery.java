@@ -19,7 +19,6 @@ public record HydrologyFeatureQuery(Set<HydrologyFeatureType> types, String prof
             HydrologyFeatureType.MOUTH
     );
     private static final Set<HydrologyFeatureType> UNDERGROUND = Set.of(
-            HydrologyFeatureType.RIDGE_BORE,
             HydrologyFeatureType.UNDERGROUND_POOL,
             HydrologyFeatureType.UNDERGROUND_DROP,
             HydrologyFeatureType.SINKHOLE
@@ -94,7 +93,6 @@ public record HydrologyFeatureQuery(Set<HydrologyFeatureType> types, String prof
         builtIns.put("coastal_grotto", Set.of(HydrologyFeatureType.COASTAL_GROTTO));
         builtIns.put("inland_grotto", Set.of(HydrologyFeatureType.INLAND_GROTTO));
         builtIns.put("mouth", Set.of(HydrologyFeatureType.MOUTH));
-        builtIns.put("ridge_tunnel", Set.of(HydrologyFeatureType.RIDGE_BORE));
         builtIns.put("deep", DEEP);
         builtIns.put("pool", Set.of(HydrologyFeatureType.STANDING_POOL));
         return Collections.unmodifiableMap(builtIns);

@@ -1,4 +1,3 @@
-import de.undercouch.gradle.tasks.download.Download
 import org.gradle.api.plugins.JavaPlugin
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.compile.JavaCompile
@@ -39,7 +38,6 @@ buildscript {
 plugins {
     id 'java'
     id 'java-library'
-    alias(libs.plugins.download)
 }
 
 group = 'art.arcane'
@@ -75,6 +73,7 @@ String bukkitArtifactName = irisArtifactName('CraftBukkit', bukkitMinecraftRange
 String fabricArtifactName = irisArtifactName('Fabric', "${minecraftVersion}+${loaderDisplayVersion(fabricLoaderVersion)}")
 String forgeArtifactName = irisArtifactName('Forge', "${minecraftVersion}+${loaderDisplayVersion(forgeVersion)}")
 String neoForgeArtifactName = irisArtifactName('NeoForge', "${minecraftVersion}+${loaderDisplayVersion(neoForgeVersion)}")
+File pluginOutDirectory = layout.projectDirectory.dir('../PluginOuts').asFile
 long maximumBukkitArtifactBytes = 7_000_000L
 apply plugin: ApiGenerator
 
@@ -281,12 +280,12 @@ tasks.register('buildBukkit', Copy) {
     group = 'iris'
     dependsOn('jar')
     from(layout.buildDirectory.file("libs/${bukkitArtifactName}"))
-    into(layout.projectDirectory.dir('dist'))
+    into(pluginOutDirectory)
     doFirst {
-        delete(fileTree(layout.projectDirectory.dir('dist')) {
+        delete(fileTree(pluginOutDirectory) {
             include('Iris v* [CraftBukkit] *.jar')
         })
-        delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}.jar"))
+        delete(new File(pluginOutDirectory, "Iris-${project.version}+mc${minecraftVersion}.jar"))
     }
 }
 
@@ -384,12 +383,12 @@ tasks.register('buildFabric', Copy) {
     group = 'iris'
     dependsOn('fabricJar')
     from(layout.projectDirectory.file("adapters/fabric/build/libs/${fabricArtifactName}"))
-    into(layout.projectDirectory.dir('dist'))
+    into(pluginOutDirectory)
     doFirst {
-        delete(fileTree(layout.projectDirectory.dir('dist')) {
+        delete(fileTree(pluginOutDirectory) {
             include('Iris v* [Fabric] *.jar')
         })
-        delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}-fabric.jar"))
+        delete(new File(pluginOutDirectory, "Iris-${project.version}+mc${minecraftVersion}-fabric.jar"))
     }
 }
 
@@ -422,12 +421,12 @@ tasks.register('buildForge', Copy) {
     group = 'iris'
     dependsOn('forgeJar')
     from(layout.projectDirectory.file("adapters/forge/build/libs/${forgeArtifactName}"))
-    into(layout.projectDirectory.dir('dist'))
+    into(pluginOutDirectory)
     doFirst {
-        delete(fileTree(layout.projectDirectory.dir('dist')) {
+        delete(fileTree(pluginOutDirectory) {
             include('Iris v* [Forge] *.jar')
         })
-        delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}-forge.jar"))
+        delete(new File(pluginOutDirectory, "Iris-${project.version}+mc${minecraftVersion}-forge.jar"))
     }
 }
 
@@ -460,12 +459,12 @@ tasks.register('buildNeoforge', Copy) {
     group = 'iris'
     dependsOn('neoforgeJar')
     from(layout.projectDirectory.file("adapters/neoforge/build/libs/${neoForgeArtifactName}"))
-    into(layout.projectDirectory.dir('dist'))
+    into(pluginOutDirectory)
     doFirst {
-        delete(fileTree(layout.projectDirectory.dir('dist')) {
+        delete(fileTree(pluginOutDirectory) {
             include('Iris v* [NeoForge] *.jar')
         })
-        delete(layout.projectDirectory.file("dist/Iris-${project.version}+mc${minecraftVersion}-neoforge.jar"))
+        delete(new File(pluginOutDirectory, "Iris-${project.version}+mc${minecraftVersion}-neoforge.jar"))
     }
 }
 
@@ -650,10 +649,9 @@ tasks.register('buildAllToOut') {
     group = 'iris'
     dependsOn('buildBukkit', 'buildFabric', 'buildForge', 'buildNeoforge', ':spi:jar')
     doLast {
-        File dist = layout.projectDirectory.dir('dist').asFile
-        File[] jars = dist.listFiles((java.io.FileFilter) { File f -> f.name.endsWith('.jar') })
+        File[] jars = pluginOutDirectory.listFiles((java.io.FileFilter) { File f -> f.name.startsWith('Iris v') && f.name.endsWith('.jar') })
         println('')
-        println('=== Iris buildAllToOut -> dist/ ===')
+        println('=== Iris buildAllToOut -> ' + pluginOutDirectory + ' ===')
         if (jars != null) {
             jars.sort { it.name }.each { File f ->
                 println(String.format('  %-60s %8d KB', f.name, (long) (f.length() / 1024)))
@@ -723,39 +721,6 @@ tasks.register('irisDev', Copy) {
     into(layout.buildDirectory)
     dependsOn(':core:sourcesJar')
     dependsOn(':core:javadocJar')
-}
-
-def cli = file('sentry-cli.exe')
-tasks.register('downloadCli', Download) {
-    group = 'io.sentry'
-    src("https://release-registry.services.sentry.io/apps/sentry-cli/latest?response=download&arch=x86_64&platform=${System.getProperty('os.name')}&package=sentry-cli")
-    dest(cli)
-
-    doLast {
-        cli.setExecutable(true)
-    }
-}
-
-tasks.register('release') {
-    group = 'io.sentry'
-    dependsOn('downloadCli')
-    doLast {
-        String url = 'http://sentry.volmit.com:8080'
-        def authToken = project.findProperty('sentry.auth.token') ?: System.getenv('SENTRY_AUTH_TOKEN')
-        String org = 'sentry'
-        String projectName = 'iris'
-        runCommand(cli, '--url', url, '--auth-token', authToken, 'releases', 'new', '-o', org, '-p', projectName, version)
-        runCommand(cli, '--url', url, '--auth-token', authToken, 'releases', 'set-commits', '-o', org, '-p', projectName, version, '--auto', '--ignore-missing')
-        //exec(cli, "--url", url, "--auth-token", authToken, "releases", "finalize", "-o", org, "-p", projectName, version)
-        cli.delete()
-    }
-}
-
-void runCommand(Object... command) {
-    Process process = new ProcessBuilder(command.collect { it.toString() }).start()
-    process.inputStream.readLines().each { println(it) }
-    process.errorStream.readLines().each { println(it) }
-    process.waitFor()
 }
 
 configurations.configureEach {

@@ -18,7 +18,6 @@
 
 package art.arcane.iris.engine;
 
-import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.WorldMaintenance;
@@ -34,6 +33,7 @@ import art.arcane.iris.engine.mantle.components.MantleHydrologyComponent;
 import art.arcane.iris.engine.mantle.components.IrisStructureComponent;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.matter.IrisMatterContext;
 import art.arcane.iris.util.project.matter.IrisMatterSupport;
@@ -53,7 +53,6 @@ import art.arcane.iris.util.common.format.C;
 import art.arcane.volmlib.util.matter.IrisMatter;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterSlice;
-import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.util.common.parallel.HyperLock;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import lombok.AccessLevel;
@@ -76,7 +75,6 @@ import java.util.function.Supplier;
 @ToString(exclude = "engine")
 public class IrisEngineMantle implements EngineMantle {
     public static final String STORAGE_FOLDER_NAME = "mantle-hydrology";
-    private static final boolean BUKKIT_PRESENT = IrisMatterSupport.isBukkitPresent();
     private final Engine engine;
     private final Mantle<Matter> mantle;
     @Getter(AccessLevel.NONE)
@@ -260,10 +258,7 @@ public class IrisEngineMantle implements EngineMantle {
                 if (value instanceof PlatformBlockState) {
                     return PlatformBlockState.class;
                 }
-                if (BUKKIT_PRESENT) {
-                    return BukkitPlatform.classifyMantleValue(value);
-                }
-                return value.getClass();
+                return IrisPlatforms.get().classifyMantleValue(value);
             }
 
             @Override
