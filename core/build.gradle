@@ -289,6 +289,8 @@ List<String> unusedVolmLibClasses = [
     'art/arcane/volmlib/util/nbt/io/StringPointer',
     'art/arcane/volmlib/util/io/StringDeserializer',
     'art/arcane/volmlib/util/io/StringSerializer',
+    'art/arcane/volmlib/util/localization/TomlLanguageEditor',
+    'art/arcane/volmlib/util/localization/TomlLanguageParser',
     'art/arcane/volmlib/util/json/EnumType',
     'art/arcane/volmlib/util/json/HTTP',
     'art/arcane/volmlib/util/json/HTTPTokener',
