@@ -84,6 +84,57 @@ public interface EngineMode extends Staged {
         };
     }
 
+    /**
+     * Runs {@code parallel} on the burst pool while {@code inline} runs on the calling thread, then
+     * waits for all of them. Matter generation is the inline stage: on the calling thread its
+     * mantle window fans out across the pool, and biome and terrain overlap with it instead of
+     * following it. Without multicore every stage simply runs here, parallel stages first.
+     */
+    default EngineStage burstAround(EngineStage inline, EngineStage... parallel) {
+        EngineStage fanOut = burst(parallel);
+        return (x, z, blocks, biomes, multicore, ctx) -> {
+            if (!multicore) {
+                fanOut.generate(x, z, blocks, biomes, false, ctx);
+                inline.generate(x, z, blocks, biomes, false, ctx);
+                return;
+            }
+            java.util.concurrent.CompletableFuture<Void> background = burst().completeValueAsync(() -> {
+                fanOut.generate(x, z, blocks, biomes, true, ctx);
+                return null;
+            });
+            Throwable inlineFailure = null;
+            try {
+                inline.generate(x, z, blocks, biomes, true, ctx);
+            } catch (Throwable t) {
+                inlineFailure = t;
+            }
+            try {
+                background.join();
+            } catch (java.util.concurrent.CompletionException e) {
+                if (inlineFailure == null) {
+                    Throwable cause = e.getCause() == null ? e : e.getCause();
+                    if (cause instanceof Error error) {
+                        throw error;
+                    }
+                    if (cause instanceof RuntimeException runtimeException) {
+                        throw runtimeException;
+                    }
+                    throw new IllegalStateException("Burst stage failure during chunk generation", cause);
+                }
+                inlineFailure.addSuppressed(e);
+            }
+            if (inlineFailure != null) {
+                if (inlineFailure instanceof Error error) {
+                    throw error;
+                }
+                if (inlineFailure instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                throw new IllegalStateException("Inline stage failure during chunk generation", inlineFailure);
+            }
+        };
+    }
+
     default IrisComplex getComplex() {
         return getEngine().getComplex();
     }

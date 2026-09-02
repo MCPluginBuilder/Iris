@@ -19,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -92,10 +93,12 @@ public interface MatterGenerator {
                         continue;
                     }
 
-                    // A dispatcher thread runs its components inline: dispatching from inside the pool
-                    // only trades a worker for a blocked worker.
-                    boolean asyncComponents = multicore
-                            && !DISPATCHER.ownsCurrentThread();
+                    // Every multicore generation claims its components through the in-flight map.
+                    // A caller outside the pool spreads its window across the pool; a pool thread
+                    // runs its claims inline. Either way a component another generation already
+                    // owns is joined at the pass barrier instead of blocking on that chunk's lock
+                    // before the caller's own remaining chunks are done.
+                    boolean asyncComponents = multicore;
                     if (asyncComponents && outstandingTasks == null) {
                         outstandingTasks = new ArrayList<>();
                     }
@@ -287,10 +290,11 @@ public interface MatterGenerator {
 
         try {
             if (DISPATCHER.ownsCurrentThread()) {
+                // A pool thread runs its claim inline: a task queued behind pool threads that block
+                // on unmanaged waits (structure builds, cache locks) could starve the whole pool.
                 completeComponentTask(future, key, chunk, component, writer, chunkX, chunkZ, context, IrisContext.get());
                 return new MatterComponentTask(key, future, null);
             }
-
             IrisContext callerContext = IrisContext.get();
             Future<?> submission = DISPATCHER.submit(() -> completeComponentTask(
                     future,
@@ -355,6 +359,46 @@ public interface MatterGenerator {
     }
 
     private static void awaitComponentTask(MatterComponentTask task) {
+        CompletableFuture<Void> future = task.future();
+        if (future.isDone() && !future.isCompletedExceptionally()) {
+            return;
+        }
+        if (DISPATCHER.ownsCurrentThread()) {
+            // A pool thread parked on another generation's task must not starve the pool that has
+            // to run that task: managed blocking lets the pool compensate with another worker.
+            try {
+                ForkJoinPool.managedBlock(new ComponentTaskBlocker(task));
+            } catch (InterruptedException interruption) {
+                Thread.currentThread().interrupt();
+            }
+            return;
+        }
+        awaitComponentTaskBlocking(task);
+    }
+
+    /**
+     * Blocks a pool thread on a component task while letting its pool spawn a replacement worker.
+     */
+    final class ComponentTaskBlocker implements ForkJoinPool.ManagedBlocker {
+        private final MatterComponentTask task;
+
+        private ComponentTaskBlocker(MatterComponentTask task) {
+            this.task = task;
+        }
+
+        @Override
+        public boolean block() {
+            awaitComponentTaskBlocking(task);
+            return true;
+        }
+
+        @Override
+        public boolean isReleasable() {
+            return task.future().isDone();
+        }
+    }
+
+    private static void awaitComponentTaskBlocking(MatterComponentTask task) {
         CompletableFuture<Void> future = task.future();
         long start = System.currentTimeMillis();
         boolean interrupted = false;

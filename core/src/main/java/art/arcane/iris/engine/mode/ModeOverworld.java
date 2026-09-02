@@ -99,9 +99,11 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
             custom.modify(x, z, k, m, c);
         };
 
-        registerStage(burst(
-                sBiome,
+        // Matter runs on the calling thread so its window fans out across the burst pool (a pool
+        // thread would run every chunk of the window inline) while biome and terrain run alongside.
+        registerStage(burstAround(
                 sGenMatter,
+                sBiome,
                 sTerrain
         ));
         registerStage(sCave);

@@ -8,6 +8,8 @@ import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.util.project.stream.utility.CachedDoubleStream2D;
 import art.arcane.iris.util.project.stream.utility.CachedStream2D;
 import org.junit.Test;
+import static org.junit.Assert.assertFalse;
+import art.arcane.iris.util.common.parallel.MultiBurst;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -111,5 +113,20 @@ public class PregenPerformanceProfileTest {
         } else {
             System.setProperty("iris.cache.fast", fastCache);
         }
+    }
+
+    @Test
+    public void pregenerationWantsTwoBurstWorkersPerCore() {
+        assertEquals(32, PregenPerformanceProfile.pregenBurstParallelism(16));
+        assertEquals(4, PregenPerformanceProfile.pregenBurstParallelism(1));
+    }
+
+    @Test
+    public void raisingBurstParallelismOnlyGrowsThePool() {
+        int before = MultiBurst.burst.parallelism();
+        assertFalse(MultiBurst.burst.raiseParallelism(before));
+        assertTrue(MultiBurst.burst.raiseParallelism(before + 1));
+        assertEquals(before + 1, MultiBurst.burst.parallelism());
+        assertFalse(MultiBurst.burst.raiseParallelism(before));
     }
 }

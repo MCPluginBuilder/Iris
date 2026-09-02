@@ -27,6 +27,7 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.iris.util.project.stream.utility.CachedStream2D;
+import art.arcane.iris.util.common.parallel.MultiBurst;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -54,6 +55,9 @@ public final class PregenPerformanceProfile {
             System.setProperty("iris.cache.fast", "true");
             changed = true;
         }
+        if (MultiBurst.burst.raiseParallelism(pregenBurstParallelism(Runtime.getRuntime().availableProcessors()))) {
+            changed = true;
+        }
 
         if (JVM_HINT_LOGGED.compareAndSet(false, true) && !fastCacheEnabledBefore) {
             IrisLogging.info("For startup-wide cache-fast coverage, set JVM argument: -Diris.cache.fast=true");
@@ -77,6 +81,11 @@ public final class PregenPerformanceProfile {
             generator.hotloadComplexAsync(HOTLOAD_ACQUISITION_TIMEOUT_SECONDS, TimeUnit.SECONDS).join();
             logApplied();
         }
+    }
+
+    /** Two workers per core: enough to keep cores busy while a share of the pool sits in waits. */
+    static int pregenBurstParallelism(int availableProcessors) {
+        return Math.max(4, availableProcessors * 2);
     }
 
     private static boolean requiresNoiseCacheRefresh(Engine engine) {

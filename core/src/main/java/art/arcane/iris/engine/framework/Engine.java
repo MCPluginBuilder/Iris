@@ -95,6 +95,22 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
     EnginePlatformHooks getPlatformHooks();
 
     /**
+     * Whether chunk generation may fan its stages and mantle components out across the burst pool.
+     * Live worlds generate inline so players keep their cores; a pregeneration owns the machine and
+     * spreads the work, and the engine service setting forces the same for every world.
+     */
+    static boolean generateMulticore(boolean forceMulticoreWrite, boolean pregeneratorActive) {
+        return forceMulticoreWrite || pregeneratorActive;
+    }
+
+    default boolean shouldGenerateMulticore() {
+        return generateMulticore(
+                IrisSettings.get().getPerformance().getEngineSVC().isForceMulticoreWrite(),
+                getPlatformHooks().isPregeneratorActive(this)
+        );
+    }
+
+    /**
      * World-space native structure piece bounds overlapping the given XZ rect. The answer is a pure function of the
      * seed, the registries and this pack's structure policy, so it never depends on generation order.
      */

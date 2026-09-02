@@ -16,6 +16,11 @@ public class MultiBurst extends MultiBurstSupport {
     private static final long TIMEOUT = Long.getLong("iris.burst.timeout", 15000);
     public static final MultiBurst burst = new MultiBurst();
     public static final MultiBurst ioBurst = new MultiBurst("Iris IO", () -> IrisSettings.get().getConcurrency().getIoParallelism());
+    /**
+     * Long-running hydrology tile planning. Kept off {@link #burst} so a handful of twenty-second
+     * plans never pin the workers that chunk generation's short stage and mantle tasks need.
+     */
+    public static final MultiBurst hydrology = new MultiBurst("Iris Hydrology", () -> Math.max(2, IrisSettings.getThreadCount(IrisSettings.get().getConcurrency().getParallelism()) / 3));
 
     public MultiBurst() {
         this("Iris");
@@ -31,6 +36,23 @@ public class MultiBurst extends MultiBurstSupport {
 
     public MultiBurst(String name, int priority, IntSupplier parallelism) {
         super(name, priority, parallelism, IrisSettings::getThreadCount, M::ms, IrisLogging::reportError, IrisLogging::info, IrisLogging::warn, TIMEOUT);
+    }
+
+    /**
+     * Raises the pool's parallelism to at least {@code target} workers. Pregeneration fans every
+     * chunk's stages and mantle windows into this pool while some tasks block on unmanaged waits,
+     * so a pregeneration box wants more workers than cores; the pool never shrinks back.
+     */
+    public boolean raiseParallelism(int target) {
+        if (!(service() instanceof ForkJoinPool pool) || target <= pool.getParallelism()) {
+            return false;
+        }
+        pool.setParallelism(target);
+        return true;
+    }
+
+    public int parallelism() {
+        return service() instanceof ForkJoinPool pool ? pool.getParallelism() : -1;
     }
 
     public boolean ownsCurrentThread() {

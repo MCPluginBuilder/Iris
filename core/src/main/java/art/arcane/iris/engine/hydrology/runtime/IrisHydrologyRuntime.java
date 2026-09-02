@@ -47,6 +47,8 @@ import art.arcane.iris.engine.object.IrisUndergroundRiverConfig;
 import art.arcane.iris.engine.object.IrisUndergroundRiverSourceConfig;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.util.common.parallel.MultiBurst;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -112,7 +114,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 0,
                 context.caveViewFactory()
         );
-        this.cache = new HydrologyTileCache(planner, MAXIMUM_CACHE_TILES);
+        this.cache = new HydrologyTileCache(planner, MAXIMUM_CACHE_TILES, IrisPlatforms.isBound() ? MultiBurst.hydrology : null);
     }
 
     public HydrologyPlannerSettings settings() {
@@ -127,6 +129,11 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         int blockX = (int) StrictMath.floor(x);
         int blockZ = (int) StrictMath.floor(z);
         return cache.columnAt(blockX, blockZ);
+    }
+
+    /** Plans every tile touching the block area ahead of time, nearest the centre first. */
+    public void prefetchArea(int minimumBlockX, int minimumBlockZ, int maximumBlockX, int maximumBlockZ, int centreBlockX, int centreBlockZ) {
+        cache.prefetchArea(minimumBlockX, minimumBlockZ, maximumBlockX, maximumBlockZ, centreBlockX, centreBlockZ);
     }
 
     public void prepareChunkColumns(int blockX, int blockZ) {

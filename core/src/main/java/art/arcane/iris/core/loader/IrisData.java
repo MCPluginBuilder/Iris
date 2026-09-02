@@ -132,6 +132,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     private final transient List<Engine> engines = new ArrayList<>();
+    private transient volatile Engine soleEngine;
 
     private IrisData(File dataFolder) {
         this(dataFolder, false);
@@ -319,6 +320,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         synchronized (engines) {
             int previousSize = engines.size();
             removeClosedEngines();
+            refreshSoleEngine();
             removed = previousSize - engines.size();
         }
         if (removed > 0) {
@@ -335,10 +337,22 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             }
         }
 
+        // Every noise sample of a thread without a generation context lands here, so the sole
+        // engine is answered from a snapshot; the registry lock is only taken to refresh it.
+        Engine sole = soleEngine;
+        if (sole != null && !sole.isClosed()) {
+            return sole;
+        }
         synchronized (engines) {
             removeClosedEngines();
-            return engines.size() == 1 ? engines.get(0) : null;
+            refreshSoleEngine();
+            return soleEngine;
         }
+    }
+
+    /** Must be called with the engines lock held after every change to the registry. */
+    private void refreshSoleEngine() {
+        soleEngine = engines.size() == 1 ? engines.get(0) : null;
     }
 
     public List<Engine> getEngines() {
@@ -381,6 +395,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
                 }
             }
             engines.add(engine);
+            refreshSoleEngine();
         }
         ENGINE_HOLDERS.add(this);
     }
@@ -400,6 +415,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             if (engines.isEmpty()) {
                 ENGINE_HOLDERS.remove(this);
             }
+            refreshSoleEngine();
         }
     }
 
@@ -420,6 +436,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         dump();
         synchronized (engines) {
             engines.clear();
+            refreshSoleEngine();
         }
         ENGINE_HOLDERS.remove(this);
         dataLoaders.remove(dataFolder, this);

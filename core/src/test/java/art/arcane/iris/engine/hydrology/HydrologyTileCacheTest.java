@@ -372,4 +372,51 @@ public class HydrologyTileCacheTest {
         assertTrue(tile.outlets().isEmpty());
         assertTrue(tile.columnAt(0, 0).isEmpty());
     }
+
+    @Test
+    public void chunkPreparationPrefetchesTheRingOfTilesAroundTheOnesItNeeded() {
+        HydrologyPlanner planner = mock(HydrologyPlanner.class);
+        HydrologyTile tile = mock(HydrologyTile.class);
+        HydrologyPlannerSettings settings = emptySettings();
+        when(planner.settings()).thenReturn(settings);
+        when(planner.plan(any(HydrologyTileKey.class))).thenReturn(tile);
+        when(tile.columnAt(anyInt(), anyInt())).thenReturn(Optional.empty());
+        HydrologyTileCache eager = new HydrologyTileCache(planner, 64, Runnable::run);
+        HydrologyTileCache lazy = new HydrologyTileCache(planner, 64);
+
+        eager.prepareChunkColumns(32, 48);
+        lazy.prepareChunkColumns(32, 48);
+
+        int tileSize = settings.routing().tileSize();
+        int radius = settings.publicationRadius();
+        int width = Math.floorDiv(32 + 15 + radius, tileSize) - Math.floorDiv(32 - radius, tileSize) + 1;
+        int height = Math.floorDiv(48 + 15 + radius, tileSize) - Math.floorDiv(48 - radius, tileSize) + 1;
+        assertEquals(width * height, lazy.size());
+        assertEquals((width + 2) * (height + 2), eager.size());
+    }
+
+    @Test
+    public void areaPrefetchPlansEveryTouchingTileNearestTheCentreFirst() {
+        HydrologyPlanner planner = mock(HydrologyPlanner.class);
+        HydrologyTile tile = mock(HydrologyTile.class);
+        HydrologyPlannerSettings settings = emptySettings();
+        when(planner.settings()).thenReturn(settings);
+        when(planner.plan(any(HydrologyTileKey.class))).thenReturn(tile);
+        List<HydrologyTileKey> order = new java.util.ArrayList<>();
+        HydrologyTileCache cache = new HydrologyTileCache(planner, 256, Runnable::run);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            order.add(invocation.getArgument(0));
+            return tile;
+        }).when(planner).plan(any(HydrologyTileKey.class));
+
+        int tileSize = settings.routing().tileSize();
+        cache.prefetchArea(0, 0, tileSize * 2 - 1, tileSize * 2 - 1, tileSize, tileSize);
+
+        int radius = settings.publicationRadius();
+        int extra = radius > 0 ? 1 : 0;
+        int span = 2 + 2 * extra;
+        assertEquals(span * span, order.size());
+        assertEquals(new HydrologyTileKey(1, 1), order.getFirst());
+        assertTrue(order.subList(0, 4).containsAll(List.of(new HydrologyTileKey(0, 0), new HydrologyTileKey(1, 0), new HydrologyTileKey(0, 1), new HydrologyTileKey(1, 1))));
+    }
 }

@@ -280,6 +280,30 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         boundsMinRegionZ = minRegionZ;
         boundsMaxRegionX = maxRegionX;
         boundsMaxRegionZ = maxRegionZ;
+        prefetchHydrology(minRegionX, minRegionZ, maxRegionX, maxRegionZ);
+    }
+
+    /**
+     * Plans the hydrology tiles of the whole area up front, nearest the centre first, so the spiral
+     * finds its tiles ready instead of stalling on each cold plan.
+     */
+    private void prefetchHydrology(int minRegionX, int minRegionZ, int maxRegionX, int maxRegionZ) {
+        Engine engine = resolveMetricsEngine();
+        if (engine == null || engine.getComplex() == null || engine.getComplex().getHydrologyRuntime() == null) {
+            return;
+        }
+        int minimumBlockX = minRegionX << 9;
+        int minimumBlockZ = minRegionZ << 9;
+        int maximumBlockX = ((maxRegionX + 1) << 9) - 1;
+        int maximumBlockZ = ((maxRegionZ + 1) << 9) - 1;
+        engine.getComplex().getHydrologyRuntime().prefetchArea(
+                minimumBlockX,
+                minimumBlockZ,
+                maximumBlockX,
+                maximumBlockZ,
+                (minimumBlockX + maximumBlockX) / 2,
+                (minimumBlockZ + maximumBlockZ) / 2
+        );
     }
 
     private boolean inBounds(int rx, int rz) {
@@ -591,8 +615,10 @@ public class AsyncPregenMethod implements PregeneratorMethod {
             return 16;
         }
 
-        if (recommendedCap > 128) {
-            return 128;
+        // A request spends most of its life queued behind Paper's status pipeline, so a large
+        // worker pool needs well over a hundred requests in flight before its workers stay busy.
+        if (recommendedCap > 256) {
+            return 256;
         }
 
         return recommendedCap;

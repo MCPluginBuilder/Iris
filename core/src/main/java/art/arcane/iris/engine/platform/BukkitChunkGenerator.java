@@ -853,7 +853,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 Hunk<PlatformBiome> biomes = Hunk.viewBiomes(tc);
                 try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_terrain_stage");
                      IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-                    engine.generate(x << 4, z << 4, blocks, biomes, false);
+                    engine.generate(x << 4, z << 4, blocks, biomes, engine.shouldGenerateMulticore());
                     blocks.apply();
                 }
             }

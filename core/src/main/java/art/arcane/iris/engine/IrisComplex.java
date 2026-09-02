@@ -80,12 +80,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiFunction;
 
 @Data
-@EqualsAndHashCode(exclude = {"data", "gridBoundsCache", "frozenInterpolators", "frozenGenerators", "inferredBiomeStreams", "hydrologyRuntime", "imageMapRuntime"})
-@ToString(exclude = {"data", "gridBoundsCache", "frozenInterpolators", "frozenGenerators", "inferredBiomeStreams", "hydrologyRuntime", "imageMapRuntime"})
+@EqualsAndHashCode(exclude = {"data", "gridBoundsCache", "sharedCornerBounds", "frozenInterpolators", "frozenGenerators", "inferredBiomeStreams", "hydrologyRuntime", "imageMapRuntime"})
+@ToString(exclude = {"data", "gridBoundsCache", "sharedCornerBounds", "frozenInterpolators", "frozenGenerators", "inferredBiomeStreams", "hydrologyRuntime", "imageMapRuntime"})
 public class IrisComplex implements DataProvider {
     private static final NoiseBounds ZERO_NOISE_BOUNDS = new NoiseBounds(0D, 0D);
     private static final AtomicLong lastBoundsFailureLog = new AtomicLong(0L);
     private static final int GRID_BOUNDS_CACHE_SIZE = 8192;
+    /** One million corners: about 16 MB, roughly a 4000 by 4000 block area at the 4-block grid. */
+    private static final int SHARED_CORNER_BOUNDS_CAPACITY = 1 << 20;
     private static final int HEIGHT_BOUNDS_GRID = 4;
     private static final Comparator<IrisInterpolator> INTERPOLATOR_ORDER = Comparator
             .comparing((IrisInterpolator interpolator) -> interpolator.getFunction().name())
@@ -102,6 +104,7 @@ public class IrisComplex implements DataProvider {
     };
     @Getter(AccessLevel.NONE)
     private final transient ThreadLocal<GridBoundsCache> gridBoundsCache = ThreadLocal.withInitial(GridBoundsCache::new);
+    private transient volatile SharedCornerBounds sharedCornerBounds = new SharedCornerBounds(SHARED_CORNER_BOUNDS_CAPACITY);
     @Getter(AccessLevel.NONE)
     private final transient IrisInterpolator[] frozenInterpolators;
     @Getter(AccessLevel.NONE)
@@ -921,14 +924,42 @@ public class IrisComplex implements DataProvider {
             return cache.packed[slot];
         }
 
-        NoiseBounds bounds = sampleBoundsRaw(cache, engine, interpolator, generators, gx, gz);
-        long packed = (((long) Float.floatToRawIntBits((float) bounds.min())) << 32) | (Float.floatToRawIntBits((float) bounds.max()) & 0xFFFFFFFFL);
+        // The per-thread table above catches the walk through one chunk; the shared table
+        // catches the same corner reached by another thread or by hydrology planning earlier.
+        SharedCornerBounds shared = sharedCornerBounds();
+        long sharedKey = SharedCornerBounds.key(gx, gz, interpolatorIndex);
+        long packed;
+        if (shared.contains(sharedKey)) {
+            packed = shared.get(sharedKey);
+            if (packed == Long.MIN_VALUE) {
+                packed = computePackedBounds(cache, engine, interpolator, generators, gx, gz);
+                shared.put(sharedKey, packed);
+            }
+        } else {
+            packed = computePackedBounds(cache, engine, interpolator, generators, gx, gz);
+            shared.put(sharedKey, packed);
+        }
         cache.gx[slot] = gx;
         cache.gz[slot] = gz;
         cache.idx[slot] = interpolatorIndex;
         cache.packed[slot] = packed;
         cache.valid[slot] = true;
         return packed;
+    }
+
+    /** The field initializer covers every real complex; an instance built without it gets one here. */
+    private SharedCornerBounds sharedCornerBounds() {
+        SharedCornerBounds shared = sharedCornerBounds;
+        if (shared == null) {
+            shared = new SharedCornerBounds(SHARED_CORNER_BOUNDS_CAPACITY);
+            sharedCornerBounds = shared;
+        }
+        return shared;
+    }
+
+    private long computePackedBounds(GridBoundsCache cache, Engine engine, IrisInterpolator interpolator, IrisGenerator[] generators, int gx, int gz) {
+        NoiseBounds bounds = sampleBoundsRaw(cache, engine, interpolator, generators, gx, gz);
+        return (((long) Float.floatToRawIntBits((float) bounds.min())) << 32) | (Float.floatToRawIntBits((float) bounds.max()) & 0xFFFFFFFFL);
     }
 
     private static double boundsLow(long packed) {

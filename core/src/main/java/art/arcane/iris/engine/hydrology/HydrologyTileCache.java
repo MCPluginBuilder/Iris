@@ -3,6 +3,7 @@ package art.arcane.iris.engine.hydrology;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.common.parallel.MultiBurst;
+import art.arcane.volmlib.util.cache.CacheKey;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 
@@ -11,8 +12,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class HydrologyTileCache implements AutoCloseable {
@@ -27,13 +31,25 @@ public final class HydrologyTileCache implements AutoCloseable {
     private final Cache<Long, ChunkColumns> composedChunks;
     private final AtomicLong cacheEpoch;
     private final ThreadLocal<LocalChunkColumns> localChunkColumns;
+    private final Executor prefetchExecutor;
+    private final Set<HydrologyTileKey> prefetching;
 
     public HydrologyTileCache(HydrologyPlanner planner) {
         this(planner, DEFAULT_MAXIMUM_ENTRIES);
     }
 
     public HydrologyTileCache(HydrologyPlanner planner, int maximumEntries) {
+        this(planner, maximumEntries, null);
+    }
+
+    /**
+     * @param prefetchExecutor runs neighbour tile planning ahead of generation, or null to plan
+     *                         tiles only when a chunk needs them
+     */
+    public HydrologyTileCache(HydrologyPlanner planner, int maximumEntries, Executor prefetchExecutor) {
         this.planner = Objects.requireNonNull(planner, "planner");
+        this.prefetchExecutor = prefetchExecutor;
+        this.prefetching = ConcurrentHashMap.newKeySet();
         if (maximumEntries < 1) {
             throw new IllegalArgumentException("maximumEntries must be positive.");
         }
@@ -121,7 +137,7 @@ public final class HydrologyTileCache implements AutoCloseable {
                 && local.columns().chunkZ() == chunkZ) {
             return local.columns();
         }
-        long packedChunk = RiverFootprint.pack(chunkX, chunkZ);
+        long packedChunk = CacheKey.mix(RiverFootprint.pack(chunkX, chunkZ));
         ChunkColumns columns = composedChunks.get(
                 packedChunk,
                 ignored -> composeChunkColumns(chunkX, chunkZ)
@@ -148,6 +164,7 @@ public final class HydrologyTileCache implements AutoCloseable {
             }
         }
         List<HydrologyTile> relevantTiles = loadTiles(relevantKeys);
+        prefetchNeighbours(minimumTileX, maximumTileX, minimumTileZ, maximumTileZ);
         HydrologyColumnSample[] columns = new HydrologyColumnSample[CHUNK_COLUMN_COUNT];
         for (int localZ = 0; localZ < CHUNK_SIZE; localZ++) {
             for (int localX = 0; localX < CHUNK_SIZE; localX++) {
@@ -165,6 +182,76 @@ public final class HydrologyTileCache implements AutoCloseable {
         return new ChunkColumns(chunkX, chunkZ, columns);
     }
 
+    /**
+     * Plans the ring of tiles around the ones a chunk just needed, on the prefetch executor, so a
+     * generation front walking outward finds its next tiles already planned instead of stalling on
+     * a cold plan. Tiles already cached or already being prefetched are skipped; a tile a chunk
+     * needs before its prefetch finishes simply joins that computation.
+     */
+    private void prefetchNeighbours(int minimumTileX, int maximumTileX, int minimumTileZ, int maximumTileZ) {
+        if (prefetchExecutor == null) {
+            return;
+        }
+        for (int tileZ = minimumTileZ - 1; tileZ <= maximumTileZ + 1; tileZ++) {
+            for (int tileX = minimumTileX - 1; tileX <= maximumTileX + 1; tileX++) {
+                if (tileX >= minimumTileX && tileX <= maximumTileX && tileZ >= minimumTileZ && tileZ <= maximumTileZ) {
+                    continue;
+                }
+                prefetch(new HydrologyTileKey(tileX, tileZ));
+            }
+        }
+    }
+
+    /**
+     * Plans every tile that touches the block area, nearest to the centre first, on the prefetch
+     * executor. A pregeneration calls this once up front so its spiral never waits on a cold plan
+     * once the first tiles are in; nothing happens without a prefetch executor.
+     */
+    public void prefetchArea(int minimumBlockX, int minimumBlockZ, int maximumBlockX, int maximumBlockZ, int centreBlockX, int centreBlockZ) {
+        if (prefetchExecutor == null) {
+            return;
+        }
+        int tileSize = planner.settings().routing().tileSize();
+        int publicationRadius = planner.settings().publicationRadius();
+        int minimumTileX = tileCoordinate((long) minimumBlockX - publicationRadius, tileSize);
+        int maximumTileX = tileCoordinate((long) maximumBlockX + publicationRadius, tileSize);
+        int minimumTileZ = tileCoordinate((long) minimumBlockZ - publicationRadius, tileSize);
+        int maximumTileZ = tileCoordinate((long) maximumBlockZ + publicationRadius, tileSize);
+        int centreTileX = tileCoordinate(centreBlockX, tileSize);
+        int centreTileZ = tileCoordinate(centreBlockZ, tileSize);
+        ArrayList<HydrologyTileKey> keys = new ArrayList<>();
+        for (int tileZ = minimumTileZ; tileZ <= maximumTileZ; tileZ++) {
+            for (int tileX = minimumTileX; tileX <= maximumTileX; tileX++) {
+                keys.add(new HydrologyTileKey(tileX, tileZ));
+            }
+        }
+        keys.sort(java.util.Comparator.comparingInt((HydrologyTileKey key) -> Math.max(Math.abs(key.tileX() - centreTileX), Math.abs(key.tileZ() - centreTileZ)))
+                .thenComparingInt(HydrologyTileKey::tileZ)
+                .thenComparingInt(HydrologyTileKey::tileX));
+        for (HydrologyTileKey key : keys) {
+            prefetch(key);
+        }
+    }
+
+    private void prefetch(HydrologyTileKey key) {
+        if (tiles.getIfPresent(key) != null || !prefetching.add(key)) {
+            return;
+        }
+        try {
+            prefetchExecutor.execute(() -> {
+                try {
+                    get(key);
+                } catch (RuntimeException failure) {
+                    IrisLogging.reportError(failure);
+                } finally {
+                    prefetching.remove(key);
+                }
+            });
+        } catch (RuntimeException rejected) {
+            prefetching.remove(key);
+        }
+    }
+
     private List<HydrologyTile> loadTiles(List<HydrologyTileKey> keys) {
         if (keys.size() < 2
                 || !IrisPlatforms.isBound()) {
@@ -174,15 +261,33 @@ public final class HydrologyTileCache implements AutoCloseable {
             }
             return List.copyOf(loaded);
         }
-        ArrayList<CompletableFuture<HydrologyTile>> futures = new ArrayList<>(keys.size());
-        for (HydrologyTileKey key : keys) {
-            futures.add(CompletableFuture.supplyAsync(() -> get(key), MultiBurst.burst));
+        // Tiles already planned are answered in place; only a tile that still needs planning is
+        // worth a round trip through the pool, and most chunks find every tile they need cached.
+        HydrologyTile[] loaded = new HydrologyTile[keys.size()];
+        ArrayList<CompletableFuture<HydrologyTile>> futures = null;
+        for (int index = 0; index < loaded.length; index++) {
+            HydrologyTileKey key = keys.get(index);
+            HydrologyTile present = tiles.getIfPresent(key);
+            if (present != null) {
+                loaded[index] = present;
+                continue;
+            }
+            if (futures == null) {
+                futures = new ArrayList<>(loaded.length);
+            }
+            int slot = index;
+            CompletableFuture<HydrologyTile> future = CompletableFuture.supplyAsync(() -> get(key), MultiBurst.hydrology);
+            futures.add(future.thenApply(tile -> {
+                loaded[slot] = tile;
+                return tile;
+            }));
         }
-        ArrayList<HydrologyTile> loaded = new ArrayList<>(keys.size());
-        for (CompletableFuture<HydrologyTile> future : futures) {
-            loaded.add(awaitTile(future));
+        if (futures != null) {
+            for (CompletableFuture<HydrologyTile> future : futures) {
+                awaitTile(future);
+            }
         }
-        return List.copyOf(loaded);
+        return List.of(loaded);
     }
 
     private static HydrologyTile awaitTile(CompletableFuture<HydrologyTile> future) {

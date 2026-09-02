@@ -21,8 +21,8 @@ public class AsyncPregenMethodConcurrencyCapTest {
         assertEquals(16, AsyncPregenMethod.computePaperLikeRecommendedCap(1));
         assertEquals(32, AsyncPregenMethod.computePaperLikeRecommendedCap(4));
         assertEquals(96, AsyncPregenMethod.computePaperLikeRecommendedCap(12));
-        assertEquals(128, AsyncPregenMethod.computePaperLikeRecommendedCap(80));
-        assertEquals(128, AsyncPregenMethod.computePaperLikeRecommendedCap(128));
+        assertEquals(256, AsyncPregenMethod.computePaperLikeRecommendedCap(80));
+        assertEquals(256, AsyncPregenMethod.computePaperLikeRecommendedCap(128));
     }
 
     @Test

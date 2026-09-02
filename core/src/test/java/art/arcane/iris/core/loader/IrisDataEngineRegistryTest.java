@@ -89,4 +89,21 @@ public class IrisDataEngineRegistryTest {
         public void dereference() {
         }
     }
+
+    @Test
+    public void soleEngineResolvesWithoutAContextAndDropsOnceClosed() throws Exception {
+        data = IrisData.openRuntime(temporaryFolder.newFolder("pack"));
+        AtomicBoolean closed = new AtomicBoolean(false);
+        Engine engine = engine(closed);
+
+        data.registerEngine(engine);
+
+        assertSame(engine, data.getEngine());
+        assertSame(engine, data.getEngine());
+
+        closed.set(true);
+
+        assertNull(data.getEngine());
+        assertEquals(0, data.getEngines().size());
+    }
 }

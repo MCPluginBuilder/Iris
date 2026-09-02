@@ -49,6 +49,7 @@ public class PregenTask {
      * hang. A request past the world limit is a bad request, so it fails at construction.
      */
     static final int MAX_REGION_SPAN = 117_189;
+    static final int CHUNK_LATTICE_STRIDE = 4;
     private static final int MAX_CACHED_ORDERS = 512;
     private static final LinkedHashMap<Long, int[]> ORDERS = new LinkedHashMap<>(64, 0.75f, true) {
         @Override
@@ -139,14 +140,35 @@ public class PregenTask {
             p.add(new Position2(xx, zz));
         }).drain();
         p.sort(Comparator.comparing((i) -> i.distance(pull)));
-
-        int[] packed = new int[p.size()];
-        for (int index = 0; index < p.size(); index++) {
-            Position2 position = p.get(index);
+        KList<Position2> ordered = latticeOrder(p);
+        int[] packed = new int[ordered.size()];
+        for (int index = 0; index < ordered.size(); index++) {
+            Position2 position = ordered.get(index);
             packed[index] = PowerOfTwoCoordinates.packLocal32(position.getX(), position.getZ());
         }
 
         return packed;
+    }
+
+    /**
+     * Regroups a region's chunk order into {@link #CHUNK_LATTICE_STRIDE}-spaced lattices, keeping
+     * the pull order inside each lattice. Chunks generated back to back then sit a stride apart, so
+     * their mantle windows do not overlap and their generations never wait on each other; the
+     * first lattice writes most of the region's mantle and the later ones find it already done.
+     */
+    static KList<Position2> latticeOrder(KList<Position2> pulled) {
+        KList<Position2> ordered = new KList<>();
+        for (int classX = 0; classX < CHUNK_LATTICE_STRIDE; classX++) {
+            for (int classZ = 0; classZ < CHUNK_LATTICE_STRIDE; classZ++) {
+                for (Position2 position : pulled) {
+                    if (Math.floorMod(position.getX(), CHUNK_LATTICE_STRIDE) == classX
+                            && Math.floorMod(position.getZ(), CHUNK_LATTICE_STRIDE) == classZ) {
+                        ordered.add(position);
+                    }
+                }
+            }
+        }
+        return ordered;
     }
 
     private static long orderKey(int pullX, int pullZ) {
