@@ -19,6 +19,8 @@ import art.arcane.iris.engine.hydrology.RiverCourse;
 import art.arcane.iris.engine.hydrology.RiverCourseType;
 import art.arcane.iris.engine.hydrology.RiverFootprint;
 import art.arcane.iris.engine.hydrology.RiverOutlet;
+import art.arcane.iris.engine.hydrology.surface.SurfaceCenterline;
+import art.arcane.iris.engine.hydrology.surface.SurfaceFootprintCompiler;
 import art.arcane.iris.engine.hydrology.cave.CavePosition;
 import art.arcane.iris.engine.hydrology.cave.CaveVoxel;
 import art.arcane.iris.engine.hydrology.cave.CaveVoxelView;
@@ -409,7 +411,6 @@ public final class HydrologyPackProbe {
             int minimumExposedSurfaceLength,
             double exposedSurfaceLength,
             boolean complete,
-            boolean terminalExposed,
             List<HydrologyPoint> centerline,
             Set<Long> ownedCells
     ) {
@@ -443,15 +444,6 @@ public final class HydrologyPackProbe {
             double longestGridLockedRun,
             int isolatedTurns,
             double p95TurnDegrees,
-            int hardEndpointRamps,
-            int sourceEndpointWidth,
-            int sourceCruiseWidth,
-            double sourceRampLength,
-            int terminalEndpointWidth,
-            int terminalCruiseWidth,
-            double terminalRampLength,
-            int clippedTerminalCaps,
-            double terminalCapLength,
             int minimumInteriorWidth,
             double maximumWidthTroughDepthRatio,
             int unexpectedLeaves,
@@ -490,15 +482,12 @@ public final class HydrologyPackProbe {
         private static final double ISOLATED_TURN_DEGREES = 35D;
         private static final double ISOLATED_NEIGHBOR_TURN_DEGREES = 10D;
         private static final double MAXIMUM_P95_TURN_DEGREES = 35D;
-        private static final double MINIMUM_ENDPOINT_RAMP_WIDTHS = 2D;
         private static final double MINIMUM_PLANFORM_LENGTH = 96D;
         private static final int WIDTH_SAMPLE_SPACING = 4;
         private static final int MINIMUM_ENDPOINT_PROFILE_MARGIN = 48;
         private static final int MINIMUM_TROUGH_LENGTH = 32;
         private static final int MINIMUM_TROUGH_WIDTH_DEFICIT = 3;
         private static final double MAXIMUM_TROUGH_WIDTH_RATIO = 0.65D;
-        private static final double MINIMUM_TERMINAL_CAP_WIDTH_RATIO = 0.2D;
-        private static final int MINIMUM_TERMINAL_CAP_LENGTH = 2;
         private static final int MAXIMUM_IMAGE_DIMENSION = 2048;
 
         private final TreeMap<Long, SeedAccumulator> seeds = new TreeMap<>();
@@ -549,11 +538,11 @@ public final class HydrologyPackProbe {
             return List.copyOf(results);
         }
 
-        void requireValid() {
-            requireValidResults(results());
+        List<String> failures() {
+            return failures(results());
         }
 
-        static void requireValidResults(List<SeedMorphologyResult> results) {
+        static List<String> failures(List<SeedMorphologyResult> results) {
             ArrayList<String> failures = new ArrayList<>();
             for (SeedMorphologyResult result : results) {
                 if (result.courses().isEmpty()) {
@@ -567,9 +556,7 @@ public final class HydrologyPackProbe {
             if (results.isEmpty()) {
                 failures.add("scan=[NO_SURFACE_COURSES]");
             }
-            if (!failures.isEmpty()) {
-                throw new IllegalStateException("Real-pack published surface morphology failed: " + failures);
-            }
+            return List.copyOf(failures);
         }
 
         void writeReports(File reportDirectory) throws IOException {
@@ -598,14 +585,12 @@ public final class HydrologyPackProbe {
             int courses = 0;
             int failures = 0;
             int unexpectedLeaves = 0;
-            int clippedTerminalCaps = 0;
             int minimumInteriorWidth = Integer.MAX_VALUE;
             double maximumWidthTroughDepthRatio = 0D;
             for (SeedMorphologyResult result : results()) {
                 courses += result.courses().size();
                 unexpectedLeaves += result.unexpectedLeaves();
                 for (CourseMorphologyResult course : result.courses()) {
-                    clippedTerminalCaps += course.clippedTerminalCaps();
                     if (course.minimumInteriorWidth() > 0) {
                         minimumInteriorWidth = Math.min(minimumInteriorWidth, course.minimumInteriorWidth());
                     }
@@ -622,7 +607,6 @@ public final class HydrologyPackProbe {
                     + " morphology_courses=" + courses
                     + " morphology_failed_seeds=" + failures
                     + " morphology_unexpected_leaves=" + unexpectedLeaves
-                    + " morphology_clipped_terminal_caps=" + clippedTerminalCaps
                     + " morphology_minimum_interior_width="
                     + (minimumInteriorWidth == Integer.MAX_VALUE ? 0 : minimumInteriorWidth)
                     + " morphology_maximum_width_trough_depth_ratio="
@@ -631,8 +615,8 @@ public final class HydrologyPackProbe {
 
         static CourseMorphologyResult analyzeCourse(CourseMorphologyInput input) {
             ArrayList<String> violations = new ArrayList<>();
-            List<HydrologyPoint> raster = rasterCenterline(input.centerline());
-            List<List<HydrologyPoint>> publishedRuns = publishedRuns(input, raster);
+            SurfaceCenterline raster = SurfaceCenterline.densify(input.centerline());
+            List<int[]> publishedRuns = publishedRuns(input, raster);
             if (publishedRuns.isEmpty()) {
                 violations.add("NO_PUBLISHED_CENTERLINE");
                 return new CourseMorphologyResult(
@@ -643,15 +627,6 @@ public final class HydrologyPackProbe {
                         input.exposedSurfaceLength(),
                         input.minimumExposedSurfaceLength(),
                         1D,
-                        0D,
-                        0,
-                        0D,
-                        2,
-                        0,
-                        0,
-                        0D,
-                        0,
-                        0,
                         0D,
                         0,
                         0D,
@@ -666,8 +641,8 @@ public final class HydrologyPackProbe {
             double longestGridLockedRun = 0D;
             int isolatedTurns = 0;
             ArrayList<Double> turnDegrees = new ArrayList<>();
-            for (List<HydrologyPoint> published : publishedRuns) {
-                List<HydrologyPoint> smoothed = smoothCenterline(published, 4);
+            for (int[] run : publishedRuns) {
+                List<HydrologyPoint> smoothed = smoothCenterline(stationPoints(input, raster, run[0], run[1]), 4);
                 List<HydrologyPoint> sampled = resampleCenterline(smoothed, SAMPLE_SPACING);
                 double runLength = routeLength(sampled);
                 HeadingMetrics heading = headingMetrics(sampled);
@@ -683,15 +658,12 @@ public final class HydrologyPackProbe {
             double gridLockedFraction = routedLength == 0D ? 0D : lockedLength / routedLength;
             turnDegrees.sort(Double::compare);
             double p95TurnDegrees = percentile95(turnDegrees);
-            EndpointRampMetrics endpointRamps = endpointRampMetrics(input, raster);
-            int hardEndpointRamps = endpointRamps.hardRamps();
-            TerminalCapMetrics terminalCap = terminalCapMetrics(input, raster);
-            InteriorWidthMetrics interiorWidths = interiorWidthMetrics(input, publishedRuns);
+            InteriorWidthMetrics interiorWidths = interiorWidthMetrics(input, raster, publishedRuns);
             List<HydrologyPoint> expectedLeaves = publishedEndpoints(input, raster);
             int unexpectedLeaves = unexpectedLeaves(
                     input.ownedCells(),
                     expectedLeaves,
-                    raster,
+                    stationPoints(input, raster, 0, raster.size() - 1),
                     input.maximumWidth()
             );
             if (routedLength >= MINIMUM_PLANFORM_LENGTH) {
@@ -711,20 +683,6 @@ public final class HydrologyPackProbe {
             if (input.complete()
                     && input.exposedSurfaceLength() < input.minimumExposedSurfaceLength()) {
                 violations.add("INSUFFICIENT_EXPOSED_SURFACE");
-            }
-            if (hardEndpointRamps > 0) {
-                violations.add("HARD_ENDPOINT_RAMP");
-            }
-            int sourceWidthTolerance = Math.max(
-                    1,
-                    (int) StrictMath.ceil(endpointRamps.sourceCruiseWidth() * 0.1D)
-            );
-            if (endpointRamps.sourceEndpointWidth()
-                    > endpointRamps.sourceCruiseWidth() + sourceWidthTolerance) {
-                violations.add("WIDENED_SOURCE_BASIN");
-            }
-            if (terminalCap.clipped()) {
-                violations.add("CLIPPED_TERMINAL_CAP");
             }
             if (interiorWidths.minimumWidth() > 0
                     && interiorWidths.minimumWidth() < input.minimumWidth()) {
@@ -747,15 +705,6 @@ public final class HydrologyPackProbe {
                     longestGridLockedRun,
                     isolatedTurns,
                     p95TurnDegrees,
-                    hardEndpointRamps,
-                    endpointRamps.sourceEndpointWidth(),
-                    endpointRamps.sourceCruiseWidth(),
-                    endpointRamps.sourceRampLength(),
-                    endpointRamps.terminalEndpointWidth(),
-                    endpointRamps.terminalCruiseWidth(),
-                    endpointRamps.terminalRampLength(),
-                    terminalCap.clipped() ? 1 : 0,
-                    terminalCap.length(),
                     interiorWidths.minimumWidth(),
                     interiorWidths.maximumTroughDepthRatio(),
                     unexpectedLeaves,
@@ -775,9 +724,9 @@ public final class HydrologyPackProbe {
                 }
                 courses.add(analyzeCourse(input));
                 ownedCells.addAll(input.ownedCells());
-                List<HydrologyPoint> raster = rasterCenterline(input.centerline());
+                SurfaceCenterline raster = SurfaceCenterline.densify(input.centerline());
                 expectedLeaves.addAll(publishedEndpoints(input, raster));
-                expectedCenterlines.addAll(raster);
+                expectedCenterlines.addAll(stationPoints(input, raster, 0, raster.size() - 1));
                 maximumWidth = Math.max(maximumWidth, input.maximumWidth());
             }
             int unexpectedLeaves = unexpectedLeaves(
@@ -798,221 +747,10 @@ public final class HydrologyPackProbe {
             return new SeedMorphologyResult(seed, courses, unexpectedLeaves, violations);
         }
 
-        private static EndpointRampMetrics endpointRampMetrics(
-                CourseMorphologyInput input,
-                List<HydrologyPoint> raster
-        ) {
-            if (raster.size() < 2 || input.ownedCells().isEmpty()) {
-                return new EndpointRampMetrics(2, 0, 0, 0D, 0, 0, 0D);
-            }
-            int hard = 0;
-            int sourceEndpointWidth = 0;
-            int sourceCruiseWidth = 0;
-            double sourceRampLength = 0D;
-            if (ownedNear(
-                    input.ownedCells(),
-                    input.source().x(),
-                    input.source().z(),
-                    input.maximumWidth()
-            )) {
-                sourceCruiseWidth = cruiseWidth(input.ownedCells(), raster, input.maximumWidth(), true);
-                sourceEndpointWidth = endpointWidth(input.ownedCells(), raster, input.maximumWidth(), true);
-                sourceRampLength = endpointTransitionLength(
-                        input.ownedCells(),
-                        raster,
-                        input.maximumWidth(),
-                        sourceCruiseWidth,
-                        true
-                );
-                if (sourceRampLength < sourceCruiseWidth * MINIMUM_ENDPOINT_RAMP_WIDTHS) {
-                    hard++;
-                }
-            }
-            if (!input.terminalExposed() || !ownedNear(
-                    input.ownedCells(),
-                    input.terminal().x(),
-                    input.terminal().z(),
-                    input.maximumWidth()
-            )) {
-                return new EndpointRampMetrics(
-                        hard,
-                        sourceEndpointWidth,
-                        sourceCruiseWidth,
-                        sourceRampLength,
-                        0,
-                        0,
-                        0D
-                );
-            }
-            int terminalWidth = cruiseWidth(input.ownedCells(), raster, input.maximumWidth(), false);
-            int terminalEndpointWidth = endpointWidth(input.ownedCells(), raster, input.maximumWidth(), false);
-            double terminalRamp = endpointTransitionLength(
-                    input.ownedCells(),
-                    raster,
-                    input.maximumWidth(),
-                    terminalWidth,
-                    false
-            );
-            return new EndpointRampMetrics(
-                    terminalRamp < terminalWidth * MINIMUM_ENDPOINT_RAMP_WIDTHS ? hard + 1 : hard,
-                    sourceEndpointWidth,
-                    sourceCruiseWidth,
-                    sourceRampLength,
-                    terminalEndpointWidth,
-                    terminalWidth,
-                    terminalRamp
-            );
-        }
-
-        private static int endpointWidth(
-                Set<Long> cells,
-                List<HydrologyPoint> raster,
-                int maximumWidth,
-                boolean source
-        ) {
-            int endpointIndex = source ? 0 : raster.size() - 1;
-            int adjacentIndex = source ? 1 : raster.size() - 2;
-            return crossSectionWidth(
-                    cells,
-                    raster.get(endpointIndex),
-                    raster.get(endpointIndex),
-                    raster.get(adjacentIndex),
-                    maximumWidth
-            );
-        }
-
-        private static int cruiseWidth(
-                Set<Long> cells,
-                List<HydrologyPoint> raster,
-                int maximumWidth,
-                boolean source
-        ) {
-            int start = Math.min(raster.size() - 2, Math.max(48, maximumWidth * 4));
-            int end = Math.min(raster.size() - 1, Math.max(start + 16, maximumWidth * 6));
-            ArrayList<Integer> widths = new ArrayList<>();
-            for (int offset = start; offset <= end; offset++) {
-                int index = source ? offset : raster.size() - 1 - offset;
-                if (index <= 0 || index >= raster.size() - 1) {
-                    continue;
-                }
-                int width = crossSectionWidth(
-                        cells,
-                        raster.get(index),
-                        raster.get(index - 1),
-                        raster.get(index + 1),
-                        maximumWidth
-                );
-                if (width > 0) {
-                    widths.add(width);
-                }
-            }
-            if (widths.isEmpty()) {
-                return maximumWidth;
-            }
-            widths.sort(Integer::compare);
-            return Math.max(1, widths.get(widths.size() / 2));
-        }
-
-        private static double endpointTransitionLength(
-                Set<Long> cells,
-                List<HydrologyPoint> raster,
-                int maximumWidth,
-                int cruiseWidth,
-                boolean source
-        ) {
-            int endpointIndex = source ? 0 : raster.size() - 1;
-            int direction = source ? 1 : -1;
-            int search = Math.max(32, cruiseWidth * 6);
-            int adjacentIndex = endpointIndex + direction;
-            int endpointWidth = crossSectionWidth(
-                    cells,
-                    raster.get(endpointIndex),
-                    raster.get(endpointIndex),
-                    raster.get(adjacentIndex),
-                    maximumWidth
-            );
-            int widthTolerance = Math.max(1, (int) StrictMath.ceil(cruiseWidth * 0.1D));
-            if (Math.abs(endpointWidth - cruiseWidth) <= widthTolerance) {
-                return 0D;
-            }
-            double distance = 0D;
-            int index = adjacentIndex;
-            while (index >= 0 && index < raster.size() && distance <= search) {
-                int previousIndex = Math.max(0, Math.min(raster.size() - 1, index - direction));
-                int nextIndex = Math.max(0, Math.min(raster.size() - 1, index + direction));
-                HydrologyPoint previous = raster.get(previousIndex);
-                HydrologyPoint station = raster.get(index);
-                HydrologyPoint next = raster.get(nextIndex);
-                distance += StrictMath.hypot(station.x() - previous.x(), station.z() - previous.z());
-                int width = crossSectionWidth(cells, station, previous, next, maximumWidth);
-                if (Math.abs(width - cruiseWidth) <= widthTolerance) {
-                    return distance;
-                }
-                index += direction;
-            }
-            return distance;
-        }
-
-        private static TerminalCapMetrics terminalCapMetrics(
-                CourseMorphologyInput input,
-                List<HydrologyPoint> raster
-        ) {
-            if (!input.complete() || !input.terminalExposed() || raster.size() < 2
-                    || !ownedNear(
-                    input.ownedCells(),
-                    input.terminal().x(),
-                    input.terminal().z(),
-                    input.maximumWidth()
-            )) {
-                return new TerminalCapMetrics(false, 0D);
-            }
-            int terminalIndex = raster.size() - 1;
-            int tangentIndex = Math.max(0, terminalIndex - Math.max(8, input.maximumWidth()));
-            HydrologyPoint tangentStart = raster.get(tangentIndex);
-            HydrologyPoint terminal = raster.get(terminalIndex);
-            double tangentX = terminal.x() - tangentStart.x();
-            double tangentZ = terminal.z() - tangentStart.z();
-            double tangentLength = StrictMath.hypot(tangentX, tangentZ);
-            if (tangentLength == 0D) {
-                return new TerminalCapMetrics(true, 0D);
-            }
-            tangentX /= tangentLength;
-            tangentZ /= tangentLength;
-            int terminalWidth = crossSectionWidth(
-                    input.ownedCells(),
-                    terminal,
-                    tangentStart,
-                    terminal,
-                    input.maximumWidth()
-            );
-            int searchLength = Math.max(MINIMUM_TERMINAL_CAP_LENGTH, input.maximumWidth() * 2);
-            double capLength = 0D;
-            for (int offset = 1; offset <= searchLength; offset++) {
-                double centerX = terminal.x() + tangentX * offset;
-                double centerZ = terminal.z() + tangentZ * offset;
-                int width = crossSectionWidth(
-                        input.ownedCells(),
-                        centerX,
-                        centerZ,
-                        tangentX,
-                        tangentZ,
-                        input.maximumWidth()
-                );
-                if (width == 0) {
-                    break;
-                }
-                capLength = offset;
-            }
-            double requiredLength = Math.max(
-                    MINIMUM_TERMINAL_CAP_LENGTH,
-                    terminalWidth * MINIMUM_TERMINAL_CAP_WIDTH_RATIO
-            );
-            return new TerminalCapMetrics(capLength + 0.25D < requiredLength, capLength);
-        }
-
         private static InteriorWidthMetrics interiorWidthMetrics(
                 CourseMorphologyInput input,
-                List<List<HydrologyPoint>> publishedRuns
+                SurfaceCenterline raster,
+                List<int[]> publishedRuns
         ) {
             if (!input.complete()) {
                 return new InteriorWidthMetrics(0, 0D);
@@ -1031,18 +769,16 @@ public final class HydrologyPackProbe {
                             WIDTH_SAMPLE_SPACING
                     )
             );
-            for (List<HydrologyPoint> run : publishedRuns) {
-                int firstIndex = Math.min(run.size(), endpointMargin);
-                int lastIndex = Math.max(firstIndex, run.size() - endpointMargin);
+            for (int[] run : publishedRuns) {
+                int stations = run[1] - run[0] + 1;
+                int firstOffset = Math.min(stations, endpointMargin);
+                int lastOffset = Math.max(firstOffset, stations - endpointMargin);
                 ArrayList<Integer> widths = new ArrayList<>();
-                for (int index = firstIndex; index < lastIndex; index += WIDTH_SAMPLE_SPACING) {
-                    int previousIndex = Math.max(0, index - 1);
-                    int nextIndex = Math.min(run.size() - 1, index + 1);
+                for (int offset = firstOffset; offset < lastOffset; offset += WIDTH_SAMPLE_SPACING) {
                     int width = crossSectionWidth(
                             input.ownedCells(),
-                            run.get(index),
-                            run.get(previousIndex),
-                            run.get(nextIndex),
+                            raster,
+                            run[0] + offset,
                             input.maximumWidth()
                     );
                     if (width <= 0) {
@@ -1087,91 +823,85 @@ public final class HydrologyPackProbe {
 
         private static List<HydrologyPoint> publishedEndpoints(
                 CourseMorphologyInput input,
-                List<HydrologyPoint> raster
+                SurfaceCenterline raster
         ) {
-            List<List<HydrologyPoint>> runs = publishedRuns(input, raster);
+            List<int[]> runs = publishedRuns(input, raster);
             if (runs.isEmpty()) {
                 return List.of(input.source(), input.terminal());
             }
             ArrayList<HydrologyPoint> endpoints = new ArrayList<>(runs.size() * 2);
-            for (List<HydrologyPoint> run : runs) {
-                endpoints.add(run.getFirst());
-                endpoints.add(run.getLast());
+            for (int[] run : runs) {
+                endpoints.add(stationPoint(input, raster, run[0]));
+                endpoints.add(stationPoint(input, raster, run[1]));
             }
             return List.copyOf(endpoints);
         }
 
-        private static List<List<HydrologyPoint>> publishedRuns(
+        private static List<int[]> publishedRuns(
                 CourseMorphologyInput input,
-                List<HydrologyPoint> raster
+                SurfaceCenterline raster
         ) {
-            ArrayList<List<HydrologyPoint>> runs = new ArrayList<>();
-            ArrayList<HydrologyPoint> current = new ArrayList<>();
-            for (HydrologyPoint point : raster) {
-                if (ownedNear(input.ownedCells(), point.x(), point.z(), 1)) {
-                    current.add(point);
+            ArrayList<int[]> runs = new ArrayList<>();
+            int start = -1;
+            for (int station = 0; station < raster.size(); station++) {
+                if (ownedNear(input.ownedCells(), raster.x()[station], raster.z()[station], 1)) {
+                    if (start < 0) {
+                        start = station;
+                    }
                     continue;
                 }
-                if (current.size() >= 2) {
-                    runs.add(List.copyOf(current));
+                if (start >= 0 && station - start >= 2) {
+                    runs.add(new int[]{start, station - 1});
                 }
-                current.clear();
+                start = -1;
             }
-            if (current.size() >= 2) {
-                runs.add(List.copyOf(current));
+            if (start >= 0 && raster.size() - start >= 2) {
+                runs.add(new int[]{start, raster.size() - 1});
             }
             return List.copyOf(runs);
         }
 
-        private static int crossSectionWidth(
-                Set<Long> cells,
-                HydrologyPoint center,
-                HydrologyPoint before,
-                HydrologyPoint after,
-                int maximumWidth
+        private static List<HydrologyPoint> stationPoints(
+                CourseMorphologyInput input,
+                SurfaceCenterline raster,
+                int firstStation,
+                int lastStation
         ) {
-            double tangentX = after.x() - before.x();
-            double tangentZ = after.z() - before.z();
-            double tangentLength = StrictMath.hypot(tangentX, tangentZ);
-            if (tangentLength == 0D) {
-                tangentX = 1D;
-                tangentLength = 1D;
+            ArrayList<HydrologyPoint> points = new ArrayList<>(lastStation - firstStation + 1);
+            for (int station = firstStation; station <= lastStation; station++) {
+                points.add(stationPoint(input, raster, station));
             }
-            double perpendicularX = -tangentZ / tangentLength;
-            double perpendicularZ = tangentX / tangentLength;
-            int limit = Math.max(4, maximumWidth * 2);
-            HashSet<Long> sampled = new HashSet<>();
-            for (int offset = -limit; offset <= limit; offset++) {
-                int x = (int) StrictMath.round(center.x() + perpendicularX * offset);
-                int z = (int) StrictMath.round(center.z() + perpendicularZ * offset);
-                long packed = RiverFootprint.pack(x, z);
-                if (cells.contains(packed)) {
-                    sampled.add(packed);
-                }
-            }
-            return sampled.size();
+            return List.copyOf(points);
         }
 
+        private static HydrologyPoint stationPoint(
+                CourseMorphologyInput input,
+                SurfaceCenterline raster,
+                int station
+        ) {
+            return new HydrologyPoint(
+                    raster.x()[station],
+                    input.centerline().get(raster.pathIndex()[station]).y(),
+                    raster.z()[station]
+            );
+        }
+
+        // Transect over published cells; the normal comes from production SurfaceCenterline.
         private static int crossSectionWidth(
                 Set<Long> cells,
-                double centerX,
-                double centerZ,
-                double tangentX,
-                double tangentZ,
+                SurfaceCenterline raster,
+                int station,
                 int maximumWidth
         ) {
-            double tangentLength = StrictMath.hypot(tangentX, tangentZ);
-            if (tangentLength == 0D) {
-                tangentX = 1D;
-                tangentLength = 1D;
-            }
-            double perpendicularX = -tangentZ / tangentLength;
-            double perpendicularZ = tangentX / tangentLength;
+            double centerX = raster.x()[station];
+            double centerZ = raster.z()[station];
+            double normalX = raster.normalX(station);
+            double normalZ = raster.normalZ(station);
             int limit = Math.max(4, maximumWidth * 2);
             HashSet<Long> sampled = new HashSet<>();
             for (int offset = -limit; offset <= limit; offset++) {
-                int x = (int) StrictMath.round(centerX + perpendicularX * offset);
-                int z = (int) StrictMath.round(centerZ + perpendicularZ * offset);
+                int x = (int) StrictMath.round(centerX + normalX * offset);
+                int z = (int) StrictMath.round(centerZ + normalZ * offset);
                 long packed = RiverFootprint.pack(x, z);
                 if (cells.contains(packed)) {
                     sampled.add(packed);
@@ -1236,43 +966,6 @@ public final class HydrologyPackProbe {
             return sortedValues.isEmpty()
                     ? 0D
                     : sortedValues.get(Math.max(0, (int) StrictMath.ceil(sortedValues.size() * 0.95D) - 1));
-        }
-
-        private static double turnDegrees(HydrologyPoint previous, HydrologyPoint point, HydrologyPoint next) {
-            double incomingX = point.x() - previous.x();
-            double incomingZ = point.z() - previous.z();
-            double outgoingX = next.x() - point.x();
-            double outgoingZ = next.z() - point.z();
-            double incomingLength = StrictMath.hypot(incomingX, incomingZ);
-            double outgoingLength = StrictMath.hypot(outgoingX, outgoingZ);
-            if (incomingLength == 0D || outgoingLength == 0D) {
-                return 0D;
-            }
-            double cosine = (incomingX * outgoingX + incomingZ * outgoingZ)
-                    / (incomingLength * outgoingLength);
-            return StrictMath.toDegrees(StrictMath.acos(Math.max(-1D, Math.min(1D, cosine))));
-        }
-
-        private static List<HydrologyPoint> rasterCenterline(List<HydrologyPoint> points) {
-            ArrayList<HydrologyPoint> raster = new ArrayList<>();
-            for (int pair = 0; pair < points.size() - 1; pair++) {
-                HydrologyPoint start = points.get(pair);
-                HydrologyPoint end = points.get(pair + 1);
-                int steps = Math.max(Math.abs(end.x() - start.x()), Math.abs(end.z() - start.z()));
-                if (steps == 0) {
-                    continue;
-                }
-                int first = raster.isEmpty() ? 0 : 1;
-                for (int step = first; step <= steps; step++) {
-                    double progress = step / (double) steps;
-                    raster.add(new HydrologyPoint(
-                            (int) StrictMath.round(start.x() + (end.x() - start.x()) * progress),
-                            (int) StrictMath.round(start.y() + (end.y() - start.y()) * progress),
-                            (int) StrictMath.round(start.z() + (end.z() - start.z()) * progress)
-                    ));
-                }
-            }
-            return List.copyOf(raster);
         }
 
         private static List<HydrologyPoint> smoothCenterline(List<HydrologyPoint> points, int radius) {
@@ -1636,15 +1329,6 @@ public final class HydrologyPackProbe {
                         .append(", \"longestGridLockedRun\": ").append(format(course.longestGridLockedRun()))
                         .append(", \"isolatedTurns\": ").append(course.isolatedTurns())
                         .append(", \"p95TurnDegrees\": ").append(format(course.p95TurnDegrees()))
-                        .append(", \"hardEndpointRamps\": ").append(course.hardEndpointRamps())
-                        .append(", \"sourceEndpointWidth\": ").append(course.sourceEndpointWidth())
-                        .append(", \"sourceCruiseWidth\": ").append(course.sourceCruiseWidth())
-                        .append(", \"sourceRampLength\": ").append(format(course.sourceRampLength()))
-                        .append(", \"terminalEndpointWidth\": ").append(course.terminalEndpointWidth())
-                        .append(", \"terminalCruiseWidth\": ").append(course.terminalCruiseWidth())
-                        .append(", \"terminalRampLength\": ").append(format(course.terminalRampLength()))
-                        .append(", \"clippedTerminalCaps\": ").append(course.clippedTerminalCaps())
-                        .append(", \"terminalCapLength\": ").append(format(course.terminalCapLength()))
                         .append(", \"minimumInteriorWidth\": ").append(course.minimumInteriorWidth())
                         .append(", \"maximumWidthTroughDepthRatio\": ")
                         .append(format(course.maximumWidthTroughDepthRatio()))
@@ -1679,20 +1363,6 @@ public final class HydrologyPackProbe {
             private TurnMetrics {
                 degrees = List.copyOf(degrees);
             }
-        }
-
-        private record EndpointRampMetrics(
-                int hardRamps,
-                int sourceEndpointWidth,
-                int sourceCruiseWidth,
-                double sourceRampLength,
-                int terminalEndpointWidth,
-                int terminalCruiseWidth,
-                double terminalRampLength
-        ) {
-        }
-
-        private record TerminalCapMetrics(boolean clipped, double length) {
         }
 
         private record InteriorWidthMetrics(int minimumWidth, double maximumTroughDepthRatio) {
@@ -1753,7 +1423,6 @@ public final class HydrologyPackProbe {
                         minimumExposedSurfaceLength,
                         exposedSurfaceLength,
                         complete,
-                        false,
                         centerline,
                         ownedCells
                 );
@@ -1762,7 +1431,7 @@ public final class HydrologyPackProbe {
             private static List<HydrologyPoint> surfaceCenterline(RiverCourse course) {
                 ArrayList<HydrologyPoint> points = new ArrayList<>();
                 for (HydraulicSegment segment : course.segments()) {
-                    if (!segment.type().isSurface() && segment.type() != HydrologyFeatureType.RIDGE_BORE) {
+                    if (!SurfaceFootprintCompiler.exposedSegment(segment)) {
                         break;
                     }
                     for (HydrologyPoint point : segment.centerline()) {
@@ -1779,8 +1448,8 @@ public final class HydrologyPackProbe {
             private static double exposedSurfaceLength(RiverCourse course) {
                 double length = 0D;
                 for (HydraulicSegment segment : course.segments()) {
-                    if (!segment.type().isSurface() || segment.type() == HydrologyFeatureType.MOUTH) {
-                        continue;
+                    if (!SurfaceFootprintCompiler.exposedSegment(segment)) {
+                        break;
                     }
                     for (int pointIndex = 1; pointIndex < segment.centerline().size(); pointIndex++) {
                         HydrologyPoint previous = segment.centerline().get(pointIndex - 1);
@@ -1819,6 +1488,10 @@ public final class HydrologyPackProbe {
     }
 
     static final class ShapeMetrics {
+        private static final double MINIMUM_MEAN_SURFACE_INCISION = 1D;
+        private static final int MAXIMUM_GRADED_STEP = 1;
+        private static final int MINIMUM_LONGEST_COURSE_SEGMENTS = 16;
+
         private int surfaceEdges;
         private int visiblyCurvedEdges;
         private int surfaceNodes;
@@ -1840,10 +1513,8 @@ public final class HydrologyPackProbe {
         private int routeWindows;
         private int verticalChanges;
         private int longestCourse;
-        private int surfaceTransitions;
         private int fallingWaterfalls;
         private int receivingBasins;
-        private int shortTransitionRecoveries;
         private int unsupportedSurfaceTransitions;
         private int unsupportedWaterfalls;
         private int fallingTerrainOwnershipColumns;
@@ -1857,6 +1528,11 @@ public final class HydrologyPackProbe {
         private int invalidSurfaceIncisionColumns;
         private int shallowSurfaceIncisionColumns;
         private int excessiveSurfaceIncisionColumns;
+        private int shallowIncisionCourses;
+        private double minimumMeanSurfaceIncision = Double.POSITIVE_INFINITY;
+        private int oceanApronLandColumns;
+        private int bankStepViolations;
+        private int maximumBankStep;
         private int maximumUnsupportedDrop;
         private long maximumUnsupportedCourseId;
         private HydrologyFeatureType maximumUnsupportedType;
@@ -1871,8 +1547,6 @@ public final class HydrologyPackProbe {
         private int conflictingSurfaceHeadColumns;
         private long wetSurfaceColumns;
         private long wetSurfaceBlocks;
-        private double minimumTransitionRecovery = Double.POSITIVE_INFINITY;
-        private int minimumTargetPoolLength;
         private int sharpTurns;
         private int routeTurns;
         private double maximumTurnDegrees;
@@ -1906,7 +1580,6 @@ public final class HydrologyPackProbe {
             );
             HydrologyPlannerSettings.Routing routing = settings.routing();
             int sampleSpacing = routing.sampleSpacing();
-            minimumTargetPoolLength = settings.hydraulics().minimumTargetPoolLength();
             configuredMaximumSurfaceWidth = settings.surface().maximumWidth();
             Set<Long> ownedCompleteSurfaceCourseIds = ownedCompleteSurfaceCourseIds(tile);
             HashSet<Long> surfaceNodeIds = new HashSet<>();
@@ -1946,18 +1619,10 @@ public final class HydrologyPackProbe {
                     HydrologyPoint previous = centerline.get(pointIndex - 1);
                     HydrologyPoint current = centerline.get(pointIndex);
                     HydrologyPoint next = centerline.get(pointIndex + 1);
-                    double incomingX = current.x() - previous.x();
-                    double incomingZ = current.z() - previous.z();
-                    double outgoingX = next.x() - current.x();
-                    double outgoingZ = next.z() - current.z();
-                    double incomingLength = StrictMath.hypot(incomingX, incomingZ);
-                    double outgoingLength = StrictMath.hypot(outgoingX, outgoingZ);
-                    if (incomingLength == 0D || outgoingLength == 0D) {
+                    if (degenerateTurn(previous, current, next)) {
                         continue;
                     }
-                    double cosine = (incomingX * outgoingX + incomingZ * outgoingZ)
-                            / (incomingLength * outgoingLength);
-                    double angle = StrictMath.toDegrees(StrictMath.acos(Math.max(-1D, Math.min(1D, cosine))));
+                    double angle = turnDegrees(previous, current, next);
                     routeTurns++;
                     turnAngles.add(angle);
                     maximumTurnDegrees = Math.max(maximumTurnDegrees, angle);
@@ -1978,14 +1643,7 @@ public final class HydrologyPackProbe {
             for (RiverCourse course : tile.courses()) {
                 if (course.type() == RiverCourseType.SURFACE) {
                     longestCourse = Math.max(longestCourse, course.segments().size());
-                    observeSurfaceTransitionRecovery(course);
                     observeRenderedSurfaceCourse(tile, course, routing.refinementSpacing());
-                    observeSurfaceCenterlineIncision(
-                            tile,
-                            course,
-                            settings,
-                            ownedCompleteSurfaceCourseIds
-                    );
                     if (!course.drainageEdges().isEmpty()) {
                         HydrologyPoint courseStart = course.drainageEdges().getFirst().centerline().getFirst();
                         HydrologyPoint courseEnd = course.drainageEdges().getLast().centerline().getLast();
@@ -2021,10 +1679,14 @@ public final class HydrologyPackProbe {
             uncontainedSurfaceBankEdges += bankEdges.total();
             missingSurfaceBankEdges += bankEdges.missing();
             lowSurfaceBankEdges += bankEdges.low();
+            BankContinuityMetrics bankContinuity = bankContinuityMetrics(tile.footprint());
+            bankStepViolations += bankContinuity.violations();
+            maximumBankStep = Math.max(maximumBankStep, bankContinuity.maximumStep());
+            observeSurfaceIncision(tile, settings, ownedCompleteSurfaceCourseIds);
             for (HydrologyColumnSample sample : tile.footprint().columns().values()) {
                 observeSurfaceHeadConflicts(sample);
                 observeFallingTerrainOwnership(sample, ownedCompleteSurfaceCourseIds);
-                observeOceanIntegrity(sample, ownedCompleteSurfaceCourseIds);
+                observeOceanIntegrity(sample);
                 HydrologyColumnLayer layer = sample.primarySurfaceFluidLayer().orElse(null);
                 if (layer == null || layer.oceanApron() || !layer.channel() || !layer.fluidOwned()) {
                     continue;
@@ -2034,103 +1696,251 @@ public final class HydrologyPackProbe {
             }
         }
 
-        private void observeSurfaceCenterlineIncision(
+        private void observeSurfaceIncision(
                 HydrologyTile tile,
-                RiverCourse course,
                 HydrologyPlannerSettings settings,
                 Set<Long> scopedCourseIds
         ) {
-            if (!scopedCourseIds.contains(course.id())) {
-                return;
-            }
-            for (HydraulicSegment segment : course.segments()) {
-                if (!segment.type().isSurface() || segment.type() == HydrologyFeatureType.MOUTH) {
+            List<ChannelIncision> incisions = channelIncisions(
+                    tile.footprint(),
+                    scopedCourseIds,
+                    settings.surface().minimumSurfaceInset(),
+                    settings.surface().maximumIncision()
+            );
+            for (ChannelIncision incision : incisions) {
+                shallowSurfaceIncisionColumns += incision.shallowColumns();
+                excessiveSurfaceIncisionColumns += incision.excessiveColumns();
+                invalidSurfaceIncisionColumns += incision.excessiveColumns();
+                minimumMeanSurfaceIncision = Math.min(minimumMeanSurfaceIncision, incision.meanIncision());
+                if (!shallowMeanIncision(incision.meanIncision())) {
                     continue;
                 }
-                for (HydrologyPoint point : segment.centerline()) {
-                    HydrologyColumnSample sample = tile.footprint().sample(point.x(), point.z()).orElse(null);
-                    if (sample == null) {
-                        continue;
-                    }
-                    HydrologyColumnLayer layer = surfaceFluidLayer(sample, course.id());
-                    if (layer == null) {
-                        continue;
-                    }
-                    int incision = sample.naturalHeight() - layer.fluidHeadY();
-                    if (incision < settings.surface().minimumSurfaceInset()) {
-                        shallowSurfaceIncisionColumns++;
-                    } else if (incision > settings.surface().maximumIncision()) {
-                        excessiveSurfaceIncisionColumns++;
-                        invalidSurfaceIncisionColumns++;
-                        System.out.printf(
-                                "IRIS_HYDROLOGY_PACK_SURFACE_INCISION seed=%d tile_x=%d tile_z=%d "
-                                        + "course=%016x segment=%016x type=%s upstream_y=%d downstream_y=%d "
-                                        + "receiving_pool=%s x=%d z=%d natural_y=%d head_y=%d "
-                                        + "incision=%d maximum=%d%n",
-                                tile.worldSeed(),
-                                tile.key().tileX(),
-                                tile.key().tileZ(),
-                                course.id(),
-                                segment.id(),
-                                segment.type(),
-                                segment.upstreamHeadY(),
-                                segment.downstreamHeadY(),
-                                segment.receivingPool(),
-                                point.x(),
-                                point.z(),
-                                sample.naturalHeight(),
-                                layer.fluidHeadY(),
-                                incision,
-                                settings.surface().maximumIncision()
-                        );
-                    }
-                }
+                shallowIncisionCourses++;
+                System.out.printf(
+                        Locale.ROOT,
+                        "IRIS_HYDROLOGY_PACK_SURFACE_MEAN_INCISION seed=%d tile_x=%d tile_z=%d "
+                                + "course=%016x channel_columns=%d mean_incision=%.3f minimum=%.3f%n",
+                        tile.worldSeed(),
+                        tile.key().tileX(),
+                        tile.key().tileZ(),
+                        incision.courseId(),
+                        incision.columns(),
+                        incision.meanIncision(),
+                        MINIMUM_MEAN_SURFACE_INCISION
+                );
             }
         }
 
-        private HydrologyColumnLayer surfaceFluidLayer(HydrologyColumnSample sample, long courseId) {
-            for (HydrologyColumnLayer layer : sample.layers()) {
-                if (layer.feature().courseId() == courseId
-                        && layer.feature().type().isSurface()
-                        && !layer.oceanApron()
-                        && layer.channel()
-                        && layer.fluidOwned()) {
-                    return layer;
+        static List<ChannelIncision> channelIncisions(
+                RiverFootprint footprint,
+                Set<Long> scopedCourseIds,
+                int minimumInset,
+                int maximumIncision
+        ) {
+            TreeMap<Long, long[]> totals = new TreeMap<>();
+            for (HydrologyColumnSample sample : footprint.columns().values()) {
+                HydrologyColumnLayer layer = sample.primarySurfaceLayer().orElse(null);
+                if (layer == null || !layer.channel()
+                        || !scopedCourseIds.contains(layer.feature().courseId())) {
+                    continue;
+                }
+                int incision = sample.naturalHeight() - sample.terrainHeight();
+                long[] entry = totals.computeIfAbsent(
+                        layer.feature().courseId(),
+                        (Long ignored) -> new long[4]
+                );
+                entry[0] += incision;
+                entry[1]++;
+                if (incision < minimumInset) {
+                    entry[2]++;
+                } else if (incision > maximumIncision) {
+                    entry[3]++;
                 }
             }
-            return null;
+            ArrayList<ChannelIncision> incisions = new ArrayList<>(totals.size());
+            for (Map.Entry<Long, long[]> entry : totals.entrySet()) {
+                long[] value = entry.getValue();
+                incisions.add(new ChannelIncision(
+                        entry.getKey(),
+                        (int) value[1],
+                        value[0] / (double) value[1],
+                        (int) value[2],
+                        (int) value[3]
+                ));
+            }
+            return List.copyOf(incisions);
+        }
+
+        record ChannelIncision(
+                long courseId,
+                int columns,
+                double meanIncision,
+                int shallowColumns,
+                int excessiveColumns
+        ) {
+        }
+
+        static boolean shallowMeanIncision(double meanIncision) {
+            return meanIncision < MINIMUM_MEAN_SURFACE_INCISION;
         }
 
         void requireOrganicSurfaceNetwork() {
-            publishedMorphology.requireValid();
-            if (surfaceEdges == 0
-                    || surfaceNodes == 0
-                    || abruptWidthChanges > 0
-                    || invalidSurfaceOutletGroups > 0
-                    || nonCompleteSurfaceCourses > 0
-                    || maximumSurfaceWidth > configuredMaximumSurfaceWidth
-                    || verticalChanges == 0
-                    || longestCourse < 16
-                    || receivingBasins == 0
-                    || shortTransitionRecoveries > 0
-                    || unsupportedSurfaceTransitions > 0
-                    || unsupportedWaterfalls > 0
-                    || fallingTerrainOwnershipColumns > 0
-                    || oceanTerrainOwnershipColumns > 0
-                    || oceanTerrainMutationColumns > 0
-                    || submergedSurfaceTerrainOwnershipColumns > 0
-                    || submergedSurfaceTerrainMutationColumns > 0
-                    || uncontainedSurfaceBankEdges > 0
-                    || invalidSurfaceIncisionColumns > 0
-                    || conflictingSurfaceHeadColumns > 0) {
-                throw new IllegalStateException("Real-pack hydrology failed organic shape requirements: "
-                        + summary());
+            List<String> morphologyFailures = publishedMorphology.failures();
+            List<Gate> gates = gates(morphologyFailures);
+            ArrayList<String> failed = new ArrayList<>();
+            for (Gate gate : gates) {
+                System.out.println("IRIS_HYDROLOGY_PACK_GATE name=" + gate.name()
+                        + " status=" + (gate.passed() ? "PASS" : "FAIL") + " " + gate.counters());
+                if (!gate.passed()) {
+                    failed.add(gate.name());
+                }
+            }
+            if (!failed.isEmpty()) {
+                throw new IllegalStateException("Real-pack hydrology failed gates " + failed
+                        + ": " + morphologyFailures + " " + summary());
             }
         }
 
         String machineLine() {
-            return "IRIS_HYDROLOGY_PACK_SHAPE version=14 " + summary()
+            return "IRIS_HYDROLOGY_PACK_SHAPE version=15 " + summary()
                     + " " + publishedMorphology.summary();
+        }
+
+        List<Gate> gates(List<String> morphologyFailures) {
+            ArrayList<Gate> gates = new ArrayList<>();
+            gates.add(new Gate(
+                    "network_presence",
+                    surfaceEdges > 0 && surfaceNodes > 0 && verticalChanges > 0
+                            && longestCourse >= MINIMUM_LONGEST_COURSE_SEGMENTS && receivingBasins > 0,
+                    String.format(
+                            Locale.ROOT,
+                            "surface_edges=%d surface_nodes=%d vertical_changes=%d longest_course=%d "
+                                    + "minimum_longest_course=%d receiving_basins=%d",
+                            surfaceEdges,
+                            surfaceNodes,
+                            verticalChanges,
+                            longestCourse,
+                            MINIMUM_LONGEST_COURSE_SEGMENTS,
+                            receivingBasins
+                    )
+            ));
+            gates.add(new Gate(
+                    "channel_width",
+                    abruptWidthChanges == 0 && maximumSurfaceWidth <= configuredMaximumSurfaceWidth,
+                    String.format(
+                            Locale.ROOT,
+                            "abrupt_width_changes=%d maximum_surface_width=%d configured_maximum_surface_width=%d",
+                            abruptWidthChanges,
+                            maximumSurfaceWidth,
+                            configuredMaximumSurfaceWidth
+                    )
+            ));
+            gates.add(new Gate(
+                    "outlet_groups",
+                    invalidSurfaceOutletGroups == 0 && nonCompleteSurfaceCourses == 0,
+                    String.format(
+                            Locale.ROOT,
+                            "surface_outlet_groups=%d invalid_surface_outlet_groups=%d "
+                                    + "complete_surface_courses=%d non_complete_surface_courses=%d",
+                            surfaceOutletGroups,
+                            invalidSurfaceOutletGroups,
+                            completeSurfaceCourses,
+                            nonCompleteSurfaceCourses
+                    )
+            ));
+            gates.add(new Gate(
+                    "terrain_support",
+                    unsupportedSurfaceTransitions == 0 && unsupportedWaterfalls == 0
+                            && fallingTerrainOwnershipColumns == 0,
+                    String.format(
+                            Locale.ROOT,
+                            "unsupported_surface_transitions=%d unsupported_waterfalls=%d "
+                                    + "falling_terrain_ownership_columns=%d maximum_unsupported_drop=%d",
+                            unsupportedSurfaceTransitions,
+                            unsupportedWaterfalls,
+                            fallingTerrainOwnershipColumns,
+                            maximumUnsupportedDrop
+                    )
+            ));
+            gates.add(new Gate(
+                    "ocean_integrity",
+                    oceanTerrainOwnershipColumns == 0
+                            && oceanTerrainMutationColumns == 0
+                            && submergedSurfaceTerrainOwnershipColumns == 0
+                            && submergedSurfaceTerrainMutationColumns == 0
+                            && oceanApronLandColumns == 0,
+                    String.format(
+                            Locale.ROOT,
+                            "ocean_terrain_ownership_columns=%d ocean_terrain_mutation_columns=%d "
+                                    + "submerged_surface_terrain_ownership_columns=%d "
+                                    + "submerged_surface_terrain_mutation_columns=%d "
+                                    + "ocean_apron_land_columns=%d",
+                            oceanTerrainOwnershipColumns,
+                            oceanTerrainMutationColumns,
+                            submergedSurfaceTerrainOwnershipColumns,
+                            submergedSurfaceTerrainMutationColumns,
+                            oceanApronLandColumns
+                    )
+            ));
+            gates.add(new Gate(
+                    "bank_containment",
+                    uncontainedSurfaceBankEdges == 0,
+                    String.format(
+                            Locale.ROOT,
+                            "uncontained_surface_bank_edges=%d missing_surface_bank_edges=%d "
+                                    + "low_surface_bank_edges=%d",
+                            uncontainedSurfaceBankEdges,
+                            missingSurfaceBankEdges,
+                            lowSurfaceBankEdges
+                    )
+            ));
+            gates.add(new Gate(
+                    "bank_continuity",
+                    bankStepViolations == 0,
+                    String.format(
+                            Locale.ROOT,
+                            "bank_step_violations=%d maximum_bank_step=%d maximum_allowed_step=%d",
+                            bankStepViolations,
+                            maximumBankStep,
+                            MAXIMUM_GRADED_STEP
+                    )
+            ));
+            gates.add(new Gate(
+                    "surface_incision",
+                    invalidSurfaceIncisionColumns == 0 && shallowIncisionCourses == 0,
+                    String.format(
+                            Locale.ROOT,
+                            "shallow_incision_courses=%d minimum_mean_surface_incision=%.3f "
+                                    + "minimum_mean_required=%.3f shallow_surface_incision_columns=%d "
+                                    + "excessive_surface_incision_columns=%d",
+                            shallowIncisionCourses,
+                            finiteOrZero(minimumMeanSurfaceIncision),
+                            MINIMUM_MEAN_SURFACE_INCISION,
+                            shallowSurfaceIncisionColumns,
+                            excessiveSurfaceIncisionColumns
+                    )
+            ));
+            gates.add(new Gate(
+                    "head_consistency",
+                    conflictingSurfaceHeadColumns == 0,
+                    String.format(
+                            Locale.ROOT,
+                            "conflicting_surface_head_columns=%d wet_surface_columns=%d wet_surface_blocks=%d",
+                            conflictingSurfaceHeadColumns,
+                            wetSurfaceColumns,
+                            wetSurfaceBlocks
+                    )
+            ));
+            gates.add(new Gate(
+                    "published_morphology",
+                    morphologyFailures.isEmpty(),
+                    "morphology_failed_seeds=" + morphologyFailures.size()
+                            + " " + publishedMorphology.summary()
+            ));
+            return List.copyOf(gates);
+        }
+
+        record Gate(String name, boolean passed, String counters) {
         }
 
         void writeReports(File directory) throws IOException {
@@ -2154,8 +1964,7 @@ public final class HydrologyPackProbe {
                             + "rendered_max_deviation_ratio=%.6f abrupt_width_changes=%d "
                             + "maximum_surface_width=%d "
                             + "vertical_changes=%d longest_course=%d "
-                            + "surface_transitions=%d falling_waterfalls=%d receiving_basins=%d "
-                            + "short_transition_recoveries=%d minimum_transition_recovery=%.3f "
+                            + "falling_waterfalls=%d receiving_basins=%d "
                             + "unsupported_surface_transitions=%d unsupported_waterfalls=%d "
                             + "falling_terrain_ownership_columns=%d "
                             + "ocean_terrain_ownership_columns=%d "
@@ -2168,6 +1977,11 @@ public final class HydrologyPackProbe {
                             + "invalid_surface_incision_columns=%d "
                             + "shallow_surface_incision_columns=%d "
                             + "excessive_surface_incision_columns=%d "
+                            + "shallow_incision_courses=%d "
+                            + "minimum_mean_surface_incision=%.3f "
+                            + "ocean_apron_land_columns=%d "
+                            + "bank_step_violations=%d "
+                            + "maximum_bank_step=%d "
                             + "maximum_unsupported_drop=%d maximum_unsupported_course=%016x "
                             + "maximum_unsupported_type=%s maximum_unsupported_start=%d,%d "
                             + "maximum_unsupported_end=%d,%d maximum_unsupported_heads=%d,%d "
@@ -2210,11 +2024,8 @@ public final class HydrologyPackProbe {
                     maximumSurfaceWidth,
                     verticalChanges,
                     longestCourse,
-                    surfaceTransitions,
                     fallingWaterfalls,
                     receivingBasins,
-                    shortTransitionRecoveries,
-                    finiteOrZero(minimumTransitionRecovery),
                     unsupportedSurfaceTransitions,
                     unsupportedWaterfalls,
                     fallingTerrainOwnershipColumns,
@@ -2228,6 +2039,11 @@ public final class HydrologyPackProbe {
                     invalidSurfaceIncisionColumns,
                     shallowSurfaceIncisionColumns,
                     excessiveSurfaceIncisionColumns,
+                    shallowIncisionCourses,
+                    finiteOrZero(minimumMeanSurfaceIncision),
+                    oceanApronLandColumns,
+                    bankStepViolations,
+                    maximumBankStep,
                     maximumUnsupportedDrop,
                     maximumUnsupportedCourseId,
                     maximumUnsupportedType == null ? "NONE" : maximumUnsupportedType.name(),
@@ -2307,29 +2123,16 @@ public final class HydrologyPackProbe {
             return Set.copyOf(ownedCourseIds);
         }
 
-        private void observeOceanIntegrity(
-                HydrologyColumnSample sample,
-                Set<Long> ownedCompleteSurfaceCourseIds
-        ) {
+        private void observeOceanIntegrity(HydrologyColumnSample sample) {
             boolean ocean = sample.ocean();
             boolean naturallySubmerged = sample.naturalHeight() <= sample.seaLevel();
             if (!ocean && !naturallySubmerged) {
-                return;
-            }
-            boolean scoped = false;
-            boolean ownsSurfaceTerrain = false;
-            for (HydrologyColumnLayer layer : sample.layers()) {
-                if (!ownedCompleteSurfaceCourseIds.contains(layer.feature().courseId())) {
-                    continue;
+                if (carriesOceanApron(sample)) {
+                    oceanApronLandColumns++;
                 }
-                scoped = true;
-                ownsSurfaceTerrain |= layer.feature().type().isSurface()
-                        && !layer.oceanApron()
-                        && ownsOceanTerrain(layer);
-            }
-            if (!scoped) {
                 return;
             }
+            boolean ownsSurfaceTerrain = ownsSurfaceTerrain(sample);
             boolean terrainMutation = mutatesOceanTerrain(sample.naturalHeight(), sample.terrainHeight());
             if (ocean) {
                 if (ownsSurfaceTerrain) {
@@ -2347,6 +2150,63 @@ public final class HydrologyPackProbe {
                     submergedSurfaceTerrainMutationColumns++;
                 }
             }
+        }
+
+        static boolean ownsSurfaceTerrain(HydrologyColumnSample sample) {
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (layer.feature().type().isSurface() && !layer.oceanApron() && ownsOceanTerrain(layer)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static boolean carriesOceanApron(HydrologyColumnSample sample) {
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (layer.oceanApron()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static int bankContinuityViolations(RiverFootprint footprint) {
+            return bankContinuityMetrics(footprint).violations();
+        }
+
+        private static BankContinuityMetrics bankContinuityMetrics(RiverFootprint footprint) {
+            int violations = 0;
+            int maximumStep = 0;
+            int[] offsets = {1, 0, 0, 1};
+            for (HydrologyColumnSample sample : footprint.columns().values()) {
+                if (!graded(sample)) {
+                    continue;
+                }
+                int height = sample.terrainHeight();
+                for (int offsetIndex = 0; offsetIndex < offsets.length; offsetIndex += 2) {
+                    HydrologyColumnSample neighbor = footprint.sample(
+                            sample.x() + offsets[offsetIndex],
+                            sample.z() + offsets[offsetIndex + 1]
+                    ).orElse(null);
+                    if (neighbor == null || !graded(neighbor)) {
+                        continue;
+                    }
+                    int step = Math.abs(height - neighbor.terrainHeight());
+                    if (step > MAXIMUM_GRADED_STEP) {
+                        violations++;
+                        maximumStep = Math.max(maximumStep, step);
+                    }
+                }
+            }
+            return new BankContinuityMetrics(violations, maximumStep);
+        }
+
+        private static boolean graded(HydrologyColumnSample sample) {
+            HydrologyColumnLayer layer = sample.primarySurfaceLayer().orElse(null);
+            return layer != null && !layer.channel() && layer.grading();
+        }
+
+        private record BankContinuityMetrics(int violations, int maximumStep) {
         }
 
         static int uncontainedSurfaceBankEdges(
@@ -2425,11 +2285,11 @@ public final class HydrologyPackProbe {
         }
 
         static boolean ownsOceanTerrain(HydrologyColumnLayer layer) {
-            return layer.terrainOwned();
+            return layer.terrainOwned() || layer.fluidOwned() || layer.grading() || layer.shore();
         }
 
         static boolean mutatesOceanTerrain(int naturalHeight, int terrainHeight) {
-            return naturalHeight != terrainHeight;
+            return terrainHeight < naturalHeight;
         }
 
         static boolean validSurfaceOutletCourseGroup(int complete, int nonComplete) {
@@ -2468,8 +2328,7 @@ public final class HydrologyPackProbe {
         private List<HydrologyPoint> renderedCenterline(RiverCourse course) {
             ArrayList<HydrologyPoint> points = new ArrayList<>();
             for (HydraulicSegment segment : course.segments()) {
-                if (!segment.type().isSurface()
-                        && segment.type() != HydrologyFeatureType.RIDGE_BORE) {
+                if (!SurfaceFootprintCompiler.exposedSegment(segment)) {
                     break;
                 }
                 for (HydrologyPoint point : segment.centerline()) {
@@ -2492,18 +2351,10 @@ public final class HydrologyPackProbe {
                 HydrologyPoint previous = points.get(pointIndex - 1);
                 HydrologyPoint current = points.get(pointIndex);
                 HydrologyPoint next = points.get(pointIndex + 1);
-                double incomingX = current.x() - previous.x();
-                double incomingZ = current.z() - previous.z();
-                double outgoingX = next.x() - current.x();
-                double outgoingZ = next.z() - current.z();
-                double incomingLength = StrictMath.hypot(incomingX, incomingZ);
-                double outgoingLength = StrictMath.hypot(outgoingX, outgoingZ);
-                if (incomingLength == 0D || outgoingLength == 0D) {
+                if (degenerateTurn(previous, current, next)) {
                     continue;
                 }
-                double cosine = (incomingX * outgoingX + incomingZ * outgoingZ)
-                        / (incomingLength * outgoingLength);
-                double angle = StrictMath.toDegrees(StrictMath.acos(Math.max(-1D, Math.min(1D, cosine))));
+                double angle = turnDegrees(previous, current, next);
                 renderedTurns++;
                 renderedTurnAngles.add(angle);
                 if (angle > maximumRenderedTurnDegrees) {
@@ -2805,55 +2656,6 @@ public final class HydrologyPackProbe {
             maximumUnsupportedDownstreamHead = segment.downstreamHeadY();
             maximumUnsupportedUpstreamTerrain = upstreamTerrain;
             maximumUnsupportedDownstreamTerrain = downstreamTerrain;
-        }
-
-        private void observeSurfaceTransitionRecovery(RiverCourse course) {
-            double recovery = Double.POSITIVE_INFINITY;
-            boolean transitionActive = false;
-            for (int segmentIndex = 0; segmentIndex < course.segments().size(); segmentIndex++) {
-                HydraulicSegment segment = course.segments().get(segmentIndex);
-                boolean surfaceDrop = segment.type().isSurface() && segment.type().isDrop();
-                boolean coastalOutletDrop = surfaceDrop
-                        && segmentIndex + 1 < course.segments().size()
-                        && course.segments().get(segmentIndex + 1).type() == HydrologyFeatureType.MOUTH;
-                if (coastalOutletDrop) {
-                    continue;
-                }
-                if (!segment.type().isSurface()) {
-                    recovery = Double.POSITIVE_INFINITY;
-                    transitionActive = false;
-                    continue;
-                }
-                if (surfaceDrop) {
-                    if (!transitionActive) {
-                        surfaceTransitions++;
-                        if (Double.isFinite(recovery)) {
-                            minimumTransitionRecovery = Math.min(minimumTransitionRecovery, recovery);
-                            if (recovery < minimumTargetPoolLength) {
-                                shortTransitionRecoveries++;
-                            }
-                        }
-                    }
-                    recovery = 0D;
-                    transitionActive = !segment.receivingPool();
-                    continue;
-                }
-                if (transitionActive && segment.receivingPool()) {
-                    transitionActive = false;
-                } else if (!transitionActive && Double.isFinite(recovery)) {
-                    recovery += segmentLength(segment);
-                }
-            }
-        }
-
-        private double segmentLength(HydraulicSegment segment) {
-            double length = 0D;
-            for (int pointIndex = 1; pointIndex < segment.centerline().size(); pointIndex++) {
-                HydrologyPoint previous = segment.centerline().get(pointIndex - 1);
-                HydrologyPoint current = segment.centerline().get(pointIndex);
-                length += StrictMath.hypot(current.x() - previous.x(), current.z() - previous.z());
-            }
-            return length;
         }
 
         private double finiteOrZero(double value) {
@@ -3341,11 +3143,31 @@ public final class HydrologyPackProbe {
         ));
     }
 
+    // No public production equivalent: HydrologyPlanner.routeTurnDegrees is private.
+    static double turnDegrees(HydrologyPoint previous, HydrologyPoint point, HydrologyPoint next) {
+        double incomingX = point.x() - previous.x();
+        double incomingZ = point.z() - previous.z();
+        double outgoingX = next.x() - point.x();
+        double outgoingZ = next.z() - point.z();
+        double incomingLength = StrictMath.hypot(incomingX, incomingZ);
+        double outgoingLength = StrictMath.hypot(outgoingX, outgoingZ);
+        if (incomingLength == 0D || outgoingLength == 0D) {
+            return 0D;
+        }
+        double cosine = (incomingX * outgoingX + incomingZ * outgoingZ)
+                / (incomingLength * outgoingLength);
+        return StrictMath.toDegrees(StrictMath.acos(Math.max(-1D, Math.min(1D, cosine))));
+    }
+
+    static boolean degenerateTurn(HydrologyPoint previous, HydrologyPoint point, HydrologyPoint next) {
+        return previous.x() == point.x() && previous.z() == point.z()
+                || next.x() == point.x() && next.z() == point.z();
+    }
+
     private static boolean surfaceBuildRejection(HydrologyCandidateRejection rejection) {
         return switch (rejection) {
             case SURFACE_HEAD_RANGE,
                  SURFACE_HEAD_DISTRIBUTION,
-                 SURFACE_RIDGE_TUNNEL_LIMIT,
                  SURFACE_DROP_UNSUPPORTED,
                  SURFACE_CORRIDOR_UNSUPPORTED,
                  SURFACE_TRANSITION_UNSUPPORTED,

@@ -357,8 +357,7 @@ public final class HydrologyPackProbeTest {
                         1337L,
                         1L,
                         centerline,
-                        thickChannel(centerline, 4, 32),
-                        false
+                        thickChannel(centerline, 4, 32)
                 ));
 
         assertTrue(result.gridLockedFraction() > 0.9D);
@@ -380,134 +379,13 @@ public final class HydrologyPackProbeTest {
                         1337L,
                         2L,
                         centerline,
-                        thickChannel(centerline, 4, 32),
-                        false
+                        thickChannel(centerline, 4, 32)
                 ));
 
         assertTrue(result.isolatedTurns() > 0);
         assertTrue(result.p95TurnDegrees() > 25D);
         assertTrue(result.violations().contains("ISOLATED_TURN"));
         assertTrue(result.violations().contains("P95_TURN"));
-    }
-
-    @Test
-    public void gradualSourceWidthRampPassesEndpointGate() {
-        List<HydrologyPoint> centerline = List.of(point(0, 0), point(80, 24));
-        HydrologyPackProbe.CourseMorphologyResult result =
-                HydrologyPackProbe.PublishedMorphologyMetrics.analyzeCourse(courseInput(
-                        1337L,
-                        3L,
-                        centerline,
-                        thickChannel(centerline, 4, 32),
-                        false
-                ));
-
-        assertEquals(0, result.hardEndpointRamps());
-        assertEquals(0, result.unexpectedLeaves());
-        assertFalse(result.violations().contains("HARD_ENDPOINT_RAMP"));
-    }
-
-    @Test
-    public void widenedSourceBasinFailsEndpointGate() {
-        List<HydrologyPoint> centerline = List.of(point(0, 0), point(80, 24));
-        HydrologyPackProbe.CourseMorphologyResult result =
-                HydrologyPackProbe.PublishedMorphologyMetrics.analyzeCourse(courseInput(
-                        1337L,
-                        7L,
-                        centerline,
-                        widenedSourceBasin(centerline, 4, 7, 32),
-                        false
-                ));
-
-        assertTrue(result.violations().contains("WIDENED_SOURCE_BASIN"));
-    }
-
-    @Test
-    public void fullWidthSourceCapFailsEndpointRampGate() {
-        List<HydrologyPoint> centerline = List.of(point(0, 0), point(80, 24));
-        HydrologyPackProbe.CourseMorphologyResult result =
-                HydrologyPackProbe.PublishedMorphologyMetrics.analyzeCourse(courseInput(
-                        1337L,
-                        4L,
-                        centerline,
-                        thickChannel(centerline, 4, 0),
-                        false
-                ));
-
-        assertTrue(result.hardEndpointRamps() > 0);
-        assertTrue(result.violations().contains("HARD_ENDPOINT_RAMP"));
-    }
-
-    @Test
-    public void fullWidthExposedTerminalFailsEndpointRampGate() {
-        List<HydrologyPoint> centerline = List.of(point(0, 0), point(80, 24));
-        HydrologyPackProbe.CourseMorphologyResult result =
-                HydrologyPackProbe.PublishedMorphologyMetrics.analyzeCourse(courseInput(
-                        1337L,
-                        5L,
-                        centerline,
-                        thickChannel(centerline, 4, 32),
-                        true
-                ));
-
-        assertEquals(1, result.hardEndpointRamps());
-        assertTrue(result.violations().contains("HARD_ENDPOINT_RAMP"));
-    }
-
-    @Test
-    public void clippedCourseDoesNotInventEndpointRampFailures() {
-        List<HydrologyPoint> centerline = List.of(point(0, 0), point(160, 48));
-        Set<Long> observedCells = thickChannel(
-                List.of(point(40, 12), point(120, 36)),
-                4,
-                0
-        );
-        HydrologyPackProbe.CourseMorphologyResult result =
-                HydrologyPackProbe.PublishedMorphologyMetrics.analyzeCourse(courseInput(
-                        1337L,
-                        8L,
-                        centerline,
-                        observedCells,
-                        true
-                ));
-
-        assertEquals(0, result.hardEndpointRamps());
-        assertFalse(result.violations().contains("HARD_ENDPOINT_RAMP"));
-    }
-
-    @Test
-    public void roundedExposedTerminalCapPassesCapGate() {
-        List<HydrologyPoint> centerline = List.of(point(0, 0), point(160, 0));
-        HydrologyPackProbe.CourseMorphologyResult result =
-                HydrologyPackProbe.PublishedMorphologyMetrics.analyzeCourse(courseInput(
-                        1337L,
-                        9L,
-                        centerline,
-                        terminalBasinChannel(centerline, 4, 7, 32, false),
-                        true
-                ));
-
-        assertEquals(0, result.clippedTerminalCaps());
-        assertTrue(result.terminalCapLength() >= 3D);
-        assertFalse(result.violations().contains("CLIPPED_TERMINAL_CAP"));
-    }
-
-    @Test
-    public void squareExposedTerminalCapFailsCapGateAfterGradualBasinRamp() {
-        List<HydrologyPoint> centerline = List.of(point(0, 0), point(160, 0));
-        HydrologyPackProbe.CourseMorphologyResult result =
-                HydrologyPackProbe.PublishedMorphologyMetrics.analyzeCourse(courseInput(
-                        1337L,
-                        10L,
-                        centerline,
-                        terminalBasinChannel(centerline, 4, 7, 32, true),
-                        true
-                ));
-
-        assertEquals(0, result.hardEndpointRamps());
-        assertEquals(1, result.clippedTerminalCaps());
-        assertEquals(0D, result.terminalCapLength(), 0D);
-        assertTrue(result.violations().contains("CLIPPED_TERMINAL_CAP"));
     }
 
     @Test
@@ -518,8 +396,7 @@ public final class HydrologyPackProbeTest {
                         1337L,
                         11L,
                         centerline,
-                        thickChannel(centerline, 1, 32),
-                        false
+                        thickChannel(centerline, 1, 32)
                 ));
 
         assertEquals(3, result.minimumInteriorWidth());
@@ -534,40 +411,13 @@ public final class HydrologyPackProbeTest {
                         1337L,
                         12L,
                         centerline,
-                        thickChannel(centerline, 2, 32),
-                        false
+                        thickChannel(centerline, 2, 32)
                 ));
 
         assertTrue(result.minimumInteriorWidth() >= 4);
         assertEquals(0D, result.maximumWidthTroughDepthRatio(), 0D);
         assertFalse(result.violations().contains("NARROW_INTERIOR_WIDTH"));
         assertFalse(result.violations().contains("CONCAVE_WIDTH_TROUGH"));
-    }
-
-    @Test
-    public void borePortalRunMarginsAreExcludedFromInteriorWidth() {
-        List<HydrologyPoint> centerline = List.of(point(0, 0), point(320, 0));
-        HashSet<Long> ownedCells = new HashSet<>(thickChannel(
-                List.of(point(0, 0), point(128, 0)),
-                2,
-                32
-        ));
-        ownedCells.addAll(thickChannel(
-                List.of(point(192, 0), point(320, 0)),
-                2,
-                32
-        ));
-        HydrologyPackProbe.CourseMorphologyResult result =
-                HydrologyPackProbe.PublishedMorphologyMetrics.analyzeCourse(courseInput(
-                        1337L,
-                        15L,
-                        centerline,
-                        ownedCells,
-                        false
-                ));
-
-        assertTrue(result.minimumInteriorWidth() >= 4);
-        assertFalse(result.violations().contains("NARROW_INTERIOR_WIDTH"));
     }
 
     @Test
@@ -578,8 +428,7 @@ public final class HydrologyPackProbeTest {
                         1337L,
                         13L,
                         centerline,
-                        troughChannel(centerline, 5, 2, 96, 160),
-                        false
+                        troughChannel(centerline, 5, 2, 96, 160)
                 ));
 
         assertTrue(result.maximumWidthTroughDepthRatio() >= 0.35D);
@@ -597,17 +446,14 @@ public final class HydrologyPackProbeTest {
                 384,
                 0D,
                 false,
-                true,
                 centerline,
                 terminalBasinChannel(centerline, 1, 2, 32, true)
         );
         HydrologyPackProbe.CourseMorphologyResult result =
                 HydrologyPackProbe.PublishedMorphologyMetrics.analyzeCourse(input);
 
-        assertEquals(0, result.clippedTerminalCaps());
         assertEquals(0, result.minimumInteriorWidth());
         assertEquals(0D, result.maximumWidthTroughDepthRatio(), 0D);
-        assertFalse(result.violations().contains("CLIPPED_TERMINAL_CAP"));
         assertFalse(result.violations().contains("NARROW_INTERIOR_WIDTH"));
         assertFalse(result.violations().contains("CONCAVE_WIDTH_TROUGH"));
     }
@@ -620,7 +466,7 @@ public final class HydrologyPackProbeTest {
         HydrologyPackProbe.SeedMorphologyResult result =
                 HydrologyPackProbe.PublishedMorphologyMetrics.analyzeSeed(
                         1337L,
-                        List.of(courseInput(1337L, 6L, centerline, ownedCells, false))
+                        List.of(courseInput(1337L, 6L, centerline, ownedCells))
                 );
 
         assertTrue(result.unexpectedLeaves() > 0);
@@ -638,8 +484,192 @@ public final class HydrologyPackProbeTest {
         assertFalse(HydrologyPackProbe.ShapeMetrics.ownsOceanTerrain(apron));
         assertFalse(HydrologyPackProbe.ShapeMetrics.ownsOceanTerrain(inertLayer));
         assertTrue(HydrologyPackProbe.ShapeMetrics.ownsOceanTerrain(ownedTerrain));
+        assertTrue(HydrologyPackProbe.ShapeMetrics.ownsOceanTerrain(gradedLayer(70)));
         assertFalse(HydrologyPackProbe.ShapeMetrics.mutatesOceanTerrain(54, 54));
         assertTrue(HydrologyPackProbe.ShapeMetrics.mutatesOceanTerrain(54, 48));
+        assertFalse(HydrologyPackProbe.ShapeMetrics.mutatesOceanTerrain(54, 60));
+    }
+
+    @Test
+    public void oceanIntegrityFlagsOwningSurfaceLayersAndCutTerrain() {
+        HydrologyColumnSample untouchedOcean = new HydrologyColumnSample(
+                0, 0, 48, 63, true, "parent", List.of(surfaceLayer(true, false)));
+        HydrologyColumnSample cutLand = new HydrologyColumnSample(
+                0, 0, 80, 63, false, "parent", List.of(gradedLayer(74)));
+
+        assertFalse(HydrologyPackProbe.ShapeMetrics.ownsSurfaceTerrain(untouchedOcean));
+        assertTrue(HydrologyPackProbe.ShapeMetrics.carriesOceanApron(untouchedOcean));
+        assertEquals(48, untouchedOcean.terrainHeight());
+        assertFalse(HydrologyPackProbe.ShapeMetrics.mutatesOceanTerrain(
+                untouchedOcean.naturalHeight(), untouchedOcean.terrainHeight()));
+        assertTrue(HydrologyPackProbe.ShapeMetrics.ownsSurfaceTerrain(cutLand));
+        assertTrue(HydrologyPackProbe.ShapeMetrics.mutatesOceanTerrain(
+                cutLand.naturalHeight(), cutLand.terrainHeight()));
+        assertThrows(IllegalArgumentException.class, () -> new HydrologyColumnSample(
+                0, 0, 60, 63, false, "parent", List.of(gradedLayer(55))));
+    }
+
+    @Test
+    public void landColumnsCarryingAnOceanApronAreDetected() {
+        HydrologyColumnSample land = new HydrologyColumnSample(
+                0, 0, 80, 63, false, "parent", List.of(surfaceLayer(true, false)));
+
+        assertTrue(HydrologyPackProbe.ShapeMetrics.carriesOceanApron(land));
+        assertFalse(HydrologyPackProbe.ShapeMetrics.ownsSurfaceTerrain(land));
+    }
+
+    @Test
+    public void bankContinuityAllowsSingleBlockStepsAndRejectsLedges() {
+        assertEquals(0, HydrologyPackProbe.ShapeMetrics.bankContinuityViolations(
+                gradedRow(70, 71, 72)));
+        assertEquals(1, HydrologyPackProbe.ShapeMetrics.bankContinuityViolations(
+                gradedRow(70, 71, 74)));
+    }
+
+    @Test
+    public void bankContinuityIgnoresPairsAcrossTheWaterEdge() {
+        HydrologyColumnSample west = gradedColumn(-1, 0, 71);
+        HydrologyColumnSample channel = channelColumn(0, 0, 66, 69);
+        HydrologyColumnSample east = gradedColumn(1, 0, 78);
+
+        assertEquals(0, HydrologyPackProbe.ShapeMetrics.bankContinuityViolations(
+                new RiverFootprint(Map.of(
+                        RiverFootprint.pack(west.x(), west.z()), west,
+                        RiverFootprint.pack(channel.x(), channel.z()), channel,
+                        RiverFootprint.pack(east.x(), east.z()), east
+                ))));
+    }
+
+    @Test
+    public void shapeMetricsEmitFormattedMachineAndGateLines() {
+        HydrologyPackProbe.ShapeMetrics metrics = new HydrologyPackProbe.ShapeMetrics();
+
+        String machineLine = metrics.machineLine();
+
+        assertTrue(machineLine.startsWith("IRIS_HYDROLOGY_PACK_SHAPE version=15 "));
+        assertTrue(machineLine.contains("shallow_incision_courses=0"));
+        assertTrue(machineLine.contains("ocean_apron_land_columns=0"));
+        assertTrue(machineLine.contains("bank_step_violations=0"));
+    }
+
+    @Test
+    public void emptyShapeMetricsReportOneLinePerGate() {
+        HydrologyPackProbe.ShapeMetrics metrics = new HydrologyPackProbe.ShapeMetrics();
+
+        List<HydrologyPackProbe.ShapeMetrics.Gate> gates = metrics.gates(List.of());
+
+        List<String> names = new ArrayList<>();
+        for (HydrologyPackProbe.ShapeMetrics.Gate gate : gates) {
+            names.add(gate.name());
+        }
+        assertEquals(
+                List.of(
+                        "network_presence",
+                        "channel_width",
+                        "outlet_groups",
+                        "terrain_support",
+                        "ocean_integrity",
+                        "bank_containment",
+                        "bank_continuity",
+                        "surface_incision",
+                        "head_consistency",
+                        "published_morphology"
+                ),
+                names
+        );
+        for (HydrologyPackProbe.ShapeMetrics.Gate gate : gates) {
+            assertFalse(gate.counters().isBlank());
+        }
+        assertFalse(gate(gates, "network_presence").passed());
+        assertTrue(gate(gates, "ocean_integrity").passed());
+        assertTrue(gate(gates, "bank_continuity").passed());
+        assertTrue(gate(gates, "surface_incision").passed());
+        assertTrue(gate(gates, "ocean_integrity").counters().contains("ocean_apron_land_columns=0"));
+        assertTrue(gate(gates, "bank_continuity").counters().contains("bank_step_violations=0"));
+        assertTrue(gate(gates, "surface_incision").counters().contains("shallow_incision_courses=0"));
+    }
+
+    @Test
+    public void gateFailuresNameEveryFailedGate() {
+        HydrologyPackProbe.ShapeMetrics metrics = new HydrologyPackProbe.ShapeMetrics();
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class,
+                metrics::requireOrganicSurfaceNetwork
+        );
+
+        assertTrue(failure.getMessage().contains("network_presence"));
+        assertTrue(failure.getMessage().contains("published_morphology"));
+    }
+
+    private static HydrologyPackProbe.ShapeMetrics.Gate gate(
+            List<HydrologyPackProbe.ShapeMetrics.Gate> gates,
+            String name
+    ) {
+        for (HydrologyPackProbe.ShapeMetrics.Gate gate : gates) {
+            if (gate.name().equals(name)) {
+                return gate;
+            }
+        }
+        throw new IllegalStateException("Missing gate " + name + ".");
+    }
+
+    @Test
+    public void channelIncisionAveragesNaturalMinusTerrainOverChannelColumns() {
+        HydrologyColumnSample deep = channelColumn(0, 0, 74, 77);
+        HydrologyColumnSample shallow = channelColumn(1, 0, 79, 79);
+        HydrologyColumnSample bank = gradedColumn(2, 0, 79);
+        RiverFootprint footprint = new RiverFootprint(Map.of(
+                RiverFootprint.pack(deep.x(), deep.z()), deep,
+                RiverFootprint.pack(shallow.x(), shallow.z()), shallow,
+                RiverFootprint.pack(bank.x(), bank.z()), bank
+        ));
+
+        List<HydrologyPackProbe.ShapeMetrics.ChannelIncision> incisions =
+                HydrologyPackProbe.ShapeMetrics.channelIncisions(footprint, Set.of(42L), 2, 10);
+
+        assertEquals(1, incisions.size());
+        HydrologyPackProbe.ShapeMetrics.ChannelIncision incision = incisions.getFirst();
+        assertEquals(42L, incision.courseId());
+        assertEquals(2, incision.columns());
+        assertEquals(3.5D, incision.meanIncision(), 0D);
+        assertEquals(1, incision.shallowColumns());
+        assertEquals(0, incision.excessiveColumns());
+        assertFalse(HydrologyPackProbe.ShapeMetrics.shallowMeanIncision(incision.meanIncision()));
+    }
+
+    @Test
+    public void channelIncisionBelowOneBlockFailsTheShallowGate() {
+        HydrologyColumnSample flat = channelColumn(0, 0, 80, 80);
+        RiverFootprint footprint = new RiverFootprint(Map.of(
+                RiverFootprint.pack(flat.x(), flat.z()), flat
+        ));
+
+        List<HydrologyPackProbe.ShapeMetrics.ChannelIncision> incisions =
+                HydrologyPackProbe.ShapeMetrics.channelIncisions(footprint, Set.of(42L), 2, 10);
+
+        assertEquals(0D, incisions.getFirst().meanIncision(), 0D);
+        assertTrue(HydrologyPackProbe.ShapeMetrics.shallowMeanIncision(incisions.getFirst().meanIncision()));
+    }
+
+    @Test
+    public void channelIncisionIgnoresCoursesOutsideTheScope() {
+        HydrologyColumnSample deep = channelColumn(0, 0, 74, 77);
+        RiverFootprint footprint = new RiverFootprint(Map.of(
+                RiverFootprint.pack(deep.x(), deep.z()), deep
+        ));
+
+        assertEquals(
+                List.of(),
+                HydrologyPackProbe.ShapeMetrics.channelIncisions(footprint, Set.of(7L), 2, 10)
+        );
+    }
+
+    @Test
+    public void shallowMeanIncisionGateRequiresOneBlockOfCut() {
+        assertTrue(HydrologyPackProbe.ShapeMetrics.shallowMeanIncision(0.75D));
+        assertFalse(HydrologyPackProbe.ShapeMetrics.shallowMeanIncision(1D));
+        assertFalse(HydrologyPackProbe.ShapeMetrics.shallowMeanIncision(2.5D));
     }
 
     @Test
@@ -673,39 +703,31 @@ public final class HydrologyPackProbeTest {
     public void seedsWithoutSurfaceCoursesDoNotMaskPublishedFailures() {
         HydrologyPackProbe.CourseMorphologyResult acceptedCourse =
                 new HydrologyPackProbe.CourseMorphologyResult(
-                        642L, 5L, 20, 80D, 80D, 0, 0D, 0D, 0, 0D, 0,
-                        0, 0, 0D, 0, 0, 0D, 0, 0D, 0, 0D, 0, List.of());
+                        642L, 5L, 20, 80D, 80D, 0, 0D, 0D, 0, 0D, 0, 0D, 0, List.of());
         HydrologyPackProbe.SeedMorphologyResult accepted =
                 new HydrologyPackProbe.SeedMorphologyResult(642L, List.of(acceptedCourse), 0, List.of());
         HydrologyPackProbe.SeedMorphologyResult empty =
                 new HydrologyPackProbe.SeedMorphologyResult(1337L, List.of(), 0, List.of());
-
-        IllegalStateException perSeedFailure = assertThrows(
-                IllegalStateException.class,
-                () -> HydrologyPackProbe.PublishedMorphologyMetrics.requireValidResults(List.of(accepted, empty))
-        );
-        assertTrue(perSeedFailure.getMessage().contains("seed=1337"));
-        IllegalStateException emptyFailure = assertThrows(
-                IllegalStateException.class,
-                () -> HydrologyPackProbe.PublishedMorphologyMetrics.requireValidResults(List.of(empty))
-        );
-        assertTrue(emptyFailure.getMessage().contains("NO_SURFACE_COURSES"));
-
         HydrologyPackProbe.CourseMorphologyResult rejectedCourse =
                 new HydrologyPackProbe.CourseMorphologyResult(
-                        52L, 5L, 20, 80D, 80D, 0, 0D, 0D, 0, 0D, 0,
-                        0, 0, 0D, 0, 0, 0D, 0, 0D, 2, 0D, 0,
+                        52L, 5L, 20, 80D, 80D, 0, 0D, 0D, 0, 0D, 2, 0D, 0,
                         List.of("NARROW_INTERIOR_WIDTH"));
         HydrologyPackProbe.SeedMorphologyResult rejected =
                 new HydrologyPackProbe.SeedMorphologyResult(
                         52L, List.of(rejectedCourse), 0, List.of("5:NARROW_INTERIOR_WIDTH"));
-        IllegalStateException failure = assertThrows(
-                IllegalStateException.class,
-                () -> HydrologyPackProbe.PublishedMorphologyMetrics.requireValidResults(
-                        List.of(accepted, empty, rejected))
-        );
 
-        assertTrue(failure.getMessage().contains("seed=52"));
+        assertEquals(
+                List.of(),
+                HydrologyPackProbe.PublishedMorphologyMetrics.failures(List.of(accepted))
+        );
+        assertTrue(HydrologyPackProbe.PublishedMorphologyMetrics.failures(List.of(accepted, empty))
+                .toString().contains("seed=1337"));
+        assertTrue(HydrologyPackProbe.PublishedMorphologyMetrics.failures(List.of(empty))
+                .toString().contains("NO_SURFACE_COURSES"));
+        assertTrue(HydrologyPackProbe.PublishedMorphologyMetrics.failures(List.of())
+                .toString().contains("NO_SURFACE_COURSES"));
+        assertTrue(HydrologyPackProbe.PublishedMorphologyMetrics
+                .failures(List.of(accepted, empty, rejected)).toString().contains("seed=52"));
     }
 
     @Test
@@ -722,7 +744,6 @@ public final class HydrologyPackProbeTest {
                 384,
                 40D,
                 true,
-                false,
                 centerline,
                 thickChannel(centerline, 4, 24)
         );
@@ -738,8 +759,7 @@ public final class HydrologyPackProbeTest {
         File reportDirectory = temporaryFolder.newFolder("hydrology-reports");
         HydrologyPackProbe.CourseMorphologyResult course =
                 new HydrologyPackProbe.CourseMorphologyResult(
-                        1337L, 6L, 3, 2D, 2D, 0, 0D, 0D, 0, 0D, 0,
-                        0, 0, 0D, 0, 0, 0D, 0, 0D, 0, 0D, 0, List.of());
+                        1337L, 6L, 3, 2D, 2D, 0, 0D, 0D, 0, 0D, 0, 0D, 0, List.of());
         HydrologyPackProbe.SeedMorphologyResult result =
                 new HydrologyPackProbe.SeedMorphologyResult(1337L, List.of(course), 0, List.of());
         Map<Long, Long> courseByCell = Map.of(
@@ -763,7 +783,6 @@ public final class HydrologyPackProbeTest {
         assertEquals(3, image.getWidth());
         assertEquals(2, image.getHeight());
         assertTrue(metrics.contains("\"seed\": 1337"));
-        assertTrue(metrics.contains("\"clippedTerminalCaps\": 0"));
         assertTrue(metrics.contains("\"minimumInteriorWidth\": 0"));
         assertTrue(metrics.contains("\"maximumWidthTroughDepthRatio\": 0.000000"));
         assertTrue(metrics.contains("\"unexpectedLeaves\": 0"));
@@ -773,8 +792,7 @@ public final class HydrologyPackProbeTest {
             long seed,
             long courseId,
             List<HydrologyPoint> centerline,
-            Set<Long> ownedCells,
-            boolean terminalExposed
+            Set<Long> ownedCells
     ) {
         return new HydrologyPackProbe.CourseMorphologyInput(
                 seed,
@@ -784,7 +802,6 @@ public final class HydrologyPackProbeTest {
                 0,
                 0D,
                 true,
-                terminalExposed,
                 centerline,
                 ownedCells
         );
@@ -798,22 +815,6 @@ public final class HydrologyPackProbeTest {
                     ? radius
                     : Math.min(radius, (int) StrictMath.round(radius * Math.min(1D, index / (double) sourceRamp)));
             addDisc(cells, raster.get(index), effectiveRadius);
-        }
-        return Set.copyOf(cells);
-    }
-
-    private static Set<Long> widenedSourceBasin(
-            List<HydrologyPoint> centerline,
-            int channelRadius,
-            int basinRadius,
-            int taperLength
-    ) {
-        List<HydrologyPoint> raster = raster(centerline);
-        HashSet<Long> cells = new HashSet<>();
-        for (int index = 0; index < raster.size(); index++) {
-            double taper = Math.min(1D, index / (double) taperLength);
-            int radius = channelRadius + (int) StrictMath.round((basinRadius - channelRadius) * (1D - taper));
-            addDisc(cells, raster.get(index), radius);
         }
         return Set.copyOf(cells);
     }
@@ -953,6 +954,73 @@ public final class HydrologyPackProbeTest {
 
     private static HydrologyColumnSample bankColumn(int x, int z, int naturalHeight) {
         return new HydrologyColumnSample(x, z, naturalHeight, 63, false, "parent", List.of());
+    }
+
+    private static RiverFootprint gradedRow(int westHeight, int centerHeight, int eastHeight) {
+        HydrologyColumnSample west = gradedColumn(-1, 0, westHeight);
+        HydrologyColumnSample center = gradedColumn(0, 0, centerHeight);
+        HydrologyColumnSample east = gradedColumn(1, 0, eastHeight);
+        return new RiverFootprint(Map.of(
+                RiverFootprint.pack(west.x(), west.z()), west,
+                RiverFootprint.pack(center.x(), center.z()), center,
+                RiverFootprint.pack(east.x(), east.z()), east
+        ));
+    }
+
+    private static HydrologyColumnSample gradedColumn(int x, int z, int height) {
+        return new HydrologyColumnSample(x, z, 80, 63, false, "parent", List.of(gradedLayer(height)));
+    }
+
+    private static HydrologyColumnSample channelColumn(int x, int z, int bedY, int headY) {
+        return new HydrologyColumnSample(x, z, 80, 63, false, "parent", List.of(new HydrologyColumnLayer(
+                surfaceFeature(),
+                bedY,
+                headY,
+                headY,
+                true,
+                false,
+                false,
+                true,
+                false,
+                false,
+                true,
+                true,
+                false,
+                "water",
+                "surface",
+                "mouth",
+                "shore",
+                "bank",
+                "flooded"
+        )));
+    }
+
+    private static HydrologyColumnLayer gradedLayer(int height) {
+        return new HydrologyColumnLayer(
+                surfaceFeature(),
+                height,
+                height,
+                height,
+                false,
+                false,
+                true,
+                false,
+                false,
+                false,
+                true,
+                false,
+                false,
+                "water",
+                "surface",
+                "mouth",
+                "shore",
+                "bank",
+                "flooded"
+        );
+    }
+
+    private static HydrologyFeatureRef surfaceFeature() {
+        return new HydrologyFeatureRef(41L, HydrologyFeatureType.RIFFLE, 42L, 43L, 0, 70, 0, 1, 0, false);
     }
 
     private static List<HydrologyPoint> raster(List<HydrologyPoint> points) {

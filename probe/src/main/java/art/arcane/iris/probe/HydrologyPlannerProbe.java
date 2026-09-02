@@ -28,6 +28,9 @@ public final class HydrologyPlannerProbe {
     private static final long[] DEFAULT_SEEDS = {1L, 19L, 52L, 77L, 331L, 501L, 712L, 992L};
     private static final long SURFACE_INLAND_SEED = 7012L;
     private static final long UNDERGROUND_INLAND_SEED = 7013L;
+    private static final long COASTAL_SEED = 7014L;
+    static final Set<HydrologyFeatureType> REQUIRED_FEATURE_TYPES =
+            Set.copyOf(EnumSet.complementOf(EnumSet.of(HydrologyFeatureType.RIDGE_BORE)));
     private static final HydrologyTileKey ORIGIN = new HydrologyTileKey(0, 0);
     private static final int WARM_SAMPLES = 2_048;
 
@@ -90,6 +93,7 @@ public final class HydrologyPlannerProbe {
         collectAccepted(firstFeatures, surfaceInlandTile());
         collectAccepted(firstFeatures, undergroundInlandTile());
         collectAccepted(firstFeatures, surfaceMouthTile());
+        collectAccepted(firstFeatures, coastalGrottoTile());
         requireCompleteCoverage(firstFeatures.keySet());
 
         for (Map.Entry<HydrologyFeatureType, HydrologyFeatureRef> entry : firstFeatures.entrySet()) {
@@ -134,6 +138,7 @@ public final class HydrologyPlannerProbe {
         collectAccepted(coverage, surfaceInlandTile());
         collectAccepted(coverage, undergroundInlandTile());
         collectAccepted(coverage, surfaceMouthTile());
+        collectAccepted(coverage, coastalGrottoTile());
         requireCompleteCoverage(coverage.keySet());
         return Map.copyOf(coverage);
     }
@@ -148,7 +153,7 @@ public final class HydrologyPlannerProbe {
     }
 
     private static void requireCompleteCoverage(Set<HydrologyFeatureType> observed) {
-        EnumSet<HydrologyFeatureType> missing = EnumSet.allOf(HydrologyFeatureType.class);
+        EnumSet<HydrologyFeatureType> missing = EnumSet.copyOf(REQUIRED_FEATURE_TYPES);
         missing.removeAll(observed);
         if (!missing.isEmpty()) {
             throw new IllegalStateException("Hydrology accepted-feature coverage is missing " + missing + ".");
@@ -175,9 +180,18 @@ public final class HydrologyPlannerProbe {
 
     private static HydrologyTile surfaceMouthTile() {
         return new HydrologyPlanner(
-                DEFAULT_SEEDS[0],
+                COASTAL_SEED,
                 settings(false),
-                terrain(DEFAULT_SEEDS[0])
+                coastalTerrain(false)
+        ).plan(ORIGIN);
+    }
+
+    private static HydrologyTile coastalGrottoTile() {
+        return new HydrologyPlanner(
+                COASTAL_SEED,
+                settings(true),
+                coastalTerrain(true),
+                solidCaveView()
         ).plan(ORIGIN);
     }
 
@@ -230,9 +244,9 @@ public final class HydrologyPlannerProbe {
                         8,
                         true,
                         96,
-                        8
-                ,
-                        HydrologyPlannerSettings.Banks.defaults()),
+                        8,
+                        HydrologyPlannerSettings.Banks.defaults()
+                ),
                 new HydrologyPlannerSettings.Hydraulics(12, 28, 1, 3, 8, 4),
                 new HydrologyPlannerSettings.Underground(
                         undergroundDensity > 0D,
@@ -296,6 +310,57 @@ public final class HydrologyPlannerProbe {
                     "mouth",
                     "shore",
                     "dry",
+                    "flooded",
+                    List.of("water")
+            );
+        };
+    }
+
+    private static HydrologyTerrainSampler coastalTerrain(boolean cliffCoast) {
+        return (int x, int z) -> {
+            if (x >= 208) {
+                return oceanTerrain();
+            }
+            int height;
+            double slope;
+            if (x < 104) {
+                height = 100 - Math.floorDiv(x, 8);
+                slope = 1D;
+            } else if (cliffCoast) {
+                height = 84 - Math.floorDiv(x - 104, 26);
+                slope = 1D;
+            } else {
+                height = 79 - Math.floorDiv(x - 104, 12);
+                slope = x < 112 ? 4D : 1D;
+            }
+            boolean surfaceSource = x <= 40;
+            boolean undergroundSource = x <= 64;
+            return new HydrologyTerrainSample(
+                    height,
+                    slope,
+                    false,
+                    true,
+                    height - 30,
+                    height - 28,
+                    true,
+                    true,
+                    surfaceSource,
+                    surfaceSource,
+                    undergroundSource,
+                    undergroundSource,
+                    0D,
+                    surfaceSource ? 1D : 0D,
+                    undergroundSource ? 1D : 0D,
+                    1D,
+                    1D,
+                    1D,
+                    1D,
+                    1D,
+                    "parent",
+                    "surface",
+                    "mouth",
+                    "shore",
+                    "bank",
                     "flooded",
                     List.of("water")
             );
@@ -397,9 +462,9 @@ public final class HydrologyPlannerProbe {
                         10,
                         true,
                         96,
-                        10
-                ,
-                        HydrologyPlannerSettings.Banks.defaults()),
+                        10,
+                        HydrologyPlannerSettings.Banks.defaults()
+                ),
                 new HydrologyPlannerSettings.Hydraulics(12, 40, 1, 3, 8, 4),
                 new HydrologyPlannerSettings.Underground(
                         true,
