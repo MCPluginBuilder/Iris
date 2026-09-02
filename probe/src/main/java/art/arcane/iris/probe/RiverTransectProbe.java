@@ -2,7 +2,10 @@ package art.arcane.iris.probe;
 
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.hydrology.DrainageEdge;
+import art.arcane.iris.engine.hydrology.DrainageNode;
 import art.arcane.iris.engine.hydrology.HydraulicSegment;
+import art.arcane.iris.engine.hydrology.HydrologyCandidateKind;
 import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
 import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
 import art.arcane.iris.engine.hydrology.HydrologyDiagnosticCandidate;
@@ -180,6 +183,7 @@ public final class RiverTransectProbe {
             for (String line : rejectionLines(tile)) {
                 System.out.println(PREFIX + " " + line);
             }
+            writeTileDiagnostics(new File(configuration.output(), "tile-diagnostics.png"), tile, complex, runtime, seaLevel);
             List<CourseSummary> summaries = new ArrayList<>();
             for (RiverCourse course : tile.courses()) {
                 if (course.type() != RiverCourseType.SURFACE) {
@@ -385,6 +389,108 @@ public final class RiverTransectProbe {
             return Role.SHORE;
         }
         return layer.terrainOwned() ? Role.BANK : Role.NONE;
+    }
+
+    /**
+     * One pixel per four blocks over the tile: natural height in gray, sea in blue, courses in white,
+     * diagnostic candidates as dots coloured by their rejection.
+     */
+    private static void writeTileDiagnostics(
+            File file,
+            HydrologyTile tile,
+            IrisComplex complex,
+            IrisHydrologyRuntime runtime,
+            int seaLevel
+    ) throws IOException {
+        int scale = 4;
+        int tileSize = tile.tileSize();
+        int size = tileSize / scale;
+        int minimumX = tile.key().minimumBlockX(tileSize);
+        int minimumZ = tile.key().minimumBlockZ(tileSize);
+        int[][] natural = new int[size][size];
+        int lowest = Integer.MAX_VALUE;
+        int highest = Integer.MIN_VALUE;
+        for (int pz = 0; pz < size; pz++) {
+            for (int px = 0; px < size; px++) {
+                int height = (int) Math.round(complex.getNaturalHeightStream().getDouble(minimumX + px * scale, minimumZ + pz * scale));
+                natural[px][pz] = height;
+                lowest = Math.min(lowest, height);
+                highest = Math.max(highest, height);
+            }
+        }
+        double range = Math.max(1, highest - lowest);
+        BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+        for (int pz = 0; pz < size; pz++) {
+            for (int px = 0; px < size; px++) {
+                int height = natural[px][pz];
+                int rgb;
+                if (height <= seaLevel) {
+                    rgb = 0x1E3F8A;
+                } else {
+                    int gray = 40 + (int) Math.round(190D * (height - lowest) / range);
+                    rgb = (gray << 16) | (gray << 8) | gray;
+                }
+                image.setRGB(px, pz, rgb);
+            }
+        }
+        Map<Long, DrainageNode> nodes = new HashMap<>();
+        for (DrainageNode node : tile.nodes()) {
+            nodes.put(node.id(), node);
+            plot(image, (node.naturalPoint().x() - minimumX) / scale, (node.naturalPoint().z() - minimumZ) / scale, 0x00E0E0, 0);
+        }
+        for (DrainageEdge edge : tile.edges()) {
+            DrainageNode from = nodes.get(edge.upstreamNodeId());
+            DrainageNode to = nodes.get(edge.downstreamNodeId());
+            if (from == null || to == null) {
+                continue;
+            }
+            line(image, (from.naturalPoint().x() - minimumX) / scale, (from.naturalPoint().z() - minimumZ) / scale,
+                    (to.naturalPoint().x() - minimumX) / scale, (to.naturalPoint().z() - minimumZ) / scale, 0x20C020);
+        }
+        for (RiverCourse course : tile.courses()) {
+            int rgb = course.type() == RiverCourseType.SURFACE ? 0xFFFFFF : 0xFF00FF;
+            for (HydraulicSegment segment : course.segments()) {
+                for (HydrologyPoint point : segment.centerline()) {
+                    plot(image, (point.x() - minimumX) / scale, (point.z() - minimumZ) / scale, rgb, 1);
+                }
+            }
+        }
+        for (HydrologyDiagnosticCandidate candidate : tile.diagnosticCandidates()) {
+            int rgb = switch (candidate.rejection()) {
+                case NO_DRAINAGE_PATH -> 0xFF2020;
+                case COURSE_TOO_SHORT -> 0xFFB000;
+                case SOURCE_SPACING -> 0xFFFF40;
+                case SURFACE_CORRIDOR_UNSUPPORTED -> 0xFF60FF;
+                case OUTLET_LIMIT -> 0x20FF20;
+                default -> 0x00FFFF;
+            };
+            int radius = candidate.kind() == HydrologyCandidateKind.OUTLET ? 1 : 2;
+            plot(image, (candidate.point().x() - minimumX) / scale, (candidate.point().z() - minimumZ) / scale, rgb, radius);
+        }
+        ImageIO.write(image, "png", file);
+    }
+
+    private static void line(BufferedImage image, int x0, int z0, int x1, int z1, int rgb) {
+        int steps = Math.max(1, Math.max(Math.abs(x1 - x0), Math.abs(z1 - z0)));
+        for (int step = 0; step <= steps; step++) {
+            int x = x0 + (x1 - x0) * step / steps;
+            int z = z0 + (z1 - z0) * step / steps;
+            if (x >= 0 && z >= 0 && x < image.getWidth() && z < image.getHeight()) {
+                image.setRGB(x, z, rgb);
+            }
+        }
+    }
+
+    private static void plot(BufferedImage image, int x, int z, int rgb, int radius) {
+        for (int dz = -radius; dz <= radius; dz++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                int px = x + dx;
+                int pz = z + dz;
+                if (px >= 0 && pz >= 0 && px < image.getWidth() && pz < image.getHeight()) {
+                    image.setRGB(px, pz, rgb);
+                }
+            }
+        }
     }
 
     private static void writePlan(File file, Bounds bounds, Map<Long, ColumnView> columns) throws IOException {

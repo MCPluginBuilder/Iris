@@ -428,7 +428,7 @@ public final class HydrologyPlanner {
             boolean fallbackSelected = false;
             while (fallbackOutletIndex < fallbackOutlets.size()) {
                 OutletCandidate fallbackOutlet = fallbackOutlets.get(fallbackOutletIndex++);
-                RoutingPlan fallbackRouting = requireOrganicSurface(buildRouting(grid, List.of(fallbackOutlet)));
+                RoutingPlan fallbackRouting = requireOrganicSurface(buildRouting(grid, List.of(fallbackOutlet), true));
                 HashMap<HydrologyTileKey, SourceRoutingContext> fallbackContexts = new HashMap<>();
                 fallbackContexts.put(key, new SourceRoutingContext(
                         grid,
@@ -1471,7 +1471,7 @@ public final class HydrologyPlanner {
             addRejectedOutlets(oceanCandidates, selected, diagnostics);
             return selected;
         }
-        boolean[] oceanReachable = outletReachable(grid, oceanCandidates);
+        boolean[] oceanReachable = outletReachable(grid, oceanCandidates, surface);
         ArrayList<OutletCandidate> inlandCandidates = inlandOutletCandidates(grid, oceanReachable);
         sortInlandOutletCandidates(grid, inlandCandidates);
         int inlandMaximum = oceanCandidates.isEmpty()
@@ -1645,7 +1645,8 @@ public final class HydrologyPlanner {
         return true;
     }
 
-    private boolean[] outletReachable(SampledGrid grid, List<OutletCandidate> outlets) {
+    private boolean[] outletReachable(SampledGrid grid, List<OutletCandidate> outlets, boolean surface) {
+        int maximumRise = surface ? maximumSurfaceEdgeRise() : Integer.MAX_VALUE;
         boolean[] reachable = new boolean[grid.nodes().size()];
         int[] queue = new int[reachable.length];
         int readIndex = 0;
@@ -1662,7 +1663,8 @@ public final class HydrologyPlanner {
             for (GridOffset offset : ROUTING_OFFSETS) {
                 GridNode neighbor = grid.nodeAt(node.gridX() + offset.x(), node.gridZ() + offset.z());
                 if (neighbor == null || reachable[neighbor.index()] || neighbor.terrain().ocean()
-                        || !neighbor.terrain().transitAllowed()) {
+                        || !neighbor.terrain().transitAllowed()
+                        || node.terrain().naturalHeight() - neighbor.terrain().naturalHeight() > maximumRise) {
                     continue;
                 }
                 reachable[neighbor.index()] = true;
@@ -1931,8 +1933,12 @@ public final class HydrologyPlanner {
 
     private RoutingPlan buildRouting(
             SampledGrid grid,
-            List<OutletCandidate> outlets
+            List<OutletCandidate> outlets,
+            boolean surface
     ) {
+        // A surface river never climbs: any rise along its route becomes a cut of at least that rise,
+        // so lattice edges that rise more than a small saddle are not drainage at all.
+        int maximumRise = surface ? maximumSurfaceEdgeRise() : Integer.MAX_VALUE;
         int nodeCount = grid.nodes().size();
         double[] potential = new double[nodeCount];
         int[] parent = new int[nodeCount];
@@ -1961,6 +1967,9 @@ public final class HydrologyPlanner {
             for (GridOffset offset : ROUTING_OFFSETS) {
                 GridNode upstream = grid.nodeAt(downstream.gridX() + offset.x(), downstream.gridZ() + offset.z());
                 if (upstream == null || upstream.terrain().ocean() || !upstream.terrain().transitAllowed()) {
+                    continue;
+                }
+                if (downstream.terrain().naturalHeight() - upstream.terrain().naturalHeight() > maximumRise) {
                     continue;
                 }
                 double edgeCost = routeCost(
@@ -1996,6 +2005,12 @@ public final class HydrologyPlanner {
                 List.copyOf(outlets),
                 false
         );
+    }
+
+    /** Largest rise a surface drainage edge may take: the cut the valley solver will still accept. */
+    private int maximumSurfaceEdgeRise() {
+        int permitted = settings.surface().maximumIncision() - settings.surface().banks().inset() - settings.surface().minimumDepth();
+        return Math.max(1, permitted);
     }
 
     private RoutingPlan requireOrganicSurface(RoutingPlan routing) {
@@ -2393,12 +2408,12 @@ public final class HydrologyPlanner {
         SampledGrid grid = sample(key);
         ArrayList<HydrologyDiagnosticCandidate> diagnostics = new ArrayList<>();
         List<OutletCandidate> surfaceOutlets = resolveOutlets(key, grid, true, diagnostics);
-        RoutingPlan surfaceRouting = buildRouting(grid, surfaceOutlets);
+        RoutingPlan surfaceRouting = buildRouting(grid, surfaceOutlets, true);
         List<OutletCandidate> undergroundOutlets = settings.underground().enabled()
                 ? resolveOutlets(key, grid, false, diagnostics)
                 : surfaceOutlets;
         RoutingPlan undergroundRouting = settings.underground().enabled()
-                ? buildRouting(grid, undergroundOutlets)
+                ? buildRouting(grid, undergroundOutlets, false)
                 : surfaceRouting;
         return new SourceRoutingContext(
                 grid,
