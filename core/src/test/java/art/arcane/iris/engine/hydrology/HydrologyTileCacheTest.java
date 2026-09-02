@@ -341,4 +341,35 @@ public class HydrologyTileCacheTest {
                 List.of("default"), List.of()
         );
     }
+
+    @Test
+    public void planningFailureFallsBackToTheEmptyTileAndIsCached() {
+        HydrologyPlanner planner = mock(HydrologyPlanner.class);
+        HydrologyTileKey key = new HydrologyTileKey(3, -2);
+        HydrologyTile empty = new HydrologyTile(key, 7L, 11L, 1024, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), RiverFootprint.empty());
+        when(planner.settings()).thenReturn(emptySettings());
+        when(planner.plan(key)).thenThrow(new IllegalStateException("Hydrology natural height was not finite at -66,-641"));
+        when(planner.emptyTile(key)).thenReturn(empty);
+        HydrologyTileCache cache = new HydrologyTileCache(planner, 4);
+
+        assertSame(empty, cache.get(key));
+        assertSame(empty, cache.get(key));
+
+        verify(planner, times(1)).plan(key);
+        assertTrue(cache.get(key).courses().isEmpty());
+    }
+
+    @Test
+    public void plannerEmptyTileCarriesTheTileIdentityAndNoContent() {
+        HydrologyPlanner planner = new HydrologyPlanner(811L, featureSettings(), this::featureTerrain);
+        HydrologyTileKey key = new HydrologyTileKey(-4, 9);
+
+        HydrologyTile tile = planner.emptyTile(key);
+
+        assertEquals(key, tile.key());
+        assertEquals(featureSettings().routing().tileSize(), tile.tileSize());
+        assertTrue(tile.courses().isEmpty());
+        assertTrue(tile.outlets().isEmpty());
+        assertTrue(tile.columnAt(0, 0).isEmpty());
+    }
 }

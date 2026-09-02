@@ -306,6 +306,11 @@ final class IrisHydrologyRoutingTerrainSampler implements HydrologyNaturalTerrai
             }
         }
         double sampled = heightProvider.sample(blockX, blockZ);
+        if (!Double.isFinite(sampled)) {
+            // Never memoize a broken sample: the basis provider rejects it with a diagnostic and a
+            // later sample of the same column gets a fresh chance instead of the cached failure.
+            return sampled;
+        }
         synchronized (lock) {
             double existing = naturalHeights.getAndMoveToLast(packed);
             if (!Double.isNaN(existing) || naturalHeights.containsKey(packed)) {

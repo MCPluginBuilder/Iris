@@ -412,6 +412,28 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         return routingTerrainSampler.sampleBasis(x, z);
     }
 
+    /**
+     * The message for a column whose natural height is not a finite number. It carries both the
+     * raw stream sample and the natural sample plus the terrain breakdown, so the log of a failed
+     * tile says which generator, overlay or cache produced the value.
+     */
+    static String nonFiniteHeightMessage(
+            int x,
+            int z,
+            double rawNaturalHeight,
+            double sampledNaturalHeight,
+            IrisHydrologyNaturalHeightDescriber describer
+    ) {
+        String breakdown;
+        try {
+            breakdown = describer.describe(x, z);
+        } catch (RuntimeException failure) {
+            breakdown = "breakdown unavailable: " + failure.getClass().getSimpleName() + ": " + failure.getMessage();
+        }
+        return "Hydrology natural height was not finite at " + x + "," + z
+                + " (raw=" + rawNaturalHeight + ", sampled=" + sampledNaturalHeight + "; " + breakdown + ")";
+    }
+
     private IrisHydrologyRoutingTerrainSampler.TerrainBasis createTerrainBasis(
             int x,
             int z,
@@ -426,7 +448,13 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 ? sampledNaturalHeight
                 : rawNaturalHeight;
         if (!Double.isFinite(resolvedNaturalHeight)) {
-            throw new IllegalStateException("Hydrology natural height was not finite at " + x + "," + z);
+            throw new IllegalStateException(nonFiniteHeightMessage(
+                    x,
+                    z,
+                    rawNaturalHeight,
+                    sampledNaturalHeight,
+                    context.naturalHeightDescriber()
+            ));
         }
         int naturalHeight = (int) StrictMath.round(resolvedNaturalHeight);
         boolean ocean = naturalSample.ocean();

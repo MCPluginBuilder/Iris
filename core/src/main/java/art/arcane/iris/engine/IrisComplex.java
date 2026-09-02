@@ -309,6 +309,7 @@ public class IrisComplex implements DataProvider {
                     data,
                     (x, z, naturalHeight) -> sampleHydrologyNatural(engine, x, z, naturalHeight),
                     (x, z) -> naturalHeightStream.getDouble(x, z),
+                    (x, z) -> describeNaturalHeight(engine, x, z),
                     this::sampleNaturalOcean,
                     footprint -> new MantleHydrologyCaveVoxelView(engine, this, footprint)
             ));
@@ -397,6 +398,35 @@ public class IrisComplex implements DataProvider {
 
     private boolean sampleNaturalOcean(int x, int z) {
         return resolveNaturalInferredType(bridgeStream, focusBiome, x, z) == InferredType.SEA;
+    }
+
+    /**
+     * Every input to the natural height at one column, recomputed outside the caches: the region
+     * and base biome, the fluid height and overlay, each interpolator's bounds and generator
+     * heights, then the cached and the fresh natural height. Diagnostic only.
+     */
+    String describeNaturalHeight(Engine engine, int x, int z) {
+        long seed = engine.getSeedManager().getHeight();
+        IrisRegion region = regionStream.get(x, z);
+        IrisBiome biome = baseBiomeStream.get(x, z);
+        StringBuilder out = new StringBuilder(256);
+        out.append("region=").append(region == null ? "null" : region.getLoadKey());
+        out.append(" biome=").append(biome == null ? "null" : biome.getLoadKey());
+        out.append(" fluidHeight=").append(fluidHeight);
+        out.append(" overlay=").append(overlayStream.getDouble(x, z));
+        for (int interpolatorIndex = 0; interpolatorIndex < frozenInterpolators.length; interpolatorIndex++) {
+            IrisGenerator[] generators = frozenGenerators[interpolatorIndex];
+            NoiseBounds bounds = gridSampleBounds(engine, frozenInterpolators[interpolatorIndex], interpolatorIndex, generators, x, z);
+            out.append(" interpolator[").append(interpolatorIndex).append("] bounds=")
+                    .append(bounds.min()).append("..").append(bounds.max());
+            for (IrisGenerator generator : generators) {
+                out.append(' ').append(generator.getLoadKey()).append('=')
+                        .append(generator.getHeight(x, z, seed + 239945));
+            }
+        }
+        out.append(" cachedNatural=").append(naturalHeightStream.getDouble(x, z));
+        out.append(" freshNatural=").append(sampleNaturalTerrainHeight(engine, x, z));
+        return out.toString();
     }
 
     private double sampleNaturalTerrainHeight(Engine engine, double x, double z) {

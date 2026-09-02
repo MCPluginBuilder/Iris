@@ -1,5 +1,6 @@
 package art.arcane.iris.engine.hydrology;
 
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -49,7 +50,24 @@ public final class HydrologyTileCache implements AutoCloseable {
 
     public HydrologyTile get(HydrologyTileKey key) {
         Objects.requireNonNull(key, "key");
-        return tiles.get(key, planner::plan);
+        return tiles.get(key, this::planOrEmpty);
+    }
+
+    /**
+     * A tile whose planning throws is published without rivers instead of failing the chunks that
+     * asked for it: one bad column must not take the chunk system down. The failure is logged in
+     * full so the cause can be traced, and the empty tile is cached like any other so the session
+     * stays consistent.
+     */
+    private HydrologyTile planOrEmpty(HydrologyTileKey key) {
+        try {
+            return planner.plan(key);
+        } catch (RuntimeException failure) {
+            IrisLogging.error("Hydrology tile " + key.tileX() + "," + key.tileZ()
+                    + " failed to plan and generates without rivers: " + failure.getMessage());
+            IrisLogging.reportError(failure);
+            return planner.emptyTile(key);
+        }
     }
 
     public Optional<HydrologyColumnSample> columnAt(int blockX, int blockZ) {

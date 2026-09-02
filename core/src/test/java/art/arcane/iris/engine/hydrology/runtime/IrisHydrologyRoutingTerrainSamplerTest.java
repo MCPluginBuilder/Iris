@@ -338,7 +338,7 @@ public class IrisHydrologyRoutingTerrainSamplerTest {
     }
 
     @Test
-    public void primitiveHeightCacheRetainsNanValues() {
+    public void primitiveHeightCacheNeverRetainsNanValues() {
         AtomicInteger heightCalls = new AtomicInteger();
         IrisHydrologyRoutingTerrainSampler sampler = new IrisHydrologyRoutingTerrainSampler(
                 new IrisHydrologyRoutingTerrainSampler.Sources(
@@ -354,7 +354,8 @@ public class IrisHydrologyRoutingTerrainSamplerTest {
 
         assertTrue(Double.isNaN(sampler.localSlope(0, 0, 0D)));
         assertTrue(Double.isNaN(sampler.localSlope(0, 0, 0D)));
-        assertEquals(2, heightCalls.get());
+        // Two neighbours per slope, sampled again on the second call because a NaN is never memoized.
+        assertEquals(4, heightCalls.get());
     }
 
     @Test
@@ -608,5 +609,31 @@ public class IrisHydrologyRoutingTerrainSamplerTest {
 
     private long pack(int x, int z) {
         return ((long) x << 32) ^ (z & 0xffffffffL);
+    }
+
+    @Test
+    public void nonFiniteNaturalHeightIsNotCachedSoTheNextSampleCanRecover() {
+        AtomicInteger originCalls = new AtomicInteger();
+        IrisHydrologyRoutingTerrainSampler sampler = new IrisHydrologyRoutingTerrainSampler(
+                new IrisHydrologyRoutingTerrainSampler.Sources(
+                        (int x, int z, double naturalHeight) -> new IrisHydrologyRoutingTerrainSampler.TerrainBasis(
+                                naturalHeight,
+                                HydrologyTerrainSample.openLand((int) Math.round(naturalHeight), 0D, "parent")
+                        ),
+                        (int x, int z) -> {
+                            if (x == 4 && z == 4) {
+                                return originCalls.incrementAndGet() == 1 ? Double.NaN : 90D;
+                            }
+                            return 90D;
+                        },
+                        (int x, int z) -> false
+                ),
+                IrisHydrologyRoutingTerrainSampler.SamplingOptions.serial(64)
+        );
+
+        assertThrows(IllegalArgumentException.class, () -> sampler.sampleBasis(4, 4));
+
+        assertEquals(90, sampler.sampleBasis(4, 4).naturalHeight());
+        assertEquals(2, originCalls.get());
     }
 }

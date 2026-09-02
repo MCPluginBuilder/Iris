@@ -13,6 +13,7 @@ public record IrisHydrologyRuntimeContext(
         IrisData data,
         IrisHydrologyNaturalSampleProvider naturalSampleProvider,
         IrisHydrologyNaturalHeightProvider naturalHeightProvider,
+        IrisHydrologyNaturalHeightDescriber naturalHeightDescriber,
         IrisHydrologyNaturalOceanClassifier naturalOceanClassifier,
         HydrologyCaveVoxelViewFactory caveViewFactory
 ) {
@@ -24,6 +25,7 @@ public record IrisHydrologyRuntimeContext(
         Objects.requireNonNull(data);
         Objects.requireNonNull(naturalSampleProvider);
         Objects.requireNonNull(naturalHeightProvider);
+        Objects.requireNonNull(naturalHeightDescriber);
         Objects.requireNonNull(naturalOceanClassifier);
         Objects.requireNonNull(caveViewFactory);
     }

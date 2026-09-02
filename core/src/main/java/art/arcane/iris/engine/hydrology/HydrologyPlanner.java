@@ -252,6 +252,27 @@ public final class HydrologyPlanner {
         return settings;
     }
 
+    /**
+     * A tile with the same identity as a planned tile but no rivers, used when planning the tile
+     * failed and terrain there must still generate.
+     */
+    public HydrologyTile emptyTile(HydrologyTileKey key) {
+        Objects.requireNonNull(key, "key");
+        return new HydrologyTile(
+                key,
+                worldSeed,
+                settings.fingerprint(),
+                settings.routing().tileSize(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                RiverFootprint.empty()
+        );
+    }
+
     public HydrologyTile plan(HydrologyTileKey key) {
         return materializeAcceptedTile(resolveCrossTileOwner(key));
     }
