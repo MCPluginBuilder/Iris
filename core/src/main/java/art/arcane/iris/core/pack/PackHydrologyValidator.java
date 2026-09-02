@@ -365,6 +365,8 @@ final class PackHydrologyValidator {
         validateRange(path, channel, "depth", 1D, 64D, 2D, 4D, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "inset", 0, 3, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "maximumIncision", 1, 32, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, channel, "springWidthRatio", 1D, 4D, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "springLength", 4, 96, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, channel, "roughness", 0D, 1D, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "roughnessWavelength", 4, 64, errors);
     }

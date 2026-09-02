@@ -303,7 +303,7 @@ public class HydrologyTileCacheTest {
 
     // Small-tile settings need a blend envelope that fits inside the bounded cross-tile admission period.
     private static HydrologyPlannerSettings.Banks tileBoundedBanks() {
-        return new HydrologyPlannerSettings.Banks(1, 1, 3D, 4, 4, 0.25D, 16, 2, 6, 1.6D, true);
+        return new HydrologyPlannerSettings.Banks(1, 1, 3D, 4, 4, 0.25D, 16, 2, 6, 1.6D, 2.5D, 24, true);
     }
 
     private HydrologyTerrainSample featureTerrain(int x, int z) {

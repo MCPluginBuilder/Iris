@@ -161,7 +161,9 @@ public class CommandFind implements DirectorExecutor {
                         query.profileKey(),
                         origin.getBlockX(),
                         origin.getBlockZ(),
-                        maximumDistance
+                        maximumDistance,
+                        (int visited) -> sendStructureMessage(target, commandSender,
+                                C.GRAY + "Searched " + visited + " hydrology tiles for " + type + "...")
                 ).orElse(null);
                 if (feature == null) {
                     sendStructureMessage(target, commandSender,

@@ -176,7 +176,9 @@ final class ModdedLocateCommands {
         MinecraftServer server = source.getServer();
         IrisModdedCommands.ok(source, "Searching accepted hydrology plans for " + type + "...");
         MultiBurst.burst.completeValueAsync(() -> runtime.nearestFeature(
-                        query.types(), query.profileKey(), originX, originZ, maximumDistance).orElse(null))
+                        query.types(), query.profileKey(), originX, originZ, maximumDistance,
+                        (int visited) -> server.execute(() -> IrisModdedCommands.ok(source,
+                                "Searched " + visited + " hydrology tiles for " + type + "..."))).orElse(null))
                 .whenComplete((HydrologyFeatureRef feature, Throwable error) -> server.execute(() -> {
                     if (error != null) {
                         ModdedIrisLog.error("Hydrology locate failed for {}", type, error);

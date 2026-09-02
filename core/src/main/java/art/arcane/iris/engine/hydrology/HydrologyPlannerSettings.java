@@ -251,23 +251,28 @@ public record HydrologyPlannerSettings(
             int cascadeRun,
             int waterfallMinimumDrop,
             double mouthFlareRatio,
+            double springWidthRatio,
+            int springLength,
             boolean exposeCutStrata
     ) {
+        // Structural invariants only; authoring bounds live in the pack validator.
         public Banks {
-            if (inset < 1 || inset > 16 || freeboard < 1 || freeboard > 8
-                    || !Double.isFinite(blendSlope) || blendSlope < 1D || blendSlope > 16D
-                    || minimumBlendWidth < 1 || maximumBlendWidth < minimumBlendWidth || maximumBlendWidth > 128
+            if (inset < 0 || freeboard < 0
+                    || !Double.isFinite(blendSlope) || blendSlope <= 0D
+                    || minimumBlendWidth < 1 || maximumBlendWidth < minimumBlendWidth
                     || !Double.isFinite(roughness) || roughness < 0D || roughness > 1D
-                    || roughnessWavelength < 3 || roughnessWavelength > 128
-                    || cascadeRun < 1 || cascadeRun > 16
-                    || waterfallMinimumDrop < 2 || waterfallMinimumDrop > 24
-                    || !Double.isFinite(mouthFlareRatio) || mouthFlareRatio < 1D || mouthFlareRatio > 4D) {
+                    || roughnessWavelength < 1
+                    || cascadeRun < 1
+                    || waterfallMinimumDrop < 1
+                    || !Double.isFinite(mouthFlareRatio) || mouthFlareRatio < 1D
+                    || !Double.isFinite(springWidthRatio) || springWidthRatio < 1D
+                    || springLength < 1) {
                 throw new IllegalArgumentException("Surface bank settings are invalid.");
             }
         }
 
         public static Banks defaults() {
-            return new Banks(1, 1, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, true);
+            return new Banks(1, 1, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, 2.5D, 24, true);
         }
     }
 

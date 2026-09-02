@@ -144,20 +144,13 @@ public class HydrologyPlannerSettingsTest {
         assertEquals(32, banks.maximumBlendWidth());
         assertEquals(6, banks.waterfallMinimumDrop());
         assertTrue(banks.exposeCutStrata());
-        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(
-                0, 1, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, true));
-        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(
-                1, 0, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, true));
-        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(
-                1, 1, 0.5D, 4, 32, 0.25D, 16, 2, 6, 1.6D, true));
-        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(
-                1, 1, 3D, 40, 32, 0.25D, 16, 2, 6, 1.6D, true));
-        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(
-                1, 1, 3D, 4, 32, 0.25D, 16, 2, 1, 1.6D, true));
-        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(
-                1, 1, 3D, 4, 32, 0.25D, 16, 0, 6, 1.6D, true));
-        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(
-                1, 1, 3D, 4, 32, 1.5D, 16, 2, 6, 1.6D, true));
+        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(-1, 1, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, 2.5D, 24, true));
+        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(1, -1, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, 2.5D, 24, true));
+        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(1, 1, 0D, 4, 32, 0.25D, 16, 2, 6, 1.6D, 2.5D, 24, true));
+        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(1, 1, 3D, 40, 32, 0.25D, 16, 2, 6, 1.6D, 2.5D, 24, true));
+        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(1, 1, 3D, 4, 32, 0.25D, 16, 2, 0, 1.6D, 2.5D, 24, true));
+        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(1, 1, 3D, 4, 32, 0.25D, 16, 0, 6, 1.6D, 2.5D, 24, true));
+        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Banks(1, 1, 3D, 4, 32, 1.5D, 16, 2, 6, 1.6D, 2.5D, 24, true));
         assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Surface(
                 true,
                 new HydrologyPlannerSettings.Source(true, 1D, 0, 0, 1, 0),

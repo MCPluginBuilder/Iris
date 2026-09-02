@@ -288,7 +288,9 @@ public class PackHydrologyValidatorTest {
                       "inset": 4,
                       "maximumIncision": 33,
                       "roughness": 1.5,
-                      "roughnessWavelength": 65
+                      "roughnessWavelength": 65,
+                      "springWidthRatio": 5,
+                      "springLength": 97
                     }
                   }
                 }
@@ -303,7 +305,9 @@ public class PackHydrologyValidatorTest {
                       "inset": -1,
                       "maximumIncision": 0,
                       "roughness": -0.1,
-                      "roughnessWavelength": 3
+                      "roughnessWavelength": 3,
+                      "springWidthRatio": 0.5,
+                      "springLength": 3
                     }
                   }
                 }
@@ -318,6 +322,10 @@ public class PackHydrologyValidatorTest {
         assertContains(aboveResult.errors(), "maximumIncision must be at most 32");
         assertContains(aboveResult.errors(), "roughness must be at most 1.0");
         assertContains(aboveResult.errors(), "roughnessWavelength must be at most 64");
+        assertContains(aboveResult.errors(), "springWidthRatio must be at most 4.0");
+        assertContains(aboveResult.errors(), "springLength must be at most 96");
+        assertContains(belowResult.errors(), "springWidthRatio must be at least 1.0");
+        assertContains(belowResult.errors(), "springLength must be at least 4");
         assertContains(belowResult.errors(), "width.min must be at least 1.0");
         assertContains(belowResult.errors(), "depth.min must be at least 1.0");
         assertContains(belowResult.errors(), "inset must be at least 0");

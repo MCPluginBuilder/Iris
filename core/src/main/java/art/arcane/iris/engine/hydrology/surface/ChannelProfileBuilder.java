@@ -9,7 +9,6 @@ import java.util.Objects;
 
 public final class ChannelProfileBuilder {
     private static final int SMOOTHING_RADIUS = 16;
-    private static final int HEADWATER_TAPER = 48;
     private static final int MOUTH_FLARE = 32;
 
     private final HydrologyPlannerSettings.Surface surface;
@@ -65,11 +64,15 @@ public final class ChannelProfileBuilder {
         }
         double[] smoothWidth = smooth(width);
         double[] smoothDepth = smooth(depth);
-        int taper = Math.min(HEADWATER_TAPER, count / 2);
-        for (int station = 0; station < taper; station++) {
-            double progress = SurfaceNoise.smoothStep(station / (double) taper);
-            smoothWidth[station] = 1D + (smoothWidth[station] - 1D) * progress;
-            smoothDepth[station] = 1D + (smoothDepth[station] - 1D) * progress;
+        // The headwater opens as a spring pool: wider and one block deeper, narrowing to the cruise width.
+        // Ground that falls away across the pool shrinks it so it never demands a cut the valley solver rejects.
+        int spring = Math.min(surface.banks().springLength(), count / 2);
+        double springRatio = surface.banks().springWidthRatio();
+        for (int station = 0; station < spring; station++) {
+            double remaining = 1D - SurfaceNoise.smoothStep(station / (double) spring);
+            double localRatio = 1D + (springRatio - 1D) * springRoom(centerline, station, smoothWidth[station] * springRatio / 2D);
+            smoothWidth[station] *= 1D + (localRatio - 1D) * remaining;
+            smoothDepth[station] += remaining;
         }
         if (directOcean) {
             int flare = Math.min(MOUTH_FLARE, count / 3);
@@ -85,6 +88,30 @@ public final class ChannelProfileBuilder {
             smoothDepth[station] = Math.max(1D, smoothDepth[station]);
         }
         return new ChannelProfile(halfWidth, smoothDepth, bank);
+    }
+
+    /** Fraction of the spring pool the ground allows: 1 on level ground, 0 where the pool ring would sit half the permitted cut lower. */
+    private double springRoom(SurfaceCenterline centerline, int station, double reach) {
+        int centerX = centerline.x()[station];
+        int centerZ = centerline.z()[station];
+        HydrologyTerrainSample center = sampler.sample(centerX, centerZ);
+        if (center == null) {
+            return 1D;
+        }
+        double normalX = centerline.normalX(station);
+        double normalZ = centerline.normalZ(station);
+        int lowest = center.naturalHeight();
+        for (double direction = -1D; direction <= 1D; direction += 2D) {
+            HydrologyTerrainSample side = sampler.sample(
+                    (int) StrictMath.round(centerX + normalX * reach * direction),
+                    (int) StrictMath.round(centerZ + normalZ * reach * direction));
+            if (side != null) {
+                lowest = Math.min(lowest, side.naturalHeight());
+            }
+        }
+        double drop = center.naturalHeight() - lowest;
+        double allowance = Math.max(1D, surface.maximumIncision() / 2D);
+        return Math.max(0D, Math.min(1D, 1D - drop / allowance));
     }
 
     static double[] smooth(double[] values) {

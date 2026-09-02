@@ -8,6 +8,7 @@ import art.arcane.iris.engine.hydrology.HydrologyTerrainSampler;
 import org.junit.Test;
 
 import java.util.List;
+import java.util.function.IntBinaryOperator;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -20,7 +21,7 @@ public class ChannelProfileBuilderTest {
     };
 
     @Test
-    public void cruiseWidthIsConstantAndTapersFromTheHeadwater() {
+    public void headwaterOpensAsASpringPoolThatNarrowsToTheCruiseWidth() {
         SurfaceCenterline centerline = straight(400);
         ChannelProfile profile = builder(1D, 1D).build(centerline, "water", false);
 
@@ -28,11 +29,14 @@ public class ChannelProfileBuilderTest {
         assertEquals(3D, profile.halfWidth()[200], 1.0E-9D);
         assertEquals(3D, profile.halfWidth()[399], 1.0E-9D);
         assertEquals(3D, profile.depth()[200], 1.0E-9D);
-        assertTrue(profile.halfWidth()[0] < 1D);
-        for (int station = 1; station < 48; station++) {
-            assertTrue(profile.halfWidth()[station] >= profile.halfWidth()[station - 1]);
+        assertEquals(3D * 2.5D, profile.halfWidth()[0], 1.0E-9D);
+        assertEquals(4D, profile.depth()[0], 1.0E-9D);
+        for (int station = 1; station <= 24; station++) {
+            assertTrue(profile.halfWidth()[station] <= profile.halfWidth()[station - 1]);
+            assertTrue(profile.depth()[station] <= profile.depth()[station - 1]);
         }
-        assertTrue(profile.depth()[0] >= 1D);
+        assertEquals(3D, profile.halfWidth()[24], 1.0E-9D);
+        assertEquals(3D, profile.depth()[24], 1.0E-9D);
     }
 
     @Test
@@ -55,9 +59,26 @@ public class ChannelProfileBuilderTest {
         assertEquals(6D * 1.25D + 2D, profile.collar(200, 0.25D), 1.0E-9D);
     }
 
+    @Test
+    public void groundFallingAwayAcrossThePoolShrinksTheSpringPool() {
+        SurfaceCenterline centerline = straight(400);
+        ChannelProfile sloped = builder(1D, 1D, (int x, int z) -> 80 - Math.abs(z) / 2).build(centerline, "water", false);
+        ChannelProfile cliff = builder(1D, 1D, (int x, int z) -> 80 - Math.abs(z) * 8).build(centerline, "water", false);
+
+        assertTrue(sloped.halfWidth()[0] > 3D);
+        assertTrue(sloped.halfWidth()[0] < 3D * 2.5D);
+        assertEquals(3D, cliff.halfWidth()[0], 1.0E-9D);
+        assertEquals(4D, cliff.depth()[0], 1.0E-9D);
+        assertEquals(3D, sloped.halfWidth()[24], 1.0E-9D);
+    }
+
     private static ChannelProfileBuilder builder(double widthMultiplier, double depthMultiplier) {
+        return builder(widthMultiplier, depthMultiplier, (int x, int z) -> 80);
+    }
+
+    private static ChannelProfileBuilder builder(double widthMultiplier, double depthMultiplier, IntBinaryOperator height) {
         HydrologyTerrainSampler sampler = (int x, int z) -> new HydrologyTerrainSample(
-                80,
+                height.applyAsInt(x, z),
                 0D,
                 false,
                 false,

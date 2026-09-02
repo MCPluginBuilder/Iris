@@ -57,6 +57,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.IntConsumer;
 
 public final class IrisHydrologyRuntime implements AutoCloseable {
     private static final int MAXIMUM_CACHE_TILES = 64;
@@ -287,39 +288,62 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
             int z,
             int maximumDistance
     ) {
+        return nearestFeature(types, profileKey, x, z, maximumDistance, (int visited) -> { });
+    }
+
+    /**
+     * Walks tiles outward from the origin, planning each on demand, and stops as soon as no unvisited
+     * ring can hold a nearer feature. {@code progress} receives the running tile count after every ring.
+     */
+    public Optional<HydrologyFeatureRef> nearestFeature(
+            Set<HydrologyFeatureType> types,
+            String profileKey,
+            int x,
+            int z,
+            int maximumDistance,
+            IntConsumer progress
+    ) {
         Objects.requireNonNull(types);
+        Objects.requireNonNull(progress);
         if (types.isEmpty() || maximumDistance < 0) {
             return Optional.empty();
         }
         int tileSize = settings.routing().tileSize();
         int publicationRadius = settings.publicationRadius();
-        int minimumTileX = tileCoordinate((long) x - maximumDistance - publicationRadius, tileSize);
-        int maximumTileX = tileCoordinate((long) x + maximumDistance + publicationRadius, tileSize);
-        int minimumTileZ = tileCoordinate((long) z - maximumDistance - publicationRadius, tileSize);
-        int maximumTileZ = tileCoordinate((long) z + maximumDistance + publicationRadius, tileSize);
         long tileCount = HydrologyFeatureSearchBounds.tileCount(
                 x, z, maximumDistance, tileSize, publicationRadius);
         if (tileCount > MAXIMUM_FEATURE_SEARCH_TILES) {
             throw new IllegalArgumentException("Hydrology feature search exceeds the bounded tile limit.");
         }
+        int originTileX = tileCoordinate(x, tileSize);
+        int originTileZ = tileCoordinate(z, tileSize);
+        int ringLimit = HydrologyFeatureSearch.ringLimit(maximumDistance, tileSize, publicationRadius);
         HydrologyFeatureRef nearest = null;
         long nearestDistanceSquared = Long.MAX_VALUE;
-        for (int tileZ = minimumTileZ; tileZ <= maximumTileZ; tileZ++) {
-            for (int tileX = minimumTileX; tileX <= maximumTileX; tileX++) {
-                HydrologyTile tile = cache.get(new HydrologyTileKey(tileX, tileZ));
+        int visited = 0;
+        for (int ring = 0; ring <= ringLimit; ring++) {
+            long lowerBound = HydrologyFeatureSearch.lowerBound(ring, tileSize, publicationRadius);
+            if (nearest != null && lowerBound * lowerBound > nearestDistanceSquared) {
+                break;
+            }
+            for (HydrologyTileKey key : HydrologyFeatureSearch.ring(originTileX, originTileZ, ring)) {
+                HydrologyTile tile = cache.get(key);
+                visited++;
                 HydrologyFeatureRef feature = tile.nearestFeature(
                         types, profileKey, x, z, maximumDistance).orElse(null);
-                if (feature != null) {
-                    long deltaX = (long) feature.x() - x;
-                    long deltaZ = (long) feature.z() - z;
-                    long distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
-                    if (nearest == null || distanceSquared < nearestDistanceSquared
-                            || distanceSquared == nearestDistanceSquared && feature.id() < nearest.id()) {
-                        nearest = feature;
-                        nearestDistanceSquared = distanceSquared;
-                    }
+                if (feature == null) {
+                    continue;
+                }
+                long deltaX = (long) feature.x() - x;
+                long deltaZ = (long) feature.z() - z;
+                long distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
+                if (nearest == null || distanceSquared < nearestDistanceSquared
+                        || distanceSquared == nearestDistanceSquared && feature.id() < nearest.id()) {
+                    nearest = feature;
+                    nearestDistanceSquared = distanceSquared;
                 }
             }
+            progress.accept(visited);
         }
         return Optional.ofNullable(nearest);
     }
@@ -677,6 +701,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                         flow.getCascadeRun(),
                         flow.getWaterfallMinimumDrop(),
                         surface.getMouths().getFlareRatio(),
+                        channel.getSpringWidthRatio(),
+                        channel.getSpringLength(),
                         banks.isExposeCutStrata()
                 )
         );

@@ -38,6 +38,16 @@ public class IrisSurfaceRiverChannelConfig {
     @Desc("Wavelength in blocks of the outline and bed variation.")
     private int roughnessWavelength = 16;
 
+    @MinNumber(1)
+    @MaxNumber(4)
+    @Desc("Width of the spring pool at the headwater relative to the channel width; 1 starts the river at its normal width.")
+    private double springWidthRatio = 2.5D;
+
+    @MinNumber(4)
+    @MaxNumber(96)
+    @Desc("Blocks over which the spring pool narrows back to the channel width.")
+    private int springLength = 24;
+
     private static IrisStyledRange range(double min, double max, double zoom) {
         IrisGeneratorStyle style = new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(zoom);
         return new IrisStyledRange(min, max, style);
