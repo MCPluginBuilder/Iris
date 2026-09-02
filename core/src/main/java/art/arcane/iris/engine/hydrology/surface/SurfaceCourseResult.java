@@ -13,7 +13,8 @@ public record SurfaceCourseResult(
         int lastWidth,
         int lastDepth,
         HydrologyPoint pathEnd,
-        HydrologyCandidateRejection rejection
+        HydrologyCandidateRejection rejection,
+        int rejectionDetail
 ) {
     public SurfaceCourseResult {
         segments = List.copyOf(Objects.requireNonNull(segments, "segments"));
@@ -23,7 +24,7 @@ public record SurfaceCourseResult(
         return rejection == null;
     }
 
-    public static SurfaceCourseResult rejected(HydrologyCandidateRejection rejection) {
-        return new SurfaceCourseResult(List.of(), 0, 0, 0, null, Objects.requireNonNull(rejection, "rejection"));
+    public static SurfaceCourseResult rejected(HydrologyCandidateRejection rejection, int detail) {
+        return new SurfaceCourseResult(List.of(), 0, 0, 0, null, Objects.requireNonNull(rejection, "rejection"), detail);
     }
 }

@@ -219,13 +219,23 @@ public final class RiverTransectProbe {
 
     static List<String> rejectionLines(HydrologyTile tile) {
         TreeMap<String, Integer> counts = new TreeMap<>();
+        TreeMap<String, ArrayList<Integer>> details = new TreeMap<>();
         for (HydrologyDiagnosticCandidate candidate : tile.diagnosticCandidates()) {
             String key = "rejected " + candidate.kind() + " " + candidate.projectedType() + " " + candidate.rejection();
             counts.merge(key, 1, Integer::sum);
+            if (candidate.detail() != 0) {
+                details.computeIfAbsent(key, (String ignored) -> new ArrayList<>()).add(candidate.detail());
+            }
         }
         ArrayList<String> lines = new ArrayList<>(counts.size());
         for (Map.Entry<String, Integer> entry : counts.entrySet()) {
-            lines.add(entry.getKey() + " x" + entry.getValue());
+            ArrayList<Integer> values = details.get(entry.getKey());
+            String suffix = "";
+            if (values != null) {
+                values.sort(null);
+                suffix = " detail=" + values.subList(0, Math.min(values.size(), 24));
+            }
+            lines.add(entry.getKey() + " x" + entry.getValue() + suffix);
         }
         return lines;
     }

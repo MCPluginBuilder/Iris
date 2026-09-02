@@ -79,10 +79,10 @@ public final class ValleyProfileSolver {
             crossMax[station] = maximum;
         }
         if (exposed < 2 || exposed < minimumCourseLength) {
-            return ValleyProfile.rejected(HydrologyCandidateRejection.COURSE_TOO_SHORT);
+            return ValleyProfile.rejected(HydrologyCandidateRejection.COURSE_TOO_SHORT, exposed);
         }
         if (exposed < count && terminal != SurfaceTerminal.OCEAN_MOUTH) {
-            return ValleyProfile.rejected(HydrologyCandidateRejection.SURFACE_EXPOSURE);
+            return ValleyProfile.rejected(HydrologyCandidateRejection.SURFACE_EXPOSURE, exposed);
         }
         int inset = surface.banks().inset();
         int[] head = new int[count];
@@ -101,19 +101,24 @@ public final class ValleyProfileSolver {
             }
         }
         if (terminal == SurfaceTerminal.SINKHOLE && head[exposed - 1] < terminalHead) {
-            return ValleyProfile.rejected(HydrologyCandidateRejection.SURFACE_SINKHOLE_CLEARANCE);
+            return ValleyProfile.rejected(HydrologyCandidateRejection.SURFACE_SINKHOLE_CLEARANCE, terminalHead - head[exposed - 1]);
         }
         if (terminal == SurfaceTerminal.COASTAL_GROTTO && head[exposed - 1] < terminalHead) {
-            return ValleyProfile.rejected(HydrologyCandidateRejection.SURFACE_HEAD_RANGE);
+            return ValleyProfile.rejected(HydrologyCandidateRejection.SURFACE_HEAD_RANGE, terminalHead - head[exposed - 1]);
         }
         int maximumIncision = surface.maximumIncision();
+        int deepestCut = 0;
+        boolean rejected = false;
         for (int station = 0; station < exposed; station++) {
             int permitted = Math.min(maximumIncision, (int) StrictMath.floor(maximumIncision * incisionMultiplier[station]));
             int bed = head[station] - (int) StrictMath.round(channel.depth()[station]);
-            if (centerNatural[station] - bed > permitted) {
-                return ValleyProfile.rejected(HydrologyCandidateRejection.SURFACE_CORRIDOR_UNSUPPORTED);
-            }
+            int cut = centerNatural[station] - bed;
+            deepestCut = Math.max(deepestCut, cut);
+            rejected |= cut > permitted;
         }
-        return new ValleyProfile(head, crossMin, crossMax, centerNatural, exposed, null);
+        if (rejected) {
+            return ValleyProfile.rejected(HydrologyCandidateRejection.SURFACE_CORRIDOR_UNSUPPORTED, deepestCut);
+        }
+        return new ValleyProfile(head, crossMin, crossMax, centerNatural, exposed, null, 0);
     }
 }

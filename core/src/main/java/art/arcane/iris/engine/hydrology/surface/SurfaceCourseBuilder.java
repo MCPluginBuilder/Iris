@@ -46,7 +46,7 @@ public final class SurfaceCourseBuilder {
         ValleyProfile valley = new ValleyProfileSolver(surface, sampler, seaLevel, minimumCourseLength)
                 .solve(centerline, channel, terminal, terminalHead);
         if (!valley.accepted()) {
-            return SurfaceCourseResult.rejected(valley.rejection());
+            return SurfaceCourseResult.rejected(valley.rejection(), valley.rejectionDetail());
         }
         int exposed = valley.exposedStations();
         boolean coastalDrop = directOcean && valley.head()[exposed - 1] > seaLevel;
@@ -82,7 +82,7 @@ public final class SurfaceCourseBuilder {
         List<HydraulicSegment> segments = SurfaceSegmentLabeler.label(
                 worldSeed, courseId, x, z, head, width, depth, surface.banks());
         if (segments.isEmpty()) {
-            return SurfaceCourseResult.rejected(HydrologyCandidateRejection.COURSE_TOO_SHORT);
+            return SurfaceCourseResult.rejected(HydrologyCandidateRejection.COURSE_TOO_SHORT, stations);
         }
         HydraulicSegment last = segments.getLast();
         int lastStation = stations - 1;
@@ -92,7 +92,8 @@ public final class SurfaceCourseBuilder {
                 last.width(),
                 last.depth(),
                 new HydrologyPoint(x[lastStation], head[lastStation], z[lastStation]),
-                null
+                null,
+                0
         );
     }
 }

@@ -1925,7 +1925,7 @@ public final class HydrologyPlanner {
                         HydrologyCandidateKind.OUTLET,
                         candidate.outlet().type(),
                         candidate.outlet().landwardPoint(),
-                        HydrologyCandidateRejection.OUTLET_LIMIT
+                        HydrologyCandidateRejection.OUTLET_LIMIT, 0
                 ));
             }
         }
@@ -2007,7 +2007,10 @@ public final class HydrologyPlanner {
         );
     }
 
-    /** Largest rise a surface drainage edge may take: the cut the valley solver will still accept. */
+    /**
+     * Largest rise a surface drainage edge may take. Heads only fall, so a rise along a route becomes a cut
+     * of at least that rise; the lattice may climb no more than the cut the valley solver still accepts.
+     */
     private int maximumSurfaceEdgeRise() {
         int permitted = settings.surface().maximumIncision() - settings.surface().banks().inset() - settings.surface().minimumDepth();
         return Math.max(1, permitted);
@@ -2522,7 +2525,7 @@ public final class HydrologyPlanner {
                 HydrologyCandidateKind.SOURCE,
                 surface ? HydrologyFeatureType.SURFACE_POOL : HydrologyFeatureType.UNDERGROUND_POOL,
                 new HydrologyPoint(node.x(), y, node.z()),
-                rejection
+                rejection, 0
         ));
     }
 
@@ -4134,7 +4137,7 @@ public final class HydrologyPlanner {
                     .reversed()
                     .thenComparingLong(SurfaceCourseDraft::courseId));
             RiverCourse mainCourse = null;
-            HashMap<Long, HydrologyCandidateRejection> mainRejections = new HashMap<>();
+            HashMap<Long, SurfaceCourseBuild> mainRejections = new HashMap<>();
             for (SurfaceCourseDraft draft : outletDrafts) {
                 SurfaceCourseBuild candidate = buildSurfaceCourse(
                         draft.courseId(),
@@ -4143,7 +4146,7 @@ public final class HydrologyPlanner {
                         draft.path()
                 );
                 if (candidate.course() == null) {
-                    mainRejections.put(draft.courseId(), candidate.rejection());
+                    mainRejections.put(draft.courseId(), candidate);
                     continue;
                 }
                 mainCourse = candidate.course();
@@ -4152,11 +4155,13 @@ public final class HydrologyPlanner {
             }
             if (mainCourse == null) {
                 for (SurfaceCourseDraft draft : outletDrafts) {
+                    SurfaceCourseBuild rejected = mainRejections.get(draft.courseId());
                     addCompiledSourceDiagnostic(
                             draft.source(),
                             true,
                             draft.courseId(),
-                            mainRejections.get(draft.courseId()),
+                            rejected.rejection(),
+                            rejected.rejectionDetail(),
                             diagnostics
                     );
                 }
@@ -4180,7 +4185,7 @@ public final class HydrologyPlanner {
             CoursePath path
     ) {
         if (path.points().size() < 2) {
-            return SurfaceCourseBuild.rejected(HydrologyCandidateRejection.COURSE_TOO_SHORT);
+            return SurfaceCourseBuild.rejected(HydrologyCandidateRejection.COURSE_TOO_SHORT, 0);
         }
         RiverOutlet outlet = path.outlet();
         boolean surfaceSinkhole = path.reachesOutlet() && surfaceSinkhole(outlet);
@@ -4203,7 +4208,7 @@ public final class HydrologyPlanner {
                 terminalHead
         );
         if (!result.accepted()) {
-            return SurfaceCourseBuild.rejected(result.rejection());
+            return SurfaceCourseBuild.rejected(result.rejection(), result.rejectionDetail());
         }
         ArrayList<HydraulicSegment> segments = new ArrayList<>(result.segments());
         if (path.reachesOutlet()) {
@@ -4226,7 +4231,7 @@ public final class HydrologyPlanner {
             );
         }
         if (path.organicSurfaceRequired() && !surfaceShapeAccepted(path.points())) {
-            return SurfaceCourseBuild.rejected(HydrologyCandidateRejection.SURFACE_SHAPE_UNSUPPORTED);
+            return SurfaceCourseBuild.rejected(HydrologyCandidateRejection.SURFACE_SHAPE_UNSUPPORTED, 0);
         }
         int discharge = maximumSurfaceDischarge(path.edges());
         return SurfaceCourseBuild.accepted(new RiverCourse(
@@ -4459,13 +4464,25 @@ public final class HydrologyPlanner {
             HydrologyCandidateRejection rejection,
             List<HydrologyDiagnosticCandidate> diagnostics
     ) {
+        addCompiledSourceDiagnostic(source, surface, courseId, rejection, 0, diagnostics);
+    }
+
+    private void addCompiledSourceDiagnostic(
+            GridNode source,
+            boolean surface,
+            long courseId,
+            HydrologyCandidateRejection rejection,
+            int detail,
+            List<HydrologyDiagnosticCandidate> diagnostics
+    ) {
         int y = surface ? source.terrain().naturalHeight() : source.terrain().caveFluidY();
         diagnostics.add(new HydrologyDiagnosticCandidate(
                 HydrologyHash.mix(courseId, DIAGNOSTIC_SALT, rejection.ordinal()),
                 HydrologyCandidateKind.SOURCE,
                 surface ? HydrologyFeatureType.SURFACE_POOL : HydrologyFeatureType.UNDERGROUND_POOL,
                 new HydrologyPoint(source.x(), y, source.z()),
-                rejection
+                rejection,
+                detail
         ));
     }
 
@@ -6244,7 +6261,7 @@ public final class HydrologyPlanner {
                 HydrologyCandidateKind.DEEP_FLUID,
                 deepFluid.containedPools() ? HydrologyFeatureType.DEEP_POOL : HydrologyFeatureType.DEEP_CHANNEL,
                 new HydrologyPoint(site.x(), site.head(), site.z()),
-                rejection
+                rejection, 0
         ));
     }
 
@@ -7259,7 +7276,7 @@ public final class HydrologyPlanner {
                 HydrologyCandidateKind.SOURCE,
                 HydrologyFeatureType.SURFACE_POOL,
                 representative.start(),
-                HydrologyCandidateRejection.SOURCE_SPACING
+                HydrologyCandidateRejection.SOURCE_SPACING, 0
         );
     }
 
@@ -7385,7 +7402,8 @@ public final class HydrologyPlanner {
 
     private record SurfaceCourseBuild(
             RiverCourse course,
-            HydrologyCandidateRejection rejection
+            HydrologyCandidateRejection rejection,
+            int rejectionDetail
     ) {
         private SurfaceCourseBuild {
             if ((course == null) == (rejection == null)) {
@@ -7394,11 +7412,11 @@ public final class HydrologyPlanner {
         }
 
         private static SurfaceCourseBuild accepted(RiverCourse course) {
-            return new SurfaceCourseBuild(Objects.requireNonNull(course, "course"), null);
+            return new SurfaceCourseBuild(Objects.requireNonNull(course, "course"), null, 0);
         }
 
-        private static SurfaceCourseBuild rejected(HydrologyCandidateRejection rejection) {
-            return new SurfaceCourseBuild(null, Objects.requireNonNull(rejection, "rejection"));
+        private static SurfaceCourseBuild rejected(HydrologyCandidateRejection rejection, int detail) {
+            return new SurfaceCourseBuild(null, Objects.requireNonNull(rejection, "rejection"), detail);
         }
     }
 

@@ -926,7 +926,7 @@ final class HydrologyCaveCourseFilter {
                 kind,
                 type,
                 representative.start(),
-                rejection
+                rejection, 0
         ));
     }
 
@@ -1035,7 +1035,7 @@ final class HydrologyCaveCourseFilter {
                 kind,
                 type,
                 representative.start(),
-                HydrologyCandidateRejection.CAVE_CONTAINMENT
+                HydrologyCandidateRejection.CAVE_CONTAINMENT, 0
         );
     }
 

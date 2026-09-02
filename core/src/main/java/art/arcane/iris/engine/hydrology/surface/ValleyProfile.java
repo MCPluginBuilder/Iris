@@ -8,17 +8,19 @@ public record ValleyProfile(
         int[] crossMax,
         int[] centerNatural,
         int exposedStations,
-        HydrologyCandidateRejection rejection
+        HydrologyCandidateRejection rejection,
+        int rejectionDetail
 ) {
     public boolean accepted() {
         return rejection == null;
     }
 
     public static ValleyProfile fromHeads(int[] head, int exposedStations) {
-        return new ValleyProfile(head, new int[0], new int[0], new int[0], exposedStations, null);
+        return new ValleyProfile(head, new int[0], new int[0], new int[0], exposedStations, null, 0);
     }
 
-    public static ValleyProfile rejected(HydrologyCandidateRejection rejection) {
-        return new ValleyProfile(new int[0], new int[0], new int[0], new int[0], 0, rejection);
+    /** {@code detail} names the measure that failed: exposed stations, required cut, or missing head. */
+    public static ValleyProfile rejected(HydrologyCandidateRejection rejection, int detail) {
+        return new ValleyProfile(new int[0], new int[0], new int[0], new int[0], 0, rejection, detail);
     }
 }

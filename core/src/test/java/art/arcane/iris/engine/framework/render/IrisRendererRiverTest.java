@@ -143,7 +143,7 @@ public class IrisRendererRiverTest {
                 HydrologyCandidateKind.SOURCE,
                 HydrologyFeatureType.SURFACE_POOL,
                 new HydrologyPoint(0, 80, 0),
-                HydrologyCandidateRejection.NO_LEGAL_OUTLET
+                HydrologyCandidateRejection.NO_LEGAL_OUTLET, 0
         );
         when(engine.getComplex()).thenReturn(complex);
         when(complex.getHydrologyRuntime()).thenReturn(runtime);

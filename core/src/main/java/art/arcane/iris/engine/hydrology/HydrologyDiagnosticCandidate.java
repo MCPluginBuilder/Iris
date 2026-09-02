@@ -7,7 +7,8 @@ public record HydrologyDiagnosticCandidate(
         HydrologyCandidateKind kind,
         HydrologyFeatureType projectedType,
         HydrologyPoint point,
-        HydrologyCandidateRejection rejection
+        HydrologyCandidateRejection rejection,
+        int detail
 ) {
     public HydrologyDiagnosticCandidate {
         Objects.requireNonNull(kind, "kind");
