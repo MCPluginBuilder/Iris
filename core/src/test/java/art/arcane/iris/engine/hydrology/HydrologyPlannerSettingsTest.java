@@ -79,7 +79,7 @@ public class HydrologyPlannerSettingsTest {
                 0D,
                 0D,
                 0D
-        );
+        , 1D);
         HydrologyPlannerSettings.Source sources = new HydrologyPlannerSettings.Source(true, 1D, 0, 0, 1, 0);
         HydrologyPlannerSettings.Surface surface = new HydrologyPlannerSettings.Surface(
                 true,

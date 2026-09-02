@@ -70,4 +70,9 @@ public class IrisRiverRoutingConfig {
     @MaxNumber(1)
     @Desc("How strongly routes are drawn toward existing drainage.")
     private double confluenceAttraction = 0.2D;
+
+    @MinNumber(0)
+    @MaxNumber(8)
+    @Desc("How strongly longer source-to-outlet routes are preferred when choosing river sources; 0 ranks by elevation alone.")
+    private double lengthPreference = 1D;
 }

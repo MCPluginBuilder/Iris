@@ -668,7 +668,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                         12D,
                         0.5D,
                         0.1D
-                ),
+                , 1D),
                 new HydrologyPlannerSettings.Surface(
                         surfaceEnabled,
                         surfaceSources,

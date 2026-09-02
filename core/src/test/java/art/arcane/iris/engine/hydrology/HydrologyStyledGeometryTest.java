@@ -96,7 +96,8 @@ public class HydrologyStyledGeometryTest {
             widestSurfaceWidth = Math.max(widestSurfaceWidth, segment.width());
         }
         assertTrue(widestSurfaceWidth >= surfaceStart.width());
-        assertTrue(widestSurfaceWidth <= surfaceSettings.surface().maximumWidth() * 2);
+        assertTrue(widestSurfaceWidth <= (int) Math.ceil(surfaceSettings.surface().maximumWidth()
+                * Math.max(2D, surfaceSettings.surface().banks().springWidthRatio())));
 
         RiverCourse underground = courses(undergroundFirst, RiverCourseType.UNDERGROUND).getFirst();
         DrainageNode undergroundSource = undergroundFirst.node(underground.sourceNodeId().orElseThrow()).orElseThrow();
@@ -194,7 +195,7 @@ public class HydrologyStyledGeometryTest {
         );
         return new HydrologyPlannerSettings(
                 63,
-                new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 16, 8, 0.5D, 12D, 0.5D, 0.1D),
+                new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 16, 8, 0.5D, 12D, 0.5D, 0.1D, 1D),
                 new HydrologyPlannerSettings.Surface(
                         surfaceDensity > 0D,
                         surfaceSources,

@@ -35,7 +35,7 @@ public record HydrologyPlannerSettings(
         Source undergroundSources = new Source(true, 0.25D, Integer.MIN_VALUE, 0, 1, 512);
         return new HydrologyPlannerSettings(
                 63,
-                new Routing(2048, 64, 8192, 8192, 384, 192, 1.5D, 24D, 2D, 0.2D),
+                new Routing(2048, 64, 8192, 8192, 384, 192, 1.5D, 24D, 2D, 0.2D, 1D),
                 new Surface(true, surfaceSources, 4, 8, 2, 4, 10, 1.5D, Banks.defaults()),
                 new Hydraulics(8),
                 new Underground(true, undergroundSources, -48, 72, 3, 8, 1, 3, 6, 14, true),
@@ -151,7 +151,8 @@ public record HydrologyPlannerSettings(
             double valleyPreference,
             double uphillPenalty,
             double slopePenalty,
-            double confluenceAttraction
+            double confluenceAttraction,
+            double lengthPreference
     ) {
         public Routing {
             if (tileSize < 32 || sampleSpacing < 4 || tileSize % sampleSpacing != 0) {
@@ -177,6 +178,7 @@ public record HydrologyPlannerSettings(
             requireFiniteNonNegative(uphillPenalty, "uphillPenalty");
             requireFiniteNonNegative(slopePenalty, "slopePenalty");
             requireFiniteNonNegative(confluenceAttraction, "confluenceAttraction");
+            requireFiniteNonNegative(lengthPreference, "lengthPreference");
         }
 
         // Route refinement is derived from the lattice, never authored.

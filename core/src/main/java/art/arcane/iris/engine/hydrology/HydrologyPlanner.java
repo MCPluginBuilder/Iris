@@ -2113,9 +2113,10 @@ public final class HydrologyPlanner {
                 addSourceDiagnostic(node, surface, stable, HydrologyCandidateRejection.COURSE_TOO_SHORT, diagnostics);
                 continue;
             }
+            // Elevation and route length share the same scale: 1000 route blocks count as 100 blocks of height.
             double score = (required ? 1.0E15D : 0D)
                     + weight * 1.0E9D
-                    + terrain.naturalHeight() * 1.0E5D
+                    + (terrain.naturalHeight() + routeLength * 0.1D * settings.routing().lengthPreference()) * 1.0E5D
                     + routing.potential()[node.index()]
                     + HydrologyHash.unit(stable);
             candidates.add(new SourceCandidate(node.index(), stable, score, required));
