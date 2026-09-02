@@ -114,6 +114,49 @@ public class PackHydrologyValidatorTest {
     }
 
     @Test
+    public void bedRulesRejectBadPaddingAndFluidPaddingBlocks() throws Exception {
+        File pack = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "routing": {"tileSize": 1024, "sampleSpacing": 64, "oceanOutlets": true},
+                  "surface": {
+                    "bed": {
+                      "allowGravityBlocks": false,
+                      "padding": 9,
+                      "paddingPalette": {"palette": [{"block": "minecraft:water"}]}
+                    }
+                  }
+                }
+                """, ""));
+
+        PackHydrologyValidator.Validation result = validate(pack);
+
+        assertContains(result.errors(), "padding must be at most 8");
+        assertContains(result.errors(), "paddingPalette.palette[0].block must not be a fluid");
+    }
+
+    @Test
+    public void bedRulesAcceptSolidPaddingBlocks() throws Exception {
+        File pack = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "routing": {"tileSize": 1024, "sampleSpacing": 64, "oceanOutlets": true},
+                  "surface": {
+                    "bed": {
+                      "allowGravityBlocks": true,
+                      "padding": 0,
+                      "paddingPalette": {"palette": [{"block": "minecraft:clay"}, {"block": "minecraft:dirt", "weight": 2}]}
+                    }
+                  }
+                }
+                """, ""));
+
+        PackHydrologyValidator.Validation result = validate(pack);
+
+        assertTrue(result.errors().toString(), result.errors().stream().noneMatch((String error) -> error.contains(".bed")));
+    }
+
+    @Test
     public void rejectsMouthLevelingDistanceBeyondTheRouteLength() throws Exception {
         File pack = pack(riversDimension("""
                 {

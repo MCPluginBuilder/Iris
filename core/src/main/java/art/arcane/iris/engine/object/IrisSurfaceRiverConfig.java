@@ -21,6 +21,8 @@ public class IrisSurfaceRiverConfig {
 
     @Desc("Lip, shore band and eroded valley around the channel.")
     private IrisSurfaceRiverBankConfig banks = new IrisSurfaceRiverBankConfig();
+    @Desc("Material under and beside the water: falling-block replacement and padding.")
+    private IrisSurfaceRiverBedConfig bed = new IrisSurfaceRiverBedConfig();
 
     @Desc("Cascade and waterfall thresholds.")
     private IrisSurfaceRiverFlowConfig flow = new IrisSurfaceRiverFlowConfig();

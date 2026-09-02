@@ -988,16 +988,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
     }
 
     static boolean isGravityAffected(PlatformBlockState state) {
-        if (state == null) {
-            return false;
-        }
-        String key = IrisProceduralBlocks.materialKey(state);
-        return key.equals("minecraft:sand")
-                || key.equals("minecraft:red_sand")
-                || key.equals("minecraft:gravel")
-                || key.equals("minecraft:suspicious_sand")
-                || key.equals("minecraft:suspicious_gravel")
-                || key.endsWith("_concrete_powder");
+        return IrisProceduralBlocks.isGravityAffected(state);
     }
 
     private IrisBiome resolveCaveBiome(Long2ObjectOpenHashMap<IrisBiome> caveBiomeCache, int x, int y, int z, IrisDimensionCarvingResolver.State resolverState) {

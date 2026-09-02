@@ -324,6 +324,7 @@ final class PackHydrologyValidator {
         JSONObject banks = nestedObject(surface, "banks", path, errors);
         JSONObject flow = nestedObject(surface, "flow", path, errors);
         JSONObject mouths = nestedObject(surface, "mouths", path, errors);
+        JSONObject bed = nestedObject(surface, "bed", path, errors);
 
         SourceBudget budget = sources == null
                 ? SourceBudget.defaults()
@@ -339,6 +340,9 @@ final class PackHydrologyValidator {
         }
         if (mouths != null) {
             validateMouths(path + ".mouths", mouths, errors);
+        }
+        if (bed != null) {
+            validateSurfaceBed(path + ".bed", bed, errors);
         }
 
         boolean surfaceEnabled = booleanValue(surface, "enabled", true);
@@ -380,6 +384,39 @@ final class PackHydrologyValidator {
     private static void validateSurfaceFlow(String path, JSONObject flow, List<String> errors) {
         PackJsonFieldChecks.validateOptionalIntegerRange(path, flow, "cascadeRun", 1, 8, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, flow, "waterfallMinimumDrop", 2, 32, errors);
+    }
+
+    private static void validateSurfaceBed(String path, JSONObject bed, List<String> errors) {
+        PackJsonFieldChecks.validateOptionalBoolean(path, bed, "allowGravityBlocks", errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, bed, "padding", 0, 8, errors);
+        if (!bed.has("paddingPalette")) {
+            return;
+        }
+        Object rawPalette = bed.opt("paddingPalette");
+        if (!(rawPalette instanceof JSONObject palette)) {
+            errors.add(path + ".paddingPalette must be an object.");
+            return;
+        }
+        Object rawEntries = palette.opt("palette");
+        if (!(rawEntries instanceof JSONArray entries) || entries.length() == 0) {
+            errors.add(path + ".paddingPalette.palette must contain at least one solid block.");
+            return;
+        }
+        for (int index = 0; index < entries.length(); index++) {
+            String entryPath = path + ".paddingPalette.palette[" + index + "]";
+            JSONObject entry = entries.optJSONObject(index);
+            if (entry == null) {
+                errors.add(entryPath + " must be an object.");
+                continue;
+            }
+            Object rawBlock = entry.opt("block");
+            if (!(rawBlock instanceof String block) || block.isBlank()) {
+                errors.add(entryPath + ".block must name a solid block.");
+            } else if (!definitelyNotFluid(block)) {
+                errors.add(entryPath + ".block must not be a fluid.");
+            }
+            PackJsonFieldChecks.validateOptionalIntegerRange(entryPath, entry, "weight", 1, 64, errors);
+        }
     }
 
     private static void validateMouths(String path, JSONObject mouths, List<String> errors) {

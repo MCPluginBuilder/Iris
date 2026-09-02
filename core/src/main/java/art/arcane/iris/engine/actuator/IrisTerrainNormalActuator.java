@@ -26,6 +26,8 @@ import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
 import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisProceduralBlocks;
+import art.arcane.iris.engine.object.IrisSurfaceRiverBedConfig;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisOreGenerator;
 import art.arcane.iris.engine.object.IrisOreGeneratorBounds;
@@ -105,6 +107,10 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         IrisOreGeneratorBounds dimensionUndergroundOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getUndergroundOreGeneratorBounds();
         boolean exposeCutStrata = dimension.getHydrology() != null
                 && dimension.getHydrology().getRivers().getSurface().getBanks().isExposeCutStrata();
+        IrisSurfaceRiverBedConfig riverBed = dimension.getHydrology() == null
+                ? null
+                : dimension.getHydrology().getRivers().getSurface().getBed();
+        boolean padRiverBed = riverBed != null && !riverBed.isAllowGravityBlocks();
 
         for (int zf = 0; zf < chunkDepth; zf++) {
             int realZ = zf + z;
@@ -136,6 +142,7 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
                     && !hydrologyTerrain.channel()
                     ? Math.max(0, hydrology.naturalHeight() - he)
                     : 0;
+            boolean riverOwned = padRiverBed && hydrologyTerrain != null && hydrologyTerrain.terrainOwned();
             PlatformBlockState fluid = hydrologyFluid == null
                     ? complex.resolveSurfaceFluid(realX, realZ)
                     : complex.resolveHydrologyFluid(hydrologyFluid.profileKey(), realX, realZ);
@@ -203,7 +210,11 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
                     }
 
                     if (blocks.hasIndex(depth + cut)) {
-                        h.setRaw(xf, i, zf, blocks.get(depth + cut));
+                        PlatformBlockState layerBlock = blocks.get(depth + cut);
+                        if (riverOwned && depth <= riverBed.getPadding() && IrisProceduralBlocks.isGravityAffected(layerBlock)) {
+                            layerBlock = riverBed.getPaddingPalette().get(localRng, realX, i, realZ, data);
+                        }
+                        h.setRaw(xf, i, zf, layerBlock);
                         continue;
                     }
 
