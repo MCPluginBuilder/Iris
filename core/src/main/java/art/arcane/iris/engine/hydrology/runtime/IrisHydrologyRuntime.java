@@ -677,7 +677,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 routing.getUphillPenalty(),
                 routing.getSlopePenalty(),
                 routing.getConfluenceAttraction(),
-                routing.getLengthPreference()
+                routing.getLengthPreference(),
+                routing.getTributaries()
         );
         HydrologyPlannerSettings.Source plannerSurfaceSources = new HydrologyPlannerSettings.Source(
                 surfaceEnabled,

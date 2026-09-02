@@ -282,6 +282,7 @@ final class PackHydrologyValidator {
         PackJsonFieldChecks.validateOptionalDoubleRange(path, routing, "slopePenalty", 0D, 16D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, routing, "confluenceAttraction", 0D, 1D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, routing, "lengthPreference", 0D, 8D, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, routing, "tributaries", 0, 4, errors);
 
         int tileSize = integerValue(routing, "tileSize", 2048);
         int sampleSpacing = integerValue(routing, "sampleSpacing", 64);

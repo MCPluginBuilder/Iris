@@ -75,4 +75,9 @@ public class IrisRiverRoutingConfig {
     @MaxNumber(8)
     @Desc("How strongly longer source-to-outlet routes are preferred when choosing river sources; 0 ranks by elevation alone.")
     private double lengthPreference = 1D;
+
+    @MinNumber(0)
+    @MaxNumber(4)
+    @Desc("Extra surface courses an outlet may accept as tributaries joining its main river; 0 keeps one river per outlet.")
+    private int tributaries = 1;
 }

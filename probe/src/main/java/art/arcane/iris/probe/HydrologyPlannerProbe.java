@@ -229,7 +229,7 @@ public final class HydrologyPlannerProbe {
                         12D,
                         0.5D,
                         0.1D
-                , 1D),
+                , 1D, 0),
                 new HydrologyPlannerSettings.Surface(
                         true,
                         surfaceSources,
@@ -440,7 +440,7 @@ public final class HydrologyPlannerProbe {
                         12D,
                         0.5D,
                         0.2D
-                , 1D),
+                , 1D, 0),
                 new HydrologyPlannerSettings.Surface(
                         true,
                         surfaceSources,

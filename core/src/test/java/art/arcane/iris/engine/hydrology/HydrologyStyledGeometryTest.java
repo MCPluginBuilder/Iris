@@ -195,7 +195,7 @@ public class HydrologyStyledGeometryTest {
         );
         return new HydrologyPlannerSettings(
                 63,
-                new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 16, 8, 0.5D, 12D, 0.5D, 0.1D, 1D),
+                new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 16, 8, 0.5D, 12D, 0.5D, 0.1D, 1D, 0),
                 new HydrologyPlannerSettings.Surface(
                         surfaceDensity > 0D,
                         surfaceSources,

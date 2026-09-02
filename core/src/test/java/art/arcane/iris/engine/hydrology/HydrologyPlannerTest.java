@@ -581,7 +581,7 @@ public class HydrologyPlannerTest {
                         routing.valleyPreference(),
                         routing.uphillPenalty(),
                         routing.slopePenalty(),
-                        routing.confluenceAttraction(), 1D
+                        routing.confluenceAttraction(), 1D, 0
                 ),
                 base.surface(),
                 base.hydraulics(),
@@ -1733,7 +1733,7 @@ public class HydrologyPlannerTest {
         );
         return new HydrologyPlannerSettings(
                 63,
-                new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 0, 0, 0.5D, 12D, 0.5D, 0.1D, 1D),
+                new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 0, 0, 0.5D, 12D, 0.5D, 0.1D, 1D, 0),
                 new HydrologyPlannerSettings.Surface(
                         surfaceDensity > 0D || surfaceSources.maximumPerTile() > 0,
                         surfaceSources,
@@ -1800,7 +1800,7 @@ public class HydrologyPlannerTest {
                         24D,
                         2D,
                         0.2D
-                , 1D),
+                , 1D, 0),
                 new HydrologyPlannerSettings.Surface(
                         true,
                         new HydrologyPlannerSettings.Source(true, 8D, 80, 0, 8, 128),
