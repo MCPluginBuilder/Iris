@@ -248,8 +248,17 @@ public class IrisRiverSchemaTest {
 
     private static List<String> enumValues(JSONObject definitions, JSONObject reference) {
         String key = reference.getString("$ref").substring("#/definitions/".length());
-        JSONArray values = definitions.getJSONObject(key).getJSONArray("enum");
-        List<String> names = new ArrayList<>(values.length());
+        JSONObject definition = definitions.getJSONObject(key);
+        List<String> names = new ArrayList<>();
+        if (definition.has("oneOf")) {
+            // A described enum lists one {const, description} entry per value.
+            JSONArray options = definition.getJSONArray("oneOf");
+            for (int index = 0; index < options.length(); index++) {
+                names.add(options.getJSONObject(index).getString("const"));
+            }
+            return names;
+        }
+        JSONArray values = definition.getJSONArray("enum");
         for (int index = 0; index < values.length(); index++) {
             names.add(values.getString(index));
         }
