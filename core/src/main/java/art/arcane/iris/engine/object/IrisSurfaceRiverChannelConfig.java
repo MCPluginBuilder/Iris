@@ -18,13 +18,13 @@ public class IrisSurfaceRiverChannelConfig {
     @Desc("Wet bed depth in blocks at the channel center.")
     private IrisStyledRange depth = range(2D, 4D, 768D);
 
-    @MinNumber(1)
-    @MaxNumber(16)
+    @MinNumber(0)
+    @MaxNumber(3)
     @Desc("Blocks the water surface sits below the lowest natural bank beside the channel.")
     private int inset = 1;
 
-    @MinNumber(0)
-    @MaxNumber(64)
+    @MinNumber(1)
+    @MaxNumber(32)
     @Desc("Maximum cut below natural terrain at the channel center before a course is rejected.")
     private int maximumIncision = 10;
 
@@ -33,8 +33,8 @@ public class IrisSurfaceRiverChannelConfig {
     @Desc("Coherent variation of the wet outline and bed as a fraction of the channel size.")
     private double roughness = 0.25D;
 
-    @MinNumber(3)
-    @MaxNumber(128)
+    @MinNumber(4)
+    @MaxNumber(64)
     @Desc("Wavelength in blocks of the outline and bed variation.")
     private int roughnessWavelength = 16;
 

@@ -18,7 +18,7 @@ public class IrisRiverMouthConfig {
     private double flareRatio = 1.6D;
 
     @MinNumber(0)
-    @MaxNumber(64)
+    @MaxNumber(32)
     @Desc("Maximum number of blocks the recorded mouth footprint may enter the ocean before terminating.")
     private int maximumOceanApron = 8;
 }

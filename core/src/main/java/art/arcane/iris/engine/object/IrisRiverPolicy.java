@@ -74,8 +74,8 @@ public class IrisRiverPolicy {
     @Desc("Multiplier applied to terrain-guided routing cost.")
     private Double routingMultiplier = null;
 
-    @MinNumber(0.0001)
-    @MaxNumber(16)
+    @MinNumber(0)
+    @MaxNumber(4)
     @Desc("Multiplier applied to the eroded bank width outside the shore band.")
     private Double bankMultiplier = null;
 

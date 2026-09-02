@@ -12,18 +12,18 @@ import lombok.experimental.Accessors;
 @Desc("Controls the lip, shore band and eroded valley around a surface river.")
 @Data
 public class IrisSurfaceRiverBankConfig {
-    @MinNumber(1)
-    @MaxNumber(8)
+    @MinNumber(0)
+    @MaxNumber(4)
     @Desc("Blocks the bank top sits above the water surface at the channel edge.")
     private int freeboard = 1;
 
-    @MinNumber(0)
-    @MaxNumber(8)
+    @MinNumber(0.5)
+    @MaxNumber(6)
     @Desc("Width in blocks of the shore band that receives shore biome content.")
     private double shoreWidth = 1.5D;
 
-    @MinNumber(1)
-    @MaxNumber(16)
+    @MinNumber(0.5)
+    @MaxNumber(12)
     @Desc("Horizontal run in blocks of eroded bank per block of cut depth.")
     private double blendSlope = 3D;
 
@@ -33,7 +33,7 @@ public class IrisSurfaceRiverBankConfig {
     private int minimumBlendWidth = 4;
 
     @MinNumber(1)
-    @MaxNumber(128)
+    @MaxNumber(64)
     @Desc("Widest eroded band outside the shore, in blocks.")
     private int maximumBlendWidth = 32;
 

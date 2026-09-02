@@ -20,7 +20,7 @@ public class IrisRiverRoutingConfig {
     private int tileSize = 2048;
 
     @MinNumber(8)
-    @MaxNumber(512)
+    @MaxNumber(64)
     @Desc("Spacing in blocks between terrain samples used to build the drainage graph.")
     private int sampleSpacing = 64;
 
@@ -52,22 +52,22 @@ public class IrisRiverRoutingConfig {
     private KList<IrisRiverInlandOutlet> inlandOutlets = new KList<>();
 
     @MinNumber(0)
-    @MaxNumber(64)
+    @MaxNumber(8)
     @Desc("How strongly routes prefer lower ground.")
     private double valleyPreference = 1.5D;
 
     @MinNumber(0)
-    @MaxNumber(1024)
+    @MaxNumber(128)
     @Desc("Cost per block of rise along a route.")
     private double uphillPenalty = 24D;
 
     @MinNumber(0)
-    @MaxNumber(64)
+    @MaxNumber(16)
     @Desc("Cost per unit of terrain slope along a route.")
     private double slopePenalty = 2D;
 
     @MinNumber(0)
-    @MaxNumber(16)
+    @MaxNumber(1)
     @Desc("How strongly routes are drawn toward existing drainage.")
     private double confluenceAttraction = 0.2D;
 }

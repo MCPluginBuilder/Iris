@@ -13,12 +13,12 @@ import lombok.experimental.Accessors;
 @Data
 public class IrisSurfaceRiverFlowConfig {
     @MinNumber(1)
-    @MaxNumber(16)
+    @MaxNumber(8)
     @Desc("Shortest level run in blocks between one-block steps before consecutive steps are labelled a cascade.")
     private int cascadeRun = 2;
 
     @MinNumber(2)
-    @MaxNumber(24)
+    @MaxNumber(32)
     @Desc("Smallest natural cliff in blocks that becomes a waterfall instead of a cascade.")
     private int waterfallMinimumDrop = 6;
 }

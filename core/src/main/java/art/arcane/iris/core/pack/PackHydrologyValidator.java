@@ -186,6 +186,10 @@ final class PackHydrologyValidator {
         SourceBudget undergroundBudget = underground == null
                 ? SourceBudget.defaults()
                 : validateUnderground(path + ".underground", underground, dimension, errors, warnings);
+        if (underground != null
+                && integerValue(underground, "mouthLevelingDistance", 64) > routingValues.maximumRouteLength()) {
+            errors.add(path + ".underground.mouthLevelingDistance must not exceed routing.maximumRouteLength.");
+        }
         if (grottos != null) {
             validateGrottos(path + ".grottos", grottos, routingValues, errors);
         }

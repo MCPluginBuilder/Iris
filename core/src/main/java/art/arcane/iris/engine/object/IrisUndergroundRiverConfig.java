@@ -33,8 +33,8 @@ public class IrisUndergroundRiverConfig {
     @Desc("Allow accepted underground courses to connect transactionally to existing caves.")
     private boolean connectToExistingCaves = true;
 
-    @MinNumber(0)
-    @MaxNumber(2048)
+    @MinNumber(16)
+    @MaxNumber(512)
     @Desc("Distance in blocks over which an ocean-bound underground river levels to sea level before its mouth.")
     private int mouthLevelingDistance = 64;
 

@@ -114,6 +114,21 @@ public class PackHydrologyValidatorTest {
     }
 
     @Test
+    public void rejectsMouthLevelingDistanceBeyondTheRouteLength() throws Exception {
+        File pack = pack(riversDimension("""
+                {
+                  "enabled": true,
+                  "routing": {"tileSize": 1024, "sampleSpacing": 64, "maximumRouteLength": 256, "oceanOutlets": true},
+                  "underground": {"mouthLevelingDistance": 512}
+                }
+                """, ""));
+
+        PackHydrologyValidator.Validation result = validate(pack);
+
+        assertContains(result.errors(), "mouthLevelingDistance must not exceed routing.maximumRouteLength");
+    }
+
+    @Test
     public void acceptsEverySchemaBoundAtItsMaximum() throws Exception {
         File pack = pack(riversDimension("""
                 {
