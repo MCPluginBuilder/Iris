@@ -37,6 +37,7 @@ import java.util.function.IntPredicate;
 
 public final class HydrologyPlanner {
     private static final long NODE_SALT = 0x4e4f4445L;
+    private static final double CROSS_DROP_WEIGHT = 3D;
     private static final long OUTLET_SALT = 0x4f55544c4554L;
     private static final long EDGE_SALT = 0x45444745L;
     private static final long SURFACE_SOURCE_SALT = 0x53555246414345L;
@@ -3310,7 +3311,7 @@ public final class HydrologyPlanner {
                     true
             );
         }
-        double terrainScore = routeTerrainScore(terrain);
+        double terrainScore = routeTerrainScore(terrain) + crossDropPenalty(point, candidate.tangent(), terrain);
         double exactLocalScore = candidate.localScore() - candidate.terrainScore() + terrainScore;
         return new RouteCandidate(
                 new HydrologyPoint(point.x(), terrain.naturalHeight(), point.z()),
@@ -3320,6 +3321,34 @@ public final class HydrologyPlanner {
                 candidate.tangent(),
                 true
         );
+    }
+
+    /**
+     * Ground that falls away beside a candidate forces the valley solver to cut the channel down to the
+     * lower bank; costing that drop keeps refined routes on valley floors and contour lines instead of
+     * traversing hillsides that the incision cap would later reject.
+     */
+    private double crossDropPenalty(HydrologyPoint point, Direction tangent, HydrologyTerrainSample center) {
+        double length = StrictMath.hypot(tangent.x(), tangent.z());
+        if (length <= 0D) {
+            return 0D;
+        }
+        double normalX = -tangent.z() / length;
+        double normalZ = tangent.x() / length;
+        double reach = settings.surface().maximumWidth() / 2D + settings.surface().shoreWidth() + 2D;
+        int lowest = center.naturalHeight();
+        for (double distance = reach / 2D; distance <= reach; distance += reach / 2D) {
+            for (double direction = -1D; direction <= 1D; direction += 2D) {
+                HydrologyTerrainSample side = sampleLandBasis(
+                        (int) StrictMath.round(point.x() + normalX * distance * direction),
+                        (int) StrictMath.round(point.z() + normalZ * distance * direction));
+                if (side != null) {
+                    lowest = Math.min(lowest, side.naturalHeight());
+                }
+            }
+        }
+        double drop = center.naturalHeight() - lowest;
+        return drop * settings.routing().valleyPreference() * CROSS_DROP_WEIGHT;
     }
 
     private double routeTerrainScore(HydrologyTerrainSample terrain) {
