@@ -32,7 +32,7 @@ import java.util.List;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.BukkitCommandMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
-@Director(name = "datapack", aliases = {"datapacks", "dp"}, description = "Download & manage external datapack imports (Modrinth)", descriptionKey = "iris.director.commanddatapack.director.download_manage_external_datapack_imports_modrinth")
+@Director(name = "datapack", aliases = {"datapacks", "dp"}, description = "Download & manage external datapack imports", descriptionKey = "iris.director.commanddatapack.director.download_manage_external_datapack_imports_modrinth")
 public class CommandDatapack implements DirectorExecutor {
     @Director(description = "Download/update every datapack listed in a pack dimension's 'datapackImports' and install it into the world so its structures register like vanilla", descriptionKey = "iris.director.commanddatapack.director.download_update_every_datapack_listed_pack_dimension_s_datapackimports_install_it_into", aliases = {"pull"})
     public void ingest(

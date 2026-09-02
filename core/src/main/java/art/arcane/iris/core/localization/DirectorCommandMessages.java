@@ -8,7 +8,7 @@ import java.util.List;
 public final class DirectorCommandMessages {
     public static final TextKey COMMAND_DATAPACK_DIRECTOR_DOWNLOAD_MANAGE_EXTERNAL_DATAPACK_IMPORTS_MODRINTH = TextKey.of(
             "iris.director.commanddatapack.director.download_manage_external_datapack_imports_modrinth",
-            "Download & manage external datapack imports (Modrinth)"
+            "Download & manage external datapack imports"
     );
     public static final TextKey COMMAND_DATAPACK_DIRECTOR_DOWNLOAD_UPDATE_EVERY_DATAPACK_LISTED_PACK_DIMENSION_S_DATAPACKIMPORTS_INSTALL_IT_INTO = TextKey.of(
             "iris.director.commanddatapack.director.download_update_every_datapack_listed_pack_dimension_s_datapackimports_install_it_into",

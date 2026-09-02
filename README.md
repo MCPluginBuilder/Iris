@@ -67,7 +67,9 @@ the server. First boot performs no pack download. Run `/iris download pack=overw
 each download to finish before starting another. The current built-in packs declare no external
 datapack imports. Restart after download so Minecraft loads their dimension types and biomes.
 Custom packs that declare `datapackImports` must complete their external-datapack installation and
-registry restart first. Plain Spigot supports ordinary managed `/iris create`, but not
+registry restart first. Bukkit accepts Modrinth, direct HTTP(S), and absolute local `file:` ZIP URLs;
+ZIPs under `plugins/Iris/datapacks/imports/` are discovered for every Iris dimension. Plain Spigot
+supports ordinary managed `/iris create`, but not
 the early-bootstrap `/iris replace` path for canonical Overworld, Nether, or End slots.
 
 **Mod (Fabric/Forge/NeoForge):** drop the mod jar into `mods/` and start the server. The jar is

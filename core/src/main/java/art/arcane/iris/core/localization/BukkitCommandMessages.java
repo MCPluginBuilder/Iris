@@ -29,7 +29,7 @@ public final class BukkitCommandMessages {
     );
     public static final TextKey COMMAND_DATAPACK_ADD_MODRINTH_URLS_DIMENSION_S_DATAPACKIMPORTS_LIST_THEN_RUN_IRIS = TextKey.of(
             "iris.bukkit.commanddatapack.add_modrinth_urls_dimension_s_datapackimports_list_then_run_iris",
-            C.YELLOW + "Add Modrinth URLs to a dimension's 'datapackImports' list, then run /iris datapack ingest."
+            C.YELLOW + "Add source URLs to a dimension's 'datapackImports' list or use the local import folder, then run /iris datapack ingest."
     );
     public static final TextKey COMMAND_DEVELOPER_GENHASH_STARTED_CHUNKS = TextKey.of(
             "iris.bukkit.commanddeveloper.genhash_started_chunks",

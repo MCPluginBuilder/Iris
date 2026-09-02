@@ -32,6 +32,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -228,20 +229,31 @@ public final class ModrinthResolver {
     }
 
     private static ResolvedDatapack directResolve(String url) {
-        String filename = url;
-        int slash = filename.lastIndexOf('/');
-        if (slash >= 0) {
-            filename = filename.substring(slash + 1);
-        }
-        int query = filename.indexOf('?');
-        if (query >= 0) {
-            filename = filename.substring(0, query);
-        }
-        if (filename.isBlank()) {
-            filename = "datapack.zip";
-        }
+        String filename = directFilename(url);
         String identity = directIdentity(url);
         return new ResolvedDatapack(url, filename, null, "direct-" + identity, "direct", null, true);
+    }
+
+    private static String directFilename(String url) {
+        try {
+            URI uri = new URI(url);
+            if ("file".equalsIgnoreCase(uri.getScheme())) {
+                Path fileName = Path.of(uri).getFileName();
+                return fileName == null || fileName.toString().isBlank()
+                        ? "datapack.zip"
+                        : fileName.toString();
+            }
+            String path = uri.getPath();
+            if (path != null && !path.isBlank()) {
+                int slash = path.lastIndexOf('/');
+                String fileName = slash >= 0 ? path.substring(slash + 1) : path;
+                if (!fileName.isBlank()) {
+                    return fileName;
+                }
+            }
+        } catch (IllegalArgumentException | URISyntaxException ignored) {
+        }
+        return "datapack.zip";
     }
 
     static String directIdentity(String url) {
