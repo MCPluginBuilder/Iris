@@ -5,6 +5,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.hydrology.HydraulicSegment;
 import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
 import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
+import art.arcane.iris.engine.hydrology.HydrologyDiagnosticCandidate;
 import art.arcane.iris.engine.hydrology.HydrologyPoint;
 import art.arcane.iris.engine.hydrology.HydrologyTile;
 import art.arcane.iris.engine.hydrology.HydrologyTileKey;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 
 /**
  * Plans one hydrology tile over a real pack and renders every exposed surface course as a
@@ -174,6 +176,9 @@ public final class RiverTransectProbe {
                     "%s tile=%d,%d seed=%d courses=%d planMs=%.1f",
                     PREFIX, key.tileX(), key.tileZ(), configuration.seed(), tile.courses().size(), planMillis));
 
+            for (String line : rejectionLines(tile)) {
+                System.out.println(PREFIX + " " + line);
+            }
             List<CourseSummary> summaries = new ArrayList<>();
             for (RiverCourse course : tile.courses()) {
                 if (course.type() != RiverCourseType.SURFACE) {
@@ -205,6 +210,19 @@ public final class RiverTransectProbe {
                     + " output=" + configuration.output().getAbsolutePath());
             return pass;
         }
+    }
+
+    static List<String> rejectionLines(HydrologyTile tile) {
+        TreeMap<String, Integer> counts = new TreeMap<>();
+        for (HydrologyDiagnosticCandidate candidate : tile.diagnosticCandidates()) {
+            String key = "rejected " + candidate.kind() + " " + candidate.projectedType() + " " + candidate.rejection();
+            counts.merge(key, 1, Integer::sum);
+        }
+        ArrayList<String> lines = new ArrayList<>(counts.size());
+        for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+            lines.add(entry.getKey() + " x" + entry.getValue());
+        }
+        return lines;
     }
 
     static int[] sectionStations(int stations) {
@@ -529,6 +547,9 @@ public final class RiverTransectProbe {
                 .append(" courses=").append(tile.courses().size())
                 .append(" surfaceCourses=").append(summaries.size())
                 .append('\n');
+        for (String line : rejectionLines(tile)) {
+            text.append(line).append('\n');
+        }
         int maximumCut = 0;
         int maximumBankStep = 0;
         int oceanWrites = 0;
