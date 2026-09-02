@@ -30,7 +30,8 @@ public final class HydrologyPlannerProbe {
     private static final long UNDERGROUND_INLAND_SEED = 7013L;
     private static final long COASTAL_SEED = 7014L;
     static final Set<HydrologyFeatureType> REQUIRED_FEATURE_TYPES =
-            Set.copyOf(EnumSet.complementOf(EnumSet.of(HydrologyFeatureType.RIDGE_BORE)));
+            // The synthetic probe settings define no standing pools, so that type is not expected either.
+            Set.copyOf(EnumSet.complementOf(EnumSet.of(HydrologyFeatureType.RIDGE_BORE, HydrologyFeatureType.STANDING_POOL)));
     private static final HydrologyTileKey ORIGIN = new HydrologyTileKey(0, 0);
     private static final int WARM_SAMPLES = 2_048;
 
