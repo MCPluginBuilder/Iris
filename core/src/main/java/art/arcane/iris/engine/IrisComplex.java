@@ -39,6 +39,7 @@ import art.arcane.iris.engine.object.IrisInterpolator;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisDeepFluidConfig;
+import art.arcane.iris.engine.object.IrisSurfacePoolConfig;
 import art.arcane.iris.engine.object.IrisHydrology;
 import art.arcane.iris.engine.object.IrisRiverHydrology;
 import art.arcane.iris.engine.object.IrisRiverProfile;
@@ -548,6 +549,20 @@ public class IrisComplex implements DataProvider {
                     deepFluid.getFluidPalette(),
                     rng.nextParallelRNG(8900 + streamIndex++),
                     "hydrology deep-fluid profile " + profileKey
+            );
+            if (streams.putIfAbsent(profileKey, stream) != null) {
+                throw new IllegalArgumentException("Duplicate hydrology fluid profile: " + profileKey);
+            }
+        }
+        for (IrisSurfacePoolConfig pool : hydrology.getSurfacePools()) {
+            if (pool == null) {
+                throw new IllegalArgumentException("hydrology.surfacePools cannot contain null entries");
+            }
+            String profileKey = requireHydrologyKey(pool.getId(), "hydrology.surfacePools[].id");
+            ProceduralStream<PlatformBlockState> stream = configuredFluidStream(
+                    pool.getFluidPalette(),
+                    rng.nextParallelRNG(9900 + streamIndex++),
+                    "hydrology surface pool " + profileKey
             );
             if (streams.putIfAbsent(profileKey, stream) != null) {
                 throw new IllegalArgumentException("Duplicate hydrology fluid profile: " + profileKey);

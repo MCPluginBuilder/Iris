@@ -268,7 +268,7 @@ public class HydrologyFootprintCompilerTest {
                 base.underground(),
                 base.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of(deepFluid)
+                List.of(deepFluid), List.of()
         );
         HydraulicSegment segment = new HydraulicSegment(
                 15L,

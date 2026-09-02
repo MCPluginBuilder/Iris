@@ -157,6 +157,70 @@ public class PackHydrologyValidatorTest {
     }
 
     @Test
+    public void surfacePoolRulesRejectBadRangesAndUnknownPolicyReferences() throws Exception {
+        File pack = pack("""
+                {
+                  "regions": ["region"],
+                  "dimensionHeight": {"min": -256, "max": 512},
+                  "hydrology": {
+                    "rivers": {"enabled": true, "routing": {"tileSize": 1024, "sampleSpacing": 64, "oceanOutlets": true}},
+                    "surfacePools": [
+                      {
+                        "id": "lava_pool",
+                        "fluidPalette": {"palette": [{"block": "minecraft:lava"}]},
+                        "spacing": 16,
+                        "minimumRadius": 8,
+                        "maximumRadius": 4,
+                        "depth": 9,
+                        "biome": "no/such/biome"
+                      },
+                      {"id": "pool", "fluidPalette": {"palette": [{"block": "minecraft:water"}]}}
+                    ]
+                  },
+                  "riverPolicy": {"surfacePools": ["lava_pool", "missing_pool"]}
+                }
+                """);
+
+        PackHydrologyValidator.Validation result = validate(pack);
+
+        assertContains(result.errors(), "spacing must be at least 32");
+        assertContains(result.errors(), "minimumRadius must not exceed maximumRadius");
+        assertContains(result.errors(), "depth must be at most 8");
+        assertContains(result.errors(), "biome references unknown biome 'no/such/biome'");
+        assertContains(result.errors(), "'pool' is a reserved hydrology feature selector");
+        assertContains(result.errors(), "references unknown surface pool 'missing_pool'");
+    }
+
+    @Test
+    public void surfacePoolsAcceptAConfiguredPoolAndItsPolicyReference() throws Exception {
+        File pack = pack("""
+                {
+                  "regions": ["region"],
+                  "dimensionHeight": {"min": -256, "max": 512},
+                  "hydrology": {
+                    "rivers": {"enabled": true, "routing": {"tileSize": 1024, "sampleSpacing": 64, "oceanOutlets": true}},
+                    "surfacePools": [
+                      {
+                        "id": "lava_pool",
+                        "fluidPalette": {"palette": [{"block": "minecraft:lava"}]},
+                        "density": 0.75,
+                        "spacing": 384,
+                        "minimumRadius": 4,
+                        "maximumRadius": 7,
+                        "depth": 2
+                      }
+                    ]
+                  },
+                  "riverPolicy": {"surfacePools": ["lava_pool"]}
+                }
+                """);
+
+        PackHydrologyValidator.Validation result = validate(pack);
+
+        assertTrue(result.errors().toString(), result.errors().stream().noneMatch((String error) -> error.contains("surfacePool")));
+    }
+
+    @Test
     public void rejectsMouthLevelingDistanceBeyondTheRouteLength() throws Exception {
         File pack = pack(riversDimension("""
                 {

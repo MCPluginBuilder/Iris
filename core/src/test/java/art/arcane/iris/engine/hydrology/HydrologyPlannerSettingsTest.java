@@ -62,7 +62,7 @@ public class HydrologyPlannerSettingsTest {
                 base.underground(),
                 base.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of(overlongChannel)
+                List.of(overlongChannel), List.of()
         ));
     }
 

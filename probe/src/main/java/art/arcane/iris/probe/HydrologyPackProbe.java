@@ -215,7 +215,8 @@ public final class HydrologyPackProbe {
     enum CoverageFamily {
         SURFACE,
         UNDERGROUND,
-        DEEP
+        DEEP,
+        POOL
     }
 
     enum VerificationFamily {
@@ -4080,6 +4081,7 @@ public final class HydrologyPackProbe {
             case SURFACE -> CoverageFamily.SURFACE;
             case UNDERGROUND -> CoverageFamily.UNDERGROUND;
             case DEEP_FLUID -> CoverageFamily.DEEP;
+            case SURFACE_POOL -> CoverageFamily.POOL;
         };
         return new ConfiguredCoverage(family, course.profileKey());
     }

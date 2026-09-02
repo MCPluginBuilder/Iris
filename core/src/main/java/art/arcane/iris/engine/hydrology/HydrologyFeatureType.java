@@ -15,11 +15,13 @@ public enum HydrologyFeatureType {
     INLAND_GROTTO,
     MOUTH,
     DEEP_POOL,
-    DEEP_CHANNEL;
+    DEEP_CHANNEL,
+    // A standing surface pool (lava or any fluid) with no course: a bowl cut into the ground with a lip.
+    STANDING_POOL;
 
     public boolean isSurface() {
         return switch (this) {
-            case SURFACE_POOL, RIFFLE, CASCADE, WATERFALL, MOUTH -> true;
+            case SURFACE_POOL, RIFFLE, CASCADE, WATERFALL, MOUTH, STANDING_POOL -> true;
             default -> false;
         };
     }
@@ -59,6 +61,7 @@ public enum HydrologyFeatureType {
             case DEEP_CHANNEL -> 10;
             case DEEP_POOL -> 11;
             case SURFACE_POOL -> 12;
+            case STANDING_POOL -> 13;
         };
     }
 }

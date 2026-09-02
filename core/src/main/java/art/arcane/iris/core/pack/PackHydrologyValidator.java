@@ -92,7 +92,7 @@ final class PackHydrologyValidator {
                     biomes,
                     errors
             );
-            HydrologyValidation hydrology = validateHydrology(dimensionPath, dimension, errors, warnings);
+            HydrologyValidation hydrology = validateHydrology(dimensionPath, dimension, biomes, errors, warnings);
             if (!hydrology.active()) {
                 continue;
             }
@@ -103,6 +103,7 @@ final class PackHydrologyValidator {
                         dimension,
                         dimensionPolicy,
                         hydrology.profileIds(),
+                        hydrology.surfacePoolIds(),
                         regions,
                         biomes,
                         imageMaps,
@@ -116,6 +117,7 @@ final class PackHydrologyValidator {
     private static HydrologyValidation validateHydrology(
             String dimensionPath,
             JSONObject dimension,
+            Map<String, JSONObject> biomes,
             List<String> errors,
             List<String> warnings
     ) {
@@ -156,7 +158,8 @@ final class PackHydrologyValidator {
                 profileIds,
                 errors
         );
-        return new HydrologyValidation(riversEnabled, deepFluidsActive, profileIds);
+        Set<String> surfacePoolIds = validateSurfacePools(dimensionPath + ".hydrology", hydrology, profileIds, biomes, errors);
+        return new HydrologyValidation(riversEnabled, deepFluidsActive || !surfacePoolIds.isEmpty(), profileIds, surfacePoolIds);
     }
 
     private static Set<String> validateRivers(
@@ -596,6 +599,108 @@ final class PackHydrologyValidator {
         return Set.copyOf(profileIds);
     }
 
+    private static Set<String> validateSurfacePools(
+            String path,
+            JSONObject hydrology,
+            Set<String> riverProfileIds,
+            Map<String, JSONObject> biomes,
+            List<String> errors
+    ) {
+        if (!hydrology.has("surfacePools")) {
+            return Set.of();
+        }
+        Object rawPools = hydrology.opt("surfacePools");
+        if (!(rawPools instanceof JSONArray pools)) {
+            errors.add(path + ".surfacePools must be an array.");
+            return Set.of();
+        }
+        if (pools.length() > MAX_DEEP_FLUIDS) {
+            errors.add(path + ".surfacePools must contain at most " + MAX_DEEP_FLUIDS + " entries.");
+        }
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        for (int index = 0; index < pools.length(); index++) {
+            String poolPath = path + ".surfacePools[" + index + "]";
+            JSONObject pool = pools.optJSONObject(index);
+            if (pool == null) {
+                errors.add(poolPath + " must be an object.");
+                continue;
+            }
+            String id = requiredId(poolPath, pool, errors);
+            if (id != null) {
+                if (HydrologyFeatureQuery.isReservedKeyword(id)) {
+                    errors.add(poolPath + ".id '" + id + "' is a reserved hydrology feature selector.");
+                } else if (riverProfileIds.contains(id)) {
+                    errors.add(poolPath + ".id '" + id + "' collides with a river profile.");
+                } else if (!ids.add(id)) {
+                    errors.add(poolPath + ".id must be unique inside hydrology.surfacePools.");
+                }
+            }
+            validateFluidPalette(poolPath, pool, true, errors);
+            PackJsonFieldChecks.validateOptionalDoubleRange(poolPath, pool, "density", 0D, 64D, errors);
+            PackJsonFieldChecks.validateOptionalIntegerRange(poolPath, pool, "spacing", 32, 8192, errors);
+            PackJsonFieldChecks.validateOptionalIntegerRange(poolPath, pool, "minimumRadius", 2, 16, errors);
+            PackJsonFieldChecks.validateOptionalIntegerRange(poolPath, pool, "maximumRadius", 2, 16, errors);
+            PackJsonFieldChecks.validateOptionalIntegerRange(poolPath, pool, "depth", 1, 8, errors);
+            if (integerValue(pool, "minimumRadius", 4) > integerValue(pool, "maximumRadius", 7)) {
+                errors.add(poolPath + ".minimumRadius must not exceed maximumRadius.");
+            }
+            Object rawBiome = pool.opt("biome");
+            if (rawBiome instanceof String biome && !biome.isBlank() && !biomes.containsKey(biome)) {
+                errors.add(poolPath + ".biome references unknown biome '" + biome + "'.");
+            }
+        }
+        return Set.copyOf(ids);
+    }
+
+    private static void validatePolicyPoolsInDimension(
+            String path,
+            JSONObject policy,
+            String dimensionKey,
+            Set<String> pools,
+            List<String> errors
+    ) {
+        if (policy == null) {
+            return;
+        }
+        JSONArray references = policy.optJSONArray("surfacePools");
+        if (references == null) {
+            return;
+        }
+        for (int index = 0; index < references.length(); index++) {
+            String pool = references.optString(index, null);
+            if (pool != null && ID_PATTERN.matcher(pool).matches() && !pools.contains(pool)) {
+                addDistinct(errors, path + ".surfacePools[" + index + "] references unknown surface pool '"
+                        + pool + "' in Dimension '" + dimensionKey + "'.");
+            }
+        }
+    }
+
+    private static void validatePolicyPools(String path, JSONObject policy, List<String> errors) {
+        if (!policy.has("surfacePools") || policy.opt("surfacePools") == JSONObject.NULL) {
+            return;
+        }
+        Object rawPools = policy.opt("surfacePools");
+        if (!(rawPools instanceof JSONArray pools)) {
+            errors.add(path + ".surfacePools must be an array or null.");
+            return;
+        }
+        if (pools.length() > MAX_POLICY_REFERENCES) {
+            errors.add(path + ".surfacePools must contain at most " + MAX_POLICY_REFERENCES + " entries.");
+        }
+        Set<String> seen = new HashSet<>();
+        for (int index = 0; index < pools.length(); index++) {
+            Object raw = pools.opt(index);
+            String referencePath = path + ".surfacePools[" + index + "]";
+            if (!(raw instanceof String id) || !ID_PATTERN.matcher(id).matches()) {
+                errors.add(referencePath + " must name a surface pool id.");
+                continue;
+            }
+            if (!seen.add(id)) {
+                errors.add(referencePath + " duplicates surface pool '" + id + "'.");
+            }
+        }
+    }
+
     private static boolean validateDeepFluids(
             String path,
             JSONObject hydrology,
@@ -787,6 +892,7 @@ final class PackHydrologyValidator {
         validateNullableEnum(path, policy, "routing", ROUTING_MODES, errors);
         validateNullableBoolean(path, policy, "outletAdmission", errors);
         validatePolicyProfiles(path, policy, errors);
+        validatePolicyPools(path, policy, errors);
         for (String biomeField : POLICY_BIOME_FIELDS) {
             validatePolicyBiomes(path, policy, biomeField, biomes, errors);
         }
@@ -803,6 +909,7 @@ final class PackHydrologyValidator {
             JSONObject dimension,
             JSONObject dimensionPolicy,
             Set<String> profiles,
+            Set<String> pools,
             Map<String, JSONObject> regions,
             Map<String, JSONObject> biomes,
             Map<String, JSONObject> imageMaps,
@@ -814,6 +921,13 @@ final class PackHydrologyValidator {
                 dimensionPolicy,
                 dimensionKey,
                 profiles,
+                errors
+        );
+        validatePolicyPoolsInDimension(
+                dimensionPath + ".riverPolicy",
+                dimensionPolicy,
+                dimensionKey,
+                pools,
                 errors
         );
 
@@ -833,6 +947,13 @@ final class PackHydrologyValidator {
                         policy,
                         dimensionKey,
                         profiles,
+                        errors
+                );
+                validatePolicyPoolsInDimension(
+                        "Region '" + regionKey + "'.riverPolicy",
+                        policy,
+                        dimensionKey,
+                        pools,
                         errors
                 );
                 addPolicyBiomeReferences(pending, policy);
@@ -865,6 +986,13 @@ final class PackHydrologyValidator {
                     policy,
                     dimensionKey,
                     profiles,
+                    errors
+            );
+            validatePolicyPoolsInDimension(
+                    "Biome '" + biomeKey + "'.riverPolicy",
+                    policy,
+                    dimensionKey,
+                    pools,
                     errors
             );
             addPolicyBiomeReferences(pending, policy);
@@ -1374,10 +1502,11 @@ final class PackHydrologyValidator {
     private record HydrologyValidation(
             boolean riversEnabled,
             boolean deepFluidsActive,
-            Set<String> profileIds
+            Set<String> profileIds,
+            Set<String> surfacePoolIds
     ) {
         private static HydrologyValidation inactive() {
-            return new HydrologyValidation(false, false, Set.of());
+            return new HydrologyValidation(false, false, Set.of(), Set.of());
         }
 
         private boolean active() {

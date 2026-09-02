@@ -288,7 +288,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         8
                 ),
                 stableGeometry(),
-                List.of(deepFluid)
+                List.of(deepFluid), List.of()
         );
     }
 
@@ -362,7 +362,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         base.outlets().maximumPerTile()
                 ),
                 base.geometry(),
-                base.deepFluids()
+                base.deepFluids(), List.of()
         );
     }
 
@@ -404,7 +404,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("water")
+                    List.of("water"), List.of()
             );
         };
     }
@@ -445,7 +445,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                     sample.shoreBiomeKey(),
                     sample.bankBiomeKey(),
                     sample.floodedCaveBiomeKey(),
-                    sample.preferredProfileKeys()
+                    sample.preferredProfileKeys(), List.of()
             );
         };
     }
@@ -478,7 +478,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("water")
+                List.of("water"), List.of()
         );
     }
 

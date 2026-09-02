@@ -5,6 +5,10 @@ import art.arcane.iris.engine.hydrology.cave.CaveVoxelView;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCandidate;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveContainmentPlanner;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCavePlan;
+import art.arcane.iris.engine.hydrology.surface.ChannelProfile;
+import art.arcane.iris.engine.hydrology.surface.ValleyProfile;
+import art.arcane.iris.engine.hydrology.surface.ValleyProfileSolver;
+import art.arcane.iris.engine.hydrology.surface.SurfaceCenterline;
 import art.arcane.iris.engine.hydrology.surface.SurfaceCourseBuilder;
 import art.arcane.iris.engine.hydrology.surface.SurfaceCourseResult;
 import art.arcane.iris.engine.hydrology.surface.SurfaceTerminal;
@@ -45,6 +49,7 @@ public final class HydrologyPlanner {
     private static final long COURSE_SALT = 0x434f55525345L;
     private static final long SEGMENT_SALT = 0x5345474d454e54L;
     private static final long DEEP_FLUID_SALT = 0x44454550464cL;
+    private static final long SURFACE_POOL_SALT = 0x504f4f4cL;
     private static final long DEEP_FLUID_X_OFFSET_SALT = 0x44454550584fL;
     private static final long DEEP_FLUID_Z_OFFSET_SALT = 0x444545505a4fL;
     private static final long DEEP_CHANNEL_HEADING_SALT = 0x44454550484447L;
@@ -1101,6 +1106,7 @@ public final class HydrologyPlanner {
         if (includeDeepFluids) {
             compileDeepFluidCourses(key, courses, diagnostics);
         }
+        compileSurfacePools(key, courses, diagnostics);
         HydrologyFootprintCompiler.ValidationRaster validation = footprintCompiler.compileValidation(courses);
         HydrologyObservedPlannedSurface plannedSurface = new HydrologyObservedPlannedSurface(
                 validation.plannedSurface()
@@ -6109,6 +6115,183 @@ public final class HydrologyPlanner {
                 false,
                 false,
                 centerline
+        ));
+    }
+
+    /**
+     * Standing surface pools: a jittered lattice of candidate sites per pool profile, admitted where the
+     * policy lists the pool, the ground is open land clear of every accepted course, and the bowl fits
+     * the incision cap. Each accepted pool is an independent course with one STANDING_POOL segment.
+     */
+    private void compileSurfacePools(
+            HydrologyTileKey key,
+            List<RiverCourse> courses,
+            List<HydrologyDiagnosticCandidate> diagnostics
+    ) {
+        int tileSize = settings.routing().tileSize();
+        for (HydrologyPlannerSettings.SurfacePool pool : settings.surfacePools()) {
+            if (!pool.enabled() || pool.maximumPerTile() == 0) {
+                continue;
+            }
+            long profileSeed = HydrologyHash.mix(worldSeed, SURFACE_POOL_SALT, HydrologyHash.text(pool.id()));
+            int target = Math.min(pool.maximumPerTile(), expectedCount(pool.density(), HydrologyHash.mix(
+                    profileSeed, key.tileX(), key.tileZ())));
+            int accepted = 0;
+            for (DeepSite site : poolSites(key, pool, profileSeed, tileSize)) {
+                if (accepted >= target) {
+                    addPoolDiagnostic(site, HydrologyCandidateRejection.SOURCE_QUOTA, diagnostics);
+                    continue;
+                }
+                HydrologyCandidateRejection rejection = poolAdmission(pool, site, courses);
+                if (rejection != null) {
+                    addPoolDiagnostic(site, rejection, diagnostics);
+                    continue;
+                }
+                RiverCourse course = buildSurfacePoolCourse(pool, site);
+                if (course == null) {
+                    addPoolDiagnostic(site, HydrologyCandidateRejection.SURFACE_CORRIDOR_UNSUPPORTED, diagnostics);
+                    continue;
+                }
+                courses.add(course);
+                accepted++;
+            }
+        }
+    }
+
+    private ArrayList<DeepSite> poolSites(
+            HydrologyTileKey key,
+            HydrologyPlannerSettings.SurfacePool pool,
+            long profileSeed,
+            int tileSize
+    ) {
+        int minimumX = key.minimumBlockX(tileSize);
+        int minimumZ = key.minimumBlockZ(tileSize);
+        int spacing = pool.spacing();
+        int xOffset = HydrologyHash.between(HydrologyHash.mix(profileSeed, DEEP_FLUID_X_OFFSET_SALT), 0, spacing - 1);
+        int zOffset = HydrologyHash.between(HydrologyHash.mix(profileSeed, DEEP_FLUID_Z_OFFSET_SALT), 0, spacing - 1);
+        long firstCellX = ceilDiv((long) minimumX - xOffset, spacing);
+        long firstCellZ = ceilDiv((long) minimumZ - zOffset, spacing);
+        long lastCellX = Math.floorDiv((long) minimumX + tileSize - 1L - xOffset, spacing);
+        long lastCellZ = Math.floorDiv((long) minimumZ + tileSize - 1L - zOffset, spacing);
+        ArrayList<DeepSite> sites = new ArrayList<>();
+        for (long cellZ = firstCellZ; cellZ <= lastCellZ; cellZ++) {
+            for (long cellX = firstCellX; cellX <= lastCellX; cellX++) {
+                long stable = HydrologyHash.mix(profileSeed, cellX, cellZ);
+                // Jitter inside the cell keeps pools off a visible grid.
+                int jitter = Math.max(1, spacing / 3);
+                int x = Math.toIntExact(xOffset + cellX * spacing + HydrologyHash.between(HydrologyHash.mix(stable, 11), -jitter, jitter));
+                int z = Math.toIntExact(zOffset + cellZ * spacing + HydrologyHash.between(HydrologyHash.mix(stable, 12), -jitter, jitter));
+                HydrologyTerrainSample terrain = sampleLandBasis(x, z);
+                sites.add(new DeepSite(x, z, terrain == null ? 0 : terrain.naturalHeight(), stable));
+            }
+        }
+        sites.sort(Comparator.comparingLong(DeepSite::stableId));
+        return sites;
+    }
+
+    private HydrologyCandidateRejection poolAdmission(
+            HydrologyPlannerSettings.SurfacePool pool,
+            DeepSite site,
+            List<RiverCourse> courses
+    ) {
+        HydrologyTerrainSample terrain = sampleLandBasis(site.x(), site.z());
+        if (terrain == null || terrain.ocean() || terrain.naturalHeight() <= settings.seaLevel() + 1) {
+            return HydrologyCandidateRejection.SURFACE_EXPOSURE;
+        }
+        if (!terrain.transitAllowed() || !terrain.surfacePoolKeys().contains(pool.id())) {
+            return HydrologyCandidateRejection.POLICY_EXCLUDED;
+        }
+        long clearance = pool.maximumRadius() + (long) StrictMath.ceil(settings.surface().shoreWidth())
+                + settings.surface().banks().maximumBlendWidth() + settings.surface().maximumWidth();
+        long clearanceSquared = clearance * clearance;
+        for (RiverCourse course : courses) {
+            for (HydraulicSegment segment : course.segments()) {
+                for (HydrologyPoint point : segment.centerline()) {
+                    long deltaX = (long) point.x() - site.x();
+                    long deltaZ = (long) point.z() - site.z();
+                    if (deltaX * deltaX + deltaZ * deltaZ < clearanceSquared) {
+                        return HydrologyCandidateRejection.SOURCE_SPACING;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private RiverCourse buildSurfacePoolCourse(HydrologyPlannerSettings.SurfacePool pool, DeepSite site) {
+        int radius = HydrologyHash.between(HydrologyHash.mix(site.stableId(), 3), pool.minimumRadius(), pool.maximumRadius());
+        HydrologyTerrainSample terrain = sampleLandBasis(site.x(), site.z());
+        List<HydrologyPoint> points = List.of(
+                new HydrologyPoint(site.x() - 1, site.head(), site.z()),
+                new HydrologyPoint(site.x(), site.head(), site.z()),
+                new HydrologyPoint(site.x() + 1, site.head(), site.z())
+        );
+        SurfaceCenterline centerline = SurfaceCenterline.densify(points);
+        int count = centerline.size();
+        double[] halfWidth = new double[count];
+        double[] depth = new double[count];
+        double[] bank = new double[count];
+        Arrays.fill(halfWidth, radius);
+        Arrays.fill(depth, pool.depth());
+        Arrays.fill(bank, terrain == null ? 1D : terrain.bankMultiplier());
+        ChannelProfile profile = new ChannelProfile(halfWidth, depth, bank);
+        ValleyProfile valley = new ValleyProfileSolver(settings.surface(), this::sampleBasis, settings.seaLevel(), 0)
+                .solve(centerline, profile, SurfaceTerminal.SINKHOLE, Integer.MIN_VALUE);
+        if (!valley.accepted()) {
+            return null;
+        }
+        int center = Math.min(1, valley.exposedStations() - 1);
+        int head = valley.head()[center];
+        // A pool belongs in a hollow or on level ground: the whole rim must sit within a few blocks of the
+        // water, or the bowl becomes a scar dug into a slope.
+        int rimAllowance = pool.depth() + settings.surface().banks().inset() + 2;
+        for (int station = 0; station < valley.exposedStations(); station++) {
+            if (valley.crossMax()[station] - valley.head()[station] > rimAllowance) {
+                return null;
+            }
+        }
+        long courseId = HydrologyHash.mix(worldSeed, SURFACE_POOL_SALT, HydrologyHash.text(pool.id()), site.stableId());
+        long segmentId = HydrologyHash.mix(courseId, SEGMENT_SALT, HydrologyFeatureType.STANDING_POOL.ordinal());
+        ArrayList<HydrologyPoint> centerlinePoints = new ArrayList<>(points.size());
+        for (HydrologyPoint point : points) {
+            centerlinePoints.add(new HydrologyPoint(point.x(), head, point.z()));
+        }
+        HydraulicSegment segment = new HydraulicSegment(
+                segmentId,
+                courseId,
+                HydrologyFeatureType.STANDING_POOL,
+                head,
+                head,
+                radius * 2,
+                pool.depth(),
+                false,
+                false,
+                centerlinePoints
+        );
+        return new RiverCourse(
+                courseId,
+                RiverCourseType.SURFACE_POOL,
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                pool.id(),
+                1,
+                List.of(),
+                List.of(segment)
+        );
+    }
+
+    private void addPoolDiagnostic(
+            DeepSite site,
+            HydrologyCandidateRejection rejection,
+            List<HydrologyDiagnosticCandidate> diagnostics
+    ) {
+        diagnostics.add(new HydrologyDiagnosticCandidate(
+                HydrologyHash.mix(site.stableId(), DIAGNOSTIC_SALT, rejection.ordinal()),
+                HydrologyCandidateKind.POOL,
+                HydrologyFeatureType.STANDING_POOL,
+                new HydrologyPoint(site.x(), site.head(), site.z()),
+                rejection,
+                0
         ));
     }
 

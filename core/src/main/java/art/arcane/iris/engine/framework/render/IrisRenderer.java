@@ -64,6 +64,7 @@ public final class IrisRenderer {
     private static final int RIVER_MOUTH = new Color(54, 164, 205).getRGB();
     private static final int RIVER_WATERFALL = new Color(190, 236, 255).getRGB();
     private static final int CONFIRMED_DEEP_LAVA = new Color(194, 50, 22).getRGB();
+    private static final int STANDING_POOL = new Color(232, 120, 40).getRGB();
     private static final int PROJECTED_SOURCE = new Color(225, 75, 178).getRGB();
     private static final int PROJECTED_OUTLET = new Color(235, 145, 54).getRGB();
     private static final int PROJECTED_DEEP_FLUID = new Color(175, 70, 118).getRGB();
@@ -199,6 +200,7 @@ public final class IrisRenderer {
             case INLAND_GROTTO -> INLAND_GROTTO;
             case MOUTH -> RIVER_MOUTH;
             case DEEP_POOL, DEEP_CHANNEL -> CONFIRMED_DEEP_LAVA;
+            case STANDING_POOL -> STANDING_POOL;
         };
     }
 
@@ -215,7 +217,7 @@ public final class IrisRenderer {
         return switch (kind) {
             case SOURCE -> PROJECTED_SOURCE;
             case OUTLET -> PROJECTED_OUTLET;
-            case DEEP_FLUID -> PROJECTED_DEEP_FLUID;
+            case DEEP_FLUID, POOL -> PROJECTED_DEEP_FLUID;
         };
     }
 

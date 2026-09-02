@@ -38,10 +38,11 @@ public record RiverCourse(
             }
         }
         validateSinkholeContinuation(type, segments);
-        if (type == RiverCourseType.DEEP_FLUID && (sourceNodeId.isPresent() || outletId.isPresent())) {
-            throw new IllegalArgumentException("Independent deep-fluid courses cannot reference drainage nodes or river outlets.");
+        boolean independent = type == RiverCourseType.DEEP_FLUID || type == RiverCourseType.SURFACE_POOL;
+        if (independent && (sourceNodeId.isPresent() || outletId.isPresent())) {
+            throw new IllegalArgumentException("Independent deep-fluid and pool courses cannot reference drainage nodes or river outlets.");
         }
-        if (type != RiverCourseType.DEEP_FLUID && (sourceNodeId.isEmpty() || outletId.isEmpty())) {
+        if (!independent && (sourceNodeId.isEmpty() || outletId.isEmpty())) {
             throw new IllegalArgumentException("Surface and underground courses require a source and outlet.");
         }
     }

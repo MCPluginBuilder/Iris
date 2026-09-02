@@ -1566,7 +1566,7 @@ public class MantleHydrologyComponentTest {
                         8
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of()
+                List.of(), List.of()
         );
     }
 
@@ -1603,7 +1603,7 @@ public class MantleHydrologyComponentTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("default")
+                List.of("default"), List.of()
         );
     }
 

@@ -29,7 +29,8 @@ public record HydrologyTerrainSample(
         String shoreBiomeKey,
         String bankBiomeKey,
         String floodedCaveBiomeKey,
-        List<String> preferredProfileKeys
+        List<String> preferredProfileKeys,
+        List<String> surfacePoolKeys
 ) {
     public HydrologyTerrainSample {
         requireFiniteNonNegative(slope, "slope");
@@ -51,6 +52,7 @@ public record HydrologyTerrainSample(
         bankBiomeKey = normalizeKey(bankBiomeKey, parentBiomeKey);
         floodedCaveBiomeKey = normalizeKey(floodedCaveBiomeKey, surfaceBiomeKey);
         preferredProfileKeys = normalizeProfiles(preferredProfileKeys);
+        surfacePoolKeys = surfacePoolKeys == null ? List.of() : List.copyOf(surfacePoolKeys);
     }
 
     public static HydrologyTerrainSample openLand(int naturalHeight, double slope, String parentBiomeKey) {
@@ -81,7 +83,8 @@ public record HydrologyTerrainSample(
                 parentBiomeKey,
                 parentBiomeKey,
                 parentBiomeKey,
-                List.of("default")
+                List.of("default"),
+                List.of()
         );
     }
 
@@ -113,7 +116,41 @@ public record HydrologyTerrainSample(
                 parentBiomeKey,
                 parentBiomeKey,
                 parentBiomeKey,
-                List.of("default")
+                List.of("default"),
+                List.of()
+        );
+    }
+
+    public HydrologyTerrainSample withSurfacePoolKeys(List<String> replacementPoolKeys) {
+        return new HydrologyTerrainSample(
+                naturalHeight,
+                slope,
+                ocean,
+                caveAvailable,
+                caveFloorY,
+                caveFluidY,
+                transitAllowed,
+                outletAllowed,
+                surfaceSourceAllowed,
+                surfaceSourceRequired,
+                undergroundSourceAllowed,
+                undergroundSourceRequired,
+                routingCost,
+                surfaceSourceWeight,
+                undergroundSourceWeight,
+                widthMultiplier,
+                depthMultiplier,
+                incisionMultiplier,
+                routingMultiplier,
+                bankMultiplier,
+                parentBiomeKey,
+                surfaceBiomeKey,
+                mouthBiomeKey,
+                shoreBiomeKey,
+                bankBiomeKey,
+                floodedCaveBiomeKey,
+                preferredProfileKeys,
+                replacementPoolKeys
         );
     }
 
@@ -145,7 +182,8 @@ public record HydrologyTerrainSample(
                 shoreBiomeKey,
                 bankBiomeKey,
                 floodedCaveBiomeKey,
-                preferredProfileKeys
+                preferredProfileKeys,
+                surfacePoolKeys
         );
     }
 

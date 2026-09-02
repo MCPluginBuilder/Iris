@@ -18,4 +18,8 @@ public class IrisHydrology {
     @ArrayType(type = IrisDeepFluidConfig.class)
     @Desc("Independent deep-fluid systems that do not consume the surface or underground river source budgets.")
     private KList<IrisDeepFluidConfig> deepFluids = new KList<>();
+
+    @ArrayType(type = IrisSurfacePoolConfig.class, min = 0)
+    @Desc("Standing surface pools such as lava pools. Each region or biome opts in through riverPolicy.surfacePools.")
+    private KList<IrisSurfacePoolConfig> surfacePools = new KList<>();
 }

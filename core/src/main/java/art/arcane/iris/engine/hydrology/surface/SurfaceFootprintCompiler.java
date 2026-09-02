@@ -42,7 +42,8 @@ public final class SurfaceFootprintCompiler {
     }
 
     public SurfaceFootprint compile(RiverCourse course) {
-        if (course.type() != RiverCourseType.SURFACE) {
+        boolean pool = course.type() == RiverCourseType.SURFACE_POOL;
+        if (course.type() != RiverCourseType.SURFACE && !pool) {
             return SurfaceFootprint.empty();
         }
         ArrayList<HydraulicSegment> exposed = new ArrayList<>();
@@ -59,10 +60,13 @@ public final class SurfaceFootprintCompiler {
         if (stations.count() < 1) {
             return SurfaceFootprint.empty();
         }
-        SurfaceTerminal terminal = terminal(course, exposed);
+        SurfaceTerminal terminal = pool ? SurfaceTerminal.SINKHOLE : terminal(course, exposed);
         SurfaceCenterline centerline = SurfaceCenterline.densify(stations.points());
-        ChannelProfile channel = new ChannelProfileBuilder(settings.surface(), sampler, geometry)
-                .build(centerline, course.profileKey(), terminal == SurfaceTerminal.OCEAN_MOUTH);
+        ChannelProfile channel = pool
+                ? poolProfile(exposed.getFirst(), centerline)
+                : new ChannelProfileBuilder(settings.surface(), sampler, geometry)
+                        .build(centerline, course.profileKey(), terminal == SurfaceTerminal.OCEAN_MOUTH);
+        String poolBiome = pool ? poolBiome(course.profileKey()) : null;
         ValleyProfile valley = ValleyProfile.fromHeads(stations.head(), stations.exposedStations());
         ErosionField field = new ErosionFieldCompiler(settings.surface(), sampler, settings.seaLevel()).compile(
                 HydrologyHash.mix(course.id(), COURSE_SEED_SALT),
@@ -90,12 +94,69 @@ public final class SurfaceFootprintCompiler {
                     column.x(),
                     column.z(),
                     column.terrain(),
-                    layer(feature, column, course.profileKey()),
+                    pool ? poolLayer(feature, column, course.profileKey(), poolBiome) : layer(feature, column, course.profileKey()),
                     column.role(),
                     column.apron()
             ));
         }
         return new SurfaceFootprint(columns, field.uncontainedWetCells());
+    }
+
+    /** A pool's bowl and rim carry the pool biome when one is configured, otherwise the surrounding biome. */
+    private static HydrologyColumnLayer poolLayer(
+            HydrologyFeatureRef feature,
+            SurfaceColumn column,
+            String profileKey,
+            String poolBiome
+    ) {
+        HydrologyTerrainSample terrain = column.terrain();
+        String biome = poolBiome == null ? terrain.parentBiomeKey() : poolBiome;
+        boolean channel = column.role() == SurfaceRole.CHANNEL;
+        boolean shore = column.role() == SurfaceRole.SHORE;
+        return new HydrologyColumnLayer(
+                feature,
+                column.height(),
+                column.headY(),
+                column.headY(),
+                channel,
+                shore,
+                !channel,
+                channel,
+                false,
+                false,
+                true,
+                channel,
+                false,
+                profileKey,
+                biome,
+                biome,
+                biome,
+                biome,
+                terrain.floodedCaveBiomeKey()
+        );
+    }
+
+    private ChannelProfile poolProfile(HydraulicSegment segment, SurfaceCenterline centerline) {
+        int count = centerline.size();
+        double[] halfWidth = new double[count];
+        double[] depth = new double[count];
+        double[] bank = new double[count];
+        for (int station = 0; station < count; station++) {
+            HydrologyTerrainSample terrain = sampler.sample(centerline.x()[station], centerline.z()[station]);
+            halfWidth[station] = Math.max(0.5D, segment.width() / 2D);
+            depth[station] = Math.max(1D, segment.depth());
+            bank[station] = terrain == null ? 1D : terrain.bankMultiplier();
+        }
+        return new ChannelProfile(halfWidth, depth, bank);
+    }
+
+    private String poolBiome(String poolId) {
+        for (HydrologyPlannerSettings.SurfacePool pool : settings.surfacePools()) {
+            if (pool.id().equals(poolId)) {
+                return pool.biomeKey();
+            }
+        }
+        return null;
     }
 
     private static HydrologyColumnLayer layer(HydrologyFeatureRef feature, SurfaceColumn column, String profileKey) {

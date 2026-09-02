@@ -22,6 +22,7 @@ import art.arcane.iris.engine.hydrology.policy.RiverPolicyResolver;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisCoastalRiverGrottoConfig;
 import art.arcane.iris.engine.object.IrisDeepFluidConfig;
+import art.arcane.iris.engine.object.IrisSurfacePoolConfig;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisHydrology;
 import art.arcane.iris.engine.object.IrisInlandRiverGrottoConfig;
@@ -364,11 +365,14 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
     }
 
     public List<String> featureQueryKeys() {
-        ArrayList<String> deepFluidIds = new ArrayList<>(settings.deepFluids().size());
+        ArrayList<String> profiledIds = new ArrayList<>(settings.deepFluids().size() + settings.surfacePools().size());
         for (HydrologyPlannerSettings.DeepFluid deepFluid : settings.deepFluids()) {
-            deepFluidIds.add(deepFluid.id());
+            profiledIds.add(deepFluid.id());
         }
-        return HydrologyFeatureQuery.suggestions(deepFluidIds);
+        for (HydrologyPlannerSettings.SurfacePool pool : settings.surfacePools()) {
+            profiledIds.add(pool.id());
+        }
+        return HydrologyFeatureQuery.suggestions(profiledIds);
     }
 
     @Override
@@ -487,7 +491,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 selectKey(policy.shoreBiomes(), parentBiomeKey, biomePatchNoise, 3),
                 selectKey(policy.bankBiomes(), parentBiomeKey, biomePatchNoise, 4),
                 selectKey(policy.floodedCaveBiomes(), parentBiomeKey, biomePatchNoise, 5),
-                profiles
+                profiles,
+                policy.surfacePools()
         );
         return new IrisHydrologyRoutingTerrainSampler.TerrainBasis(resolvedNaturalHeight, terrain);
     }
@@ -764,8 +769,27 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 plannerUnderground,
                 plannerOutlets,
                 plannerGeometry,
-                deepFluids(hydrology.getDeepFluids(), minimumWorldY, routing, plannerRouting.refinementSpacing())
+                deepFluids(hydrology.getDeepFluids(), minimumWorldY, routing, plannerRouting.refinementSpacing()),
+                surfacePools(hydrology.getSurfacePools())
         );
+    }
+
+    private static List<HydrologyPlannerSettings.SurfacePool> surfacePools(List<IrisSurfacePoolConfig> configurations) {
+        ArrayList<HydrologyPlannerSettings.SurfacePool> pools = new ArrayList<>();
+        for (IrisSurfacePoolConfig configuration : configurations) {
+            pools.add(new HydrologyPlannerSettings.SurfacePool(
+                    configuration.getId(),
+                    configuration.getDensity() > 0D,
+                    configuration.getDensity(),
+                    configuration.getSpacing(),
+                    configuration.getMinimumRadius(),
+                    configuration.getMaximumRadius(),
+                    configuration.getDepth(),
+                    Math.min(64, maximumSources(configuration.getDensity(), 0)),
+                    configuration.getBiome()
+            ));
+        }
+        return List.copyOf(pools);
     }
 
     private static HydrologyPlannerSettings.Geometry geometry(

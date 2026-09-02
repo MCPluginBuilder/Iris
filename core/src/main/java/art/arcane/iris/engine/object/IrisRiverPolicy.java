@@ -54,6 +54,10 @@ public class IrisRiverPolicy {
     @Desc("Flooded cave and grotto biome selection. An empty list explicitly clears the inherited selection.")
     private KList<String> floodedCaveBiomes = null;
 
+    @ArrayType(type = String.class)
+    @Desc("Standing surface pool ids (hydrology.surfacePools) allowed in this area. An empty list explicitly clears the inherited selection.")
+    private KList<String> surfacePools = null;
+
     @MinNumber(0.0001)
     @MaxNumber(16)
     @Desc("Multiplier applied to accepted river width.")

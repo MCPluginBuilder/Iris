@@ -514,7 +514,7 @@ public class HydrologyPlannerTest {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("alpha")
+                    List.of("alpha"), List.of()
             );
         };
         HydrologyTile tile = new HydrologyPlanner(812L, settings, terrain, solidCaveView()).plan(TILE);
@@ -588,7 +588,7 @@ public class HydrologyPlannerTest {
                 base.underground(),
                 base.outlets(),
                 base.geometry(),
-                base.deepFluids()
+                base.deepFluids(), List.of()
         );
         HydrologyTerrainSampler repeatedRidges = (int x, int z) -> {
             if (x >= 112) {
@@ -1122,7 +1122,7 @@ public class HydrologyPlannerTest {
                 base.underground(),
                 base.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                base.deepFluids()
+                base.deepFluids(), List.of()
         );
         HydrologyPlannerSettings settings = withOutlets(shaped, new HydrologyPlannerSettings.Outlets(
                 true,
@@ -1408,7 +1408,7 @@ public class HydrologyPlannerTest {
                 base.underground(),
                 base.outlets(),
                 base.geometry(),
-                base.deepFluids()
+                base.deepFluids(), List.of()
         );
         HydrologyTerrainSampler terrain = (int x, int z) -> {
             if (x >= 112) {
@@ -1769,7 +1769,7 @@ public class HydrologyPlannerTest {
                         4
                 ),
                 stableGeometry(),
-                deepFluids
+                deepFluids, List.of()
         );
     }
 
@@ -1824,7 +1824,7 @@ public class HydrologyPlannerTest {
                         1
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of()
+                List.of(), List.of()
         );
     }
 
@@ -1893,7 +1893,7 @@ public class HydrologyPlannerTest {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("alpha")
+                    List.of("alpha"), List.of()
             );
         };
     }
@@ -1958,7 +1958,7 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("alpha", "beta")
+                List.of("alpha", "beta"), List.of()
         );
     }
 
@@ -1990,7 +1990,7 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("alpha")
+                List.of("alpha"), List.of()
         );
     }
 
@@ -2031,7 +2031,7 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("beta", "alpha")
+                List.of("beta", "alpha"), List.of()
         );
     }
 
@@ -2063,7 +2063,7 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("alpha")
+                List.of("alpha"), List.of()
         );
     }
 
@@ -2095,7 +2095,7 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("alpha", "beta")
+                List.of("alpha", "beta"), List.of()
         );
     }
 
@@ -2121,7 +2121,7 @@ public class HydrologyPlannerTest {
                 settings.underground(),
                 settings.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids()
+                settings.deepFluids(), List.of()
         );
     }
 
@@ -2150,7 +2150,7 @@ public class HydrologyPlannerTest {
                 ),
                 settings.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids()
+                settings.deepFluids(), List.of()
         );
     }
 
@@ -2180,7 +2180,7 @@ public class HydrologyPlannerTest {
                 ),
                 settings.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids()
+                settings.deepFluids(), List.of()
         );
     }
 
@@ -2209,7 +2209,7 @@ public class HydrologyPlannerTest {
                 ),
                 settings.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids()
+                settings.deepFluids(), List.of()
         );
     }
 
@@ -2269,7 +2269,7 @@ public class HydrologyPlannerTest {
                 settings.underground(),
                 outlets,
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids()
+                settings.deepFluids(), List.of()
         );
     }
 

@@ -259,7 +259,7 @@ public class HydrologyTileCacheTest {
                         2
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of()
+                List.of(), List.of()
         );
     }
 
@@ -297,7 +297,7 @@ public class HydrologyTileCacheTest {
                         2
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of()
+                List.of(), List.of()
         );
     }
 
@@ -338,7 +338,7 @@ public class HydrologyTileCacheTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("default")
+                List.of("default"), List.of()
         );
     }
 }

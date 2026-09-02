@@ -43,6 +43,7 @@ public final class RiverPolicyResolver {
         private List<String> shoreBiomes = List.of();
         private List<String> bankBiomes = List.of();
         private List<String> floodedCaveBiomes = List.of();
+        private List<String> surfacePools = List.of();
         private double widthMultiplier = 1D;
         private double depthMultiplier = 1D;
         private double incisionMultiplier = 1D;
@@ -80,6 +81,9 @@ public final class RiverPolicyResolver {
             if (policy.getFloodedCaveBiomes() != null) {
                 floodedCaveBiomes = List.copyOf(policy.getFloodedCaveBiomes());
             }
+            if (policy.getSurfacePools() != null) {
+                surfacePools = List.copyOf(policy.getSurfacePools());
+            }
             if (policy.getWidthMultiplier() != null) {
                 widthMultiplier = policy.getWidthMultiplier();
             }
@@ -108,6 +112,7 @@ public final class RiverPolicyResolver {
                     shoreBiomes,
                     bankBiomes,
                     floodedCaveBiomes,
+                    surfacePools,
                     widthMultiplier,
                     depthMultiplier,
                     incisionMultiplier,

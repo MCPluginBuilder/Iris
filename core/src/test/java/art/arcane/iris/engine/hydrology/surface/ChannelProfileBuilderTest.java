@@ -104,7 +104,7 @@ public class ChannelProfileBuilderTest {
                 "parent",
                 "parent",
                 "parent",
-                List.of("water")
+                List.of("water"), List.of()
         );
         return new ChannelProfileBuilder(HydrologyPlannerSettings.defaults().surface(), sampler, CONSTANT_GEOMETRY);
     }

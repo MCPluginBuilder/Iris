@@ -16,6 +16,7 @@ public record EffectiveRiverPolicy(
         List<String> shoreBiomes,
         List<String> bankBiomes,
         List<String> floodedCaveBiomes,
+        List<String> surfacePools,
         double widthMultiplier,
         double depthMultiplier,
         double incisionMultiplier,
@@ -31,6 +32,7 @@ public record EffectiveRiverPolicy(
         shoreBiomes = List.copyOf(shoreBiomes);
         bankBiomes = List.copyOf(bankBiomes);
         floodedCaveBiomes = List.copyOf(floodedCaveBiomes);
+        surfacePools = List.copyOf(surfacePools);
     }
 
     public boolean allowsSources() {

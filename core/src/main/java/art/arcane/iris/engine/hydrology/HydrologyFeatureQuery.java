@@ -32,6 +32,11 @@ public record HydrologyFeatureQuery(Set<HydrologyFeatureType> types, String prof
             HydrologyFeatureType.DEEP_POOL,
             HydrologyFeatureType.DEEP_CHANNEL
     );
+    private static final Set<HydrologyFeatureType> PROFILED = Set.of(
+            HydrologyFeatureType.DEEP_POOL,
+            HydrologyFeatureType.DEEP_CHANNEL,
+            HydrologyFeatureType.STANDING_POOL
+    );
     private static final Map<String, Set<HydrologyFeatureType>> BUILT_INS = builtIns();
 
     public HydrologyFeatureQuery {
@@ -53,7 +58,7 @@ public record HydrologyFeatureQuery(Set<HydrologyFeatureType> types, String prof
         String key = normalizeKeyword(normalized);
         Set<HydrologyFeatureType> builtInTypes = BUILT_INS.get(key);
         return builtInTypes == null
-                ? new HydrologyFeatureQuery(DEEP, normalized)
+                ? new HydrologyFeatureQuery(PROFILED, normalized)
                 : new HydrologyFeatureQuery(builtInTypes, null);
     }
 
@@ -91,6 +96,7 @@ public record HydrologyFeatureQuery(Set<HydrologyFeatureType> types, String prof
         builtIns.put("mouth", Set.of(HydrologyFeatureType.MOUTH));
         builtIns.put("ridge_tunnel", Set.of(HydrologyFeatureType.RIDGE_BORE));
         builtIns.put("deep", DEEP);
+        builtIns.put("pool", Set.of(HydrologyFeatureType.STANDING_POOL));
         return Collections.unmodifiableMap(builtIns);
     }
 }

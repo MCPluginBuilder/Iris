@@ -704,7 +704,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                         8
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                deepFluids
+                deepFluids, List.of()
         );
     }
 
@@ -752,7 +752,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                 ),
                 base.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                base.deepFluids()
+                base.deepFluids(), List.of()
         );
     }
 
@@ -945,7 +945,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("default")
+                List.of("default"), List.of()
         );
     }
 
@@ -996,7 +996,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("default")
+                List.of("default"), List.of()
         );
     }
 
@@ -1045,7 +1045,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("default")
+                List.of("default"), List.of()
         );
     }
 

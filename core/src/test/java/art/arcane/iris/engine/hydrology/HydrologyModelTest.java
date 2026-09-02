@@ -510,6 +510,7 @@ public class HydrologyModelTest {
                 "mouth",
                 "ridge_tunnel",
                 "deep",
+                "pool",
                 "acid",
                 "deep_lava"
         ), suggestions);
@@ -527,7 +528,8 @@ public class HydrologyModelTest {
                 "inland_grotto",
                 "mouth",
                 "ridge_tunnel",
-                "deep"
+                "deep",
+                "pool"
         );
 
         assertEquals(builtInKeywords, HydrologyFeatureQuery.suggestions(List.of()));

@@ -231,7 +231,7 @@ public class HydrologyStyledGeometryTest {
                         4
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                deepFluids
+                deepFluids, List.of()
         );
     }
 
@@ -264,7 +264,7 @@ public class HydrologyStyledGeometryTest {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("water")
+                    List.of("water"), List.of()
             );
         }
         int height = 118 - Math.floorDiv(x, 12) + (int) StrictMath.round(StrictMath.sin(z / 18D) * 2D);
@@ -296,7 +296,7 @@ public class HydrologyStyledGeometryTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("water")
+                List.of("water"), List.of()
         );
     }
 

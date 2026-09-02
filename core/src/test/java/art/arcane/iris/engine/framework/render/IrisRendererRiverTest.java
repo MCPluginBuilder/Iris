@@ -46,6 +46,7 @@ public class IrisRendererRiverTest {
         expected.put(HydrologyFeatureType.MOUTH, new Color(54, 164, 205).getRGB());
         expected.put(HydrologyFeatureType.DEEP_POOL, new Color(194, 50, 22).getRGB());
         expected.put(HydrologyFeatureType.DEEP_CHANNEL, new Color(194, 50, 22).getRGB());
+        expected.put(HydrologyFeatureType.STANDING_POOL, new Color(232, 120, 40).getRGB());
 
         assertEquals(HydrologyFeatureType.values().length, expected.size());
         for (HydrologyFeatureType type : HydrologyFeatureType.values()) {

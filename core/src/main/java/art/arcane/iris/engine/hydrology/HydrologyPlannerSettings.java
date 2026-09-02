@@ -10,7 +10,8 @@ public record HydrologyPlannerSettings(
         Underground underground,
         Outlets outlets,
         Geometry geometry,
-        List<DeepFluid> deepFluids
+        List<DeepFluid> deepFluids,
+        List<SurfacePool> surfacePools
 ) {
     private static final long PLAN_FORMAT_REVISION = 6L;
     private static final int MAXIMUM_CROSS_TILE_COLOR_PERIOD = 4;
@@ -24,7 +25,8 @@ public record HydrologyPlannerSettings(
             throw new IllegalArgumentException("Hydrology planner settings cannot contain null sections.");
         }
         deepFluids = deepFluids == null ? List.of() : List.copyOf(deepFluids);
-        int publicationRadius = publicationRadius(routing, surface, underground, outlets, geometry, deepFluids);
+        surfacePools = surfacePools == null ? List.of() : List.copyOf(surfacePools);
+        int publicationRadius = publicationRadius(routing, surface, underground, outlets, geometry, deepFluids, surfacePools);
         if (crossTileColorPeriod(publicationRadius, routing.tileSize()) > MAXIMUM_CROSS_TILE_COLOR_PERIOD) {
             throw new IllegalArgumentException("Hydrology publication envelope exceeds the bounded cross-tile admission period.");
         }
@@ -50,6 +52,7 @@ public record HydrologyPlannerSettings(
                         12
                 ),
                 Geometry.defaults(),
+                List.of(),
                 List.of()
         );
     }
@@ -68,11 +71,14 @@ public record HydrologyPlannerSettings(
         for (DeepFluid deepFluid : deepFluids) {
             hash = HydrologyHash.mix(hash, deepFluid.hashCode(), HydrologyHash.text(deepFluid.id()));
         }
+        for (SurfacePool pool : surfacePools) {
+            hash = HydrologyHash.mix(hash, pool.hashCode(), HydrologyHash.text(pool.id()));
+        }
         return hash;
     }
 
     public int publicationRadius() {
-        return publicationRadius(routing, surface, underground, outlets, geometry, deepFluids);
+        return publicationRadius(routing, surface, underground, outlets, geometry, deepFluids, surfacePools);
     }
 
     int crossTileColorPeriod() {
@@ -85,7 +91,8 @@ public record HydrologyPlannerSettings(
             Underground underground,
             Outlets outlets,
             Geometry geometry,
-            List<DeepFluid> deepFluids
+            List<DeepFluid> deepFluids,
+            List<SurfacePool> surfacePools
     ) {
         int alignedHalo = Math.floorDiv(
                 Math.min(
@@ -132,6 +139,13 @@ public record HydrologyPlannerSettings(
                     ? Math.addExact(deepFluid.maximumChannelLength(), (int) StrictMath.ceil(deepFluid.channelWidth() / 2D))
                     : 0;
             radius = Math.max(radius, Math.max(poolReach, channelReach));
+        }
+        for (SurfacePool pool : surfacePools) {
+            if (!pool.enabled()) {
+                continue;
+            }
+            radius = Math.max(radius, pool.maximumRadius() + (int) StrictMath.ceil(surface.shoreWidth())
+                    + surface.banks().maximumBlendWidth());
         }
         return radius;
     }
@@ -275,6 +289,31 @@ public record HydrologyPlannerSettings(
 
         public static Banks defaults() {
             return new Banks(1, 1, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, 2.5D, 24, true);
+        }
+    }
+
+    /** A standing surface pool profile: a bowl of the given radius and depth, filled with its own fluid. */
+    public record SurfacePool(
+            String id,
+            boolean enabled,
+            double density,
+            int spacing,
+            int minimumRadius,
+            int maximumRadius,
+            int depth,
+            int maximumPerTile,
+            String biomeKey
+    ) {
+        public SurfacePool {
+            if (id == null || id.isBlank()) {
+                throw new IllegalArgumentException("Surface pool id must not be blank.");
+            }
+            id = id.trim();
+            if (!Double.isFinite(density) || density < 0D || spacing < 1
+                    || minimumRadius < 1 || maximumRadius < minimumRadius || depth < 1 || maximumPerTile < 0) {
+                throw new IllegalArgumentException("Surface pool settings are invalid.");
+            }
+            biomeKey = biomeKey == null || biomeKey.isBlank() ? null : biomeKey.trim();
         }
     }
 

@@ -186,7 +186,7 @@ public final class RiverTransectProbe {
             writeTileDiagnostics(new File(configuration.output(), "tile-diagnostics.png"), tile, complex, runtime, seaLevel);
             List<CourseSummary> summaries = new ArrayList<>();
             for (RiverCourse course : tile.courses()) {
-                if (course.type() != RiverCourseType.SURFACE) {
+                if (course.type() != RiverCourseType.SURFACE && course.type() != RiverCourseType.SURFACE_POOL) {
                     continue;
                 }
                 List<HydrologyPoint> exposedPath = exposedPath(course);

@@ -77,7 +77,7 @@ public final class HydrologyTerrainSampleTest {
                 "shore",
                 "dry",
                 "flooded",
-                profiles
+                profiles, List.of()
         );
     }
 }

@@ -265,7 +265,7 @@ public final class HydrologyPlannerProbe {
                         4
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of()
+                List.of(), List.of()
         );
     }
 
@@ -304,7 +304,7 @@ public final class HydrologyPlannerProbe {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("water")
+                    List.of("water"), List.of()
             );
         };
     }
@@ -355,7 +355,7 @@ public final class HydrologyPlannerProbe {
                     "shore",
                     "bank",
                     "flooded",
-                    List.of("water")
+                    List.of("water"), List.of()
             );
         };
     }
@@ -476,7 +476,7 @@ public final class HydrologyPlannerProbe {
                         8
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of(deepFluid)
+                List.of(deepFluid), List.of()
         );
     }
 
@@ -521,7 +521,7 @@ public final class HydrologyPlannerProbe {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("water")
+                    List.of("water"), List.of()
             );
         };
     }
@@ -554,7 +554,7 @@ public final class HydrologyPlannerProbe {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("water")
+                List.of("water"), List.of()
         );
     }
 
