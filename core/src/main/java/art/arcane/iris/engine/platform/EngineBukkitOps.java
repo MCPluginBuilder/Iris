@@ -130,51 +130,7 @@ public final class EngineBukkitOps {
         try {
             Runnable tileTask = () -> materializeTiles(engine, c, chunk);
             Runnable customTask = () -> materializeCustomBlocks(engine, c, chunk);
-
-            Runnable updateTask = () -> {
-                PrecisionStopwatch p = PrecisionStopwatch.start();
-                int[][] grid = new int[16][16];
-                for (int x = 0; x < 16; x++) {
-                    for (int z = 0; z < 16; z++) {
-                        grid[x][z] = Integer.MIN_VALUE;
-                    }
-                }
-
-                chunk.iterate(MatterCavern.class, (x, yf, z, v) -> {
-                    int y = yf + engine.getWorld().minHeight();
-                    x &= 15;
-                    z &= 15;
-                    Block block = c.getBlock(x, y, z);
-                    if (!BukkitBlockResolution.isFluid(block.getBlockData())) {
-                        return;
-                    }
-                    boolean u = BukkitBlockResolution.isAir(block.getRelative(BlockFace.DOWN).getBlockData())
-                            || BukkitBlockResolution.isAir(block.getRelative(BlockFace.WEST).getBlockData())
-                            || BukkitBlockResolution.isAir(block.getRelative(BlockFace.EAST).getBlockData())
-                            || BukkitBlockResolution.isAir(block.getRelative(BlockFace.SOUTH).getBlockData())
-                            || BukkitBlockResolution.isAir(block.getRelative(BlockFace.NORTH).getBlockData());
-
-                    if (u) grid[x][z] = Math.max(grid[x][z], y);
-                });
-
-                for (int x = 0; x < 16; x++) {
-                    for (int z = 0; z < 16; z++) {
-                        if (grid[x][z] == Integer.MIN_VALUE) {
-                            continue;
-                        }
-                        update(engine, x, grid[x][z], z, c, chunk);
-                    }
-                }
-
-                chunk.iterate(MatterUpdate.class, (x, yf, z, v) -> {
-                    int y = yf + engine.getWorld().minHeight();
-                    if (v != null && v.isUpdate()) {
-                        update(engine, x, y, z, c, chunk);
-                    }
-                });
-                chunk.deleteSlices(MatterUpdate.class);
-                engine.getMetrics().getUpdates().put(p.getMilliseconds());
-            };
+            Runnable updateTask = () -> materializeUpdates(engine, c, chunk);
 
             if (shouldRunChunkUpdateInline(c)) {
                 runMaterializationPasses(chunk, tileTask, customTask, updateTask);
@@ -217,6 +173,67 @@ public final class EngineBukkitOps {
             );
         });
         mantleChunk.deleteSlices(Identifier.class);
+    }
+
+    static void materializeUpdates(Engine engine, Chunk chunk, MantleChunk<Matter> mantleChunk) {
+        materializeUpdates(
+                engine,
+                chunk,
+                mantleChunk,
+                (x, y, z) -> update(engine, x, y, z, chunk, mantleChunk)
+        );
+    }
+
+    static void materializeUpdates(
+            Engine engine,
+            Chunk chunk,
+            MantleChunk<Matter> mantleChunk,
+            UpdateDispatcher dispatcher
+    ) {
+        PrecisionStopwatch stopwatch = PrecisionStopwatch.start();
+        int[][] grid = new int[16][16];
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                grid[x][z] = Integer.MIN_VALUE;
+            }
+        }
+
+        mantleChunk.iterate(MatterCavern.class, (x, yf, z, value) -> {
+            int y = yf + engine.getWorld().minHeight();
+            x &= 15;
+            z &= 15;
+            Block block = chunk.getBlock(x, y, z);
+            if (!BukkitBlockResolution.isFluid(block.getBlockData())) {
+                return;
+            }
+            boolean exposed = BukkitBlockResolution.isAir(block.getRelative(BlockFace.DOWN).getBlockData())
+                    || BukkitBlockResolution.isAir(block.getRelative(BlockFace.WEST).getBlockData())
+                    || BukkitBlockResolution.isAir(block.getRelative(BlockFace.EAST).getBlockData())
+                    || BukkitBlockResolution.isAir(block.getRelative(BlockFace.SOUTH).getBlockData())
+                    || BukkitBlockResolution.isAir(block.getRelative(BlockFace.NORTH).getBlockData());
+
+            if (exposed) {
+                grid[x][z] = Math.max(grid[x][z], y);
+            }
+        });
+
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                if (grid[x][z] == Integer.MIN_VALUE) {
+                    continue;
+                }
+                dispatcher.update(x, grid[x][z], z);
+            }
+        }
+
+        mantleChunk.iterate(MatterUpdate.class, (x, yf, z, value) -> {
+            int y = yf + engine.getWorld().minHeight();
+            if (value != null && value.isUpdate()) {
+                dispatcher.update(x, y, z);
+            }
+        });
+        mantleChunk.deleteSlices(MatterUpdate.class);
+        engine.getMetrics().getUpdates().put(stopwatch.getMilliseconds());
     }
 
     static void runMaterializationPasses(
@@ -309,9 +326,18 @@ public final class EngineBukkitOps {
                 }
             }
         } else {
-            block.setType(Material.AIR, false);
-            block.setBlockData(data, true);
+            applyPhysicsUpdate(block, data);
         }
+    }
+
+    static void applyPhysicsUpdate(Block block, BlockData data) {
+        block.setType(Material.AIR, false);
+        block.setBlockData(data, true);
+    }
+
+    @FunctionalInterface
+    interface UpdateDispatcher {
+        void update(int x, int y, int z);
     }
 
     public static boolean isCanonicalContainer(Block block) {

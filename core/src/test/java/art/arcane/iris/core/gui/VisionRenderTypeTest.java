@@ -7,6 +7,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 
 public class VisionRenderTypeTest {
     @Test
@@ -16,6 +17,12 @@ public class VisionRenderTypeTest {
             assertNotNull(type.name(), key);
             assertTrueCatalogMember(key);
         }
+    }
+
+    @Test
+    public void riverRenderTypeUsesTheRiverNetworkLabel() {
+        assertSame(DesktopUiMessages.VISION_MODE_RIVER, VisionGUI.modeKey(RenderType.RIVER));
+        assertEquals("iris.desktop.vision.mode.river", DesktopUiMessages.VISION_MODE_RIVER.id());
     }
 
     @Test

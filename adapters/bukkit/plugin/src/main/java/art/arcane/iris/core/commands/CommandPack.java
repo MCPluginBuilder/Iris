@@ -25,7 +25,10 @@ import art.arcane.iris.core.pack.PackValidationCache;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
+import art.arcane.iris.core.service.StudioSVC;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.util.common.director.DirectorExecutor;
+import art.arcane.iris.util.common.director.handlers.DimensionHandler;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.volmlib.util.director.annotations.Director;
 import art.arcane.volmlib.util.director.annotations.Param;
@@ -88,6 +91,18 @@ public class CommandPack implements DirectorExecutor {
         }
         runValidate(s, target);
         persistValidationCache(packsRoot);
+    }
+
+    @Director(description = "Package a validated dimension into a compressed format", descriptionKey = "iris.director.commandstudio.director.package_dimension_into_compressed_format", aliases = "package")
+    public void pkg(
+            @Param(name = "dimension", description = "The dimension pack to compress", descriptionKey = "iris.director.commandstudio.param.dimension_pack_compress", contextual = true, contextualOverride = true, defaultValue = "default", customHandler = DimensionHandler.class)
+            IrisDimension dimension,
+            @Param(name = "obfuscate", description = "Whether or not to obfuscate the pack", descriptionKey = "iris.director.commandstudio.param.whether_not_obfuscate_pack", defaultValue = "false")
+            boolean obfuscate,
+            @Param(name = "minify", description = "Whether or not to minify the pack", descriptionKey = "iris.director.commandstudio.param.whether_not_minify_pack", defaultValue = "true")
+            boolean minify
+    ) {
+        Iris.service(StudioSVC.class).compilePackage(sender(), dimension.getLoadKey(), obfuscate, minify);
     }
 
     @Director(description = "Preview or apply unused-resource cleanup", descriptionKey = "iris.director.commandpack.director.preview_apply_unused_resource_cleanup", aliases = {"c"})

@@ -20,6 +20,8 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.engine.data.cache.LazyBoundedCache;
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.DependsOn;
 import art.arcane.iris.engine.object.annotations.Desc;
@@ -30,11 +32,16 @@ import art.arcane.iris.engine.object.annotations.Snippet;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
+import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
 import art.arcane.iris.spi.PlatformBlockState;
+import lombok.Setter;
 import lombok.experimental.Accessors;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 @Snippet("biome-palette")
 @Accessors(chain = true)
@@ -43,8 +50,16 @@ import lombok.experimental.Accessors;
 @Desc("A layer of surface / subsurface material in biomes")
 @Data
 public class IrisBiomePaletteLayer {
+    private static final int LAYER_GENERATOR_CACHE_SIZE = 32;
+
     private final transient AtomicCache<KList<PlatformBlockState>> blockData = new AtomicCache<>();
-    private final transient AtomicCache<CNG> layerGenerator = new AtomicCache<>();
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final transient LazyBoundedCache<LayerGeneratorKey, CNG> layerGenerators =
+            new LazyBoundedCache<>(LAYER_GENERATOR_CACHE_SIZE);
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final transient AtomicReference<CachedLayerGenerator> recentLayerGenerator = new AtomicReference<>();
     private final transient AtomicCache<CNG> heightGenerator = new AtomicCache<>();
     @Desc("The style of noise")
     private IrisGeneratorStyle style = NoiseStyle.STATIC.style();
@@ -112,17 +127,20 @@ public class IrisBiomePaletteLayer {
     }
 
     public CNG getLayerGenerator(RNG parent, int signature, IrisData data) {
-        CNG cached = layerGenerator.getIfPresent();
-
-        if (cached != null) {
-            return cached;
+        Engine engine = data == null ? null : data.getEngine();
+        long generatorSeed = parent.getSeed() + signature + minHeight + maxHeight + getBlockData(data).size();
+        CachedLayerGenerator recent = recentLayerGenerator.get();
+        if (recent != null && recent.key.matches(data, engine, generatorSeed)) {
+            return recent.generator;
         }
 
-        return layerGenerator.aquire(() ->
-        {
-            RNG rngx = parent.nextParallelRNG(signature).nextParallelRNG(minHeight + maxHeight + getBlockData(data).size());
-            return style.create(rngx, data);
-        });
+        LayerGeneratorKey key = new LayerGeneratorKey(data, engine, generatorSeed);
+        CNG generator = layerGenerators.computeIfAbsent(key,
+                ignored -> style.create(new RNG(generatorSeed), data, engine));
+        if (generator != null) {
+            recentLayerGenerator.set(new CachedLayerGenerator(key, generator));
+        }
+        return generator;
     }
 
     public KList<IrisBlockData> add(String b) {
@@ -157,5 +175,50 @@ public class IrisBiomePaletteLayer {
     public IrisBiomePaletteLayer zero() {
         palette.clear();
         return this;
+    }
+
+    private static final class LayerGeneratorKey {
+        private final IrisData data;
+        private final Engine engine;
+        private final long seed;
+
+        private LayerGeneratorKey(IrisData data, Engine engine, long seed) {
+            this.data = data;
+            this.engine = engine;
+            this.seed = seed;
+        }
+
+        private boolean matches(IrisData data, Engine engine, long seed) {
+            return this.data == data && this.engine == engine && this.seed == seed;
+        }
+
+        @Override
+        public boolean equals(Object object) {
+            if (this == object) {
+                return true;
+            }
+            if (!(object instanceof LayerGeneratorKey other)) {
+                return false;
+            }
+            return data == other.data && engine == other.engine && seed == other.seed;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = System.identityHashCode(data);
+            result = 31 * result + System.identityHashCode(engine);
+            result = 31 * result + Long.hashCode(seed);
+            return result;
+        }
+    }
+
+    private static final class CachedLayerGenerator {
+        private final LayerGeneratorKey key;
+        private final CNG generator;
+
+        private CachedLayerGenerator(LayerGeneratorKey key, CNG generator) {
+            this.key = key;
+            this.generator = generator;
+        }
     }
 }

@@ -1,6 +1,8 @@
 package art.arcane.iris.core.service.terrain;
 
 import art.arcane.iris.api.terrain.IrisSurfaceKind;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
 import art.arcane.iris.engine.object.InferredType;
 
 public final class IrisSurfaceClassifier {
@@ -21,5 +23,31 @@ public final class IrisSurfaceClassifier {
         }
 
         return inferredType == InferredType.SHORE ? IrisSurfaceKind.SHORE : IrisSurfaceKind.LAND;
+    }
+
+    public static IrisSurfaceKind classify(
+            int engineSurfaceHeight,
+            int engineFluidHeight,
+            InferredType inferredType,
+            HydrologyColumnSample hydrology
+    ) {
+        if (engineSurfaceHeight <= 0) {
+            return IrisSurfaceKind.VOID;
+        }
+        HydrologyColumnLayer layer = hydrology == null
+                ? null
+                : hydrology.primarySurfaceLayer().orElse(null);
+        if (layer != null) {
+            if (layer.shore()) {
+                return IrisSurfaceKind.RIVER_SHORE;
+            }
+            if (layer.channel()) {
+                return layer.connectedFluid() ? IrisSurfaceKind.RIVER : IrisSurfaceKind.DRY_CHANNEL;
+            }
+            if (layer.grading()) {
+                return IrisSurfaceKind.LAND;
+            }
+        }
+        return classify(engineSurfaceHeight, engineFluidHeight, inferredType);
     }
 }

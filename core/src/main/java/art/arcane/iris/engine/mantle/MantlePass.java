@@ -25,7 +25,7 @@ import java.util.List;
  *
  * @param components           every component registered at this priority, enabled or not
  * @param passChunkRadius      chunk ring this pass must complete: ceilDiv of this pass' widest
- *                             component reach plus every later pass' reach
+ *                             component output reach plus every later pass' reach
  * @param downstreamBlockRadius block reach summed over all LATER passes only. A component must be
  *                             generated across its own reach plus this, or later passes read
  *                             half-written data from it

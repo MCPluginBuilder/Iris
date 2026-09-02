@@ -5,6 +5,8 @@ import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
@@ -107,10 +109,48 @@ public class IrisCarveModifierBoundarySupportTest {
         assertTrue(IrisCarveModifier.hasStableCaveFloorSupport(output, 0, 6, 0));
     }
 
+    @Test
+    public void hydrologyGuardOnlyAcceptsStableSolidBoundaryLayers() {
+        HydrologyCaveCell guard = HydrologyCaveCell.of(HydrologyCaveAction.SEAL_GUARD);
+        PlatformBlockState stone = state("minecraft:stone", true);
+        PlatformBlockState sand = state("minecraft:sand", true);
+        PlatformBlockState water = state("minecraft:water", false, true);
+
+        assertTrue(IrisCarveModifier.canReplaceHydrologyGuard(guard, stone, false));
+        assertTrue(IrisCarveModifier.canReplaceHydrologyGuard(guard, stone, true));
+        assertTrue(IrisCarveModifier.canReplaceHydrologyGuard(guard, sand, false));
+        assertFalse(IrisCarveModifier.canReplaceHydrologyGuard(guard, sand, true));
+        assertFalse(IrisCarveModifier.canReplaceHydrologyGuard(guard, water, false));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void submergedCaveFloorUsesBuriedSubstrateInsteadOfVegetatedSurface() {
+        Hunk<PlatformBlockState> output = mock(Hunk.class);
+        PlatformBlockState grass = state("minecraft:grass_block", true);
+        PlatformBlockState dirt = state("minecraft:dirt", true);
+        PlatformBlockState moss = state("minecraft:moss_block", true);
+        HydrologyCaveCell wet = HydrologyCaveCell.of(HydrologyCaveAction.WET_SOURCE);
+
+        doReturn(dirt).when(output).getRaw(0, 4, 0);
+
+        assertSame(dirt, IrisCarveModifier.resolveSubmergedCaveFloorLayer(
+                output, 0, 5, 0, grass, wet));
+        assertSame(dirt, IrisCarveModifier.resolveSubmergedCaveFloorLayer(
+                output, 0, 5, 0, moss, wet));
+        assertSame(grass, IrisCarveModifier.resolveSubmergedCaveFloorLayer(
+                output, 0, 5, 0, grass, HydrologyCaveCell.of(HydrologyCaveAction.DRY_AIR)));
+    }
+
     private PlatformBlockState state(String key, boolean solid) {
+        return state(key, solid, false);
+    }
+
+    private PlatformBlockState state(String key, boolean solid, boolean fluid) {
         PlatformBlockState state = mock(PlatformBlockState.class);
         doReturn(key).when(state).key();
         doReturn(solid).when(state).isSolid();
+        doReturn(fluid).when(state).isFluid();
         return state;
     }
 }

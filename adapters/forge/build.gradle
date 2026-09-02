@@ -132,6 +132,9 @@ dependencies {
     implementation minecraft.dependency("net.minecraftforge:forge:${forgeVersion}")
     testImplementation('junit:junit:4.13.2')
     testImplementation('org.mockito:mockito-core:5.23.0')
+    testImplementation(libs.spigot) {
+        transitive = false
+    }
     compileOnly('org.slf4j:slf4j-api:2.0.17')
     compileOnly(libs.spigot) {
         transitive = false

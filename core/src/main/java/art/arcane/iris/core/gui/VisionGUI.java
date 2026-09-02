@@ -23,6 +23,8 @@ import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.render.IrisRenderer;
 import art.arcane.iris.engine.framework.render.RenderType;
+import art.arcane.iris.engine.hydrology.HydrologyCandidateKind;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -69,6 +71,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -484,8 +487,49 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
     }
 
     private void renderLegend(Graphics2D canvas) {
-        if (currentType == RenderType.HEIGHT) {
+        if (currentType == RenderType.RIVER) {
+            renderRiverLegend(canvas);
+        } else if (currentType == RenderType.HEIGHT) {
             renderHeightLegend(canvas);
+        }
+    }
+
+    private void renderRiverLegend(Graphics2D canvas) {
+        HydrologyFeatureType[] types = HydrologyFeatureType.values();
+        HydrologyCandidateKind[] candidateKinds = HydrologyCandidateKind.values();
+        int lineHeight = 18;
+        int width = 188;
+        int height = (types.length + candidateKinds.length + 1) * lineHeight + CARD_PADDING * 2;
+        int x = getWidth() - width - CARD_PADDING;
+        int y = getHeight() - STATUS_HEIGHT - PROGRESS_HEIGHT - height - CARD_PADDING;
+        drawCardBackground(canvas, x, y, width, height);
+        canvas.setFont(BODY_FONT);
+        int headwaterY = y + CARD_PADDING;
+        canvas.setColor(new Color(IrisRenderer.headwaterColor()));
+        canvas.fillRoundRect(x + CARD_PADDING, headwaterY + 2, 12, 12, 4, 4);
+        canvas.setColor(new Color(IrisRenderer.headwaterDirectionColor()));
+        canvas.drawLine(x + CARD_PADDING + 3, headwaterY + 8, x + CARD_PADDING + 9, headwaterY + 8);
+        canvas.drawLine(x + CARD_PADDING + 9, headwaterY + 8, x + CARD_PADDING + 6, headwaterY + 5);
+        canvas.drawLine(x + CARD_PADDING + 9, headwaterY + 8, x + CARD_PADDING + 6, headwaterY + 11);
+        canvas.setColor(TEXT_SECONDARY);
+        canvas.drawString("headwater / source flow", x + CARD_PADDING + 20, headwaterY + 13);
+        for (int index = 0; index < types.length; index++) {
+            HydrologyFeatureType type = types[index];
+            int rowY = y + CARD_PADDING + (index + 1) * lineHeight;
+            canvas.setColor(new Color(IrisRenderer.hydrologyFeatureColor(type)));
+            canvas.fillRoundRect(x + CARD_PADDING, rowY + 2, 12, 12, 4, 4);
+            canvas.setColor(TEXT_SECONDARY);
+            String label = type.name().toLowerCase(Locale.ROOT).replace('_', ' ');
+            canvas.drawString(label, x + CARD_PADDING + 20, rowY + 13);
+        }
+        for (int index = 0; index < candidateKinds.length; index++) {
+            HydrologyCandidateKind kind = candidateKinds[index];
+            int rowY = y + CARD_PADDING + (types.length + index + 1) * lineHeight;
+            canvas.setColor(new Color(IrisRenderer.hydrologyDiagnosticColor(kind)));
+            canvas.fillRoundRect(x + CARD_PADDING, rowY + 2, 12, 12, 4, 4);
+            canvas.setColor(TEXT_SECONDARY);
+            String label = "projected " + kind.name().toLowerCase(Locale.ROOT).replace('_', ' ');
+            canvas.drawString(label, x + CARD_PADDING + 20, rowY + 13);
         }
     }
 
@@ -1037,6 +1081,7 @@ public final class VisionGUI extends JPanel implements MouseWheelListener, KeyLi
             case BIOME_SEA -> DesktopUiMessages.VISION_MODE_BIOME_SEA;
             case REGION -> DesktopUiMessages.VISION_MODE_REGION;
             case CAVE_LAND -> DesktopUiMessages.VISION_MODE_CAVE_LAND;
+            case RIVER -> DesktopUiMessages.VISION_MODE_RIVER;
             case HEIGHT -> DesktopUiMessages.VISION_MODE_HEIGHT;
             case OBJECT_LOAD -> DesktopUiMessages.VISION_MODE_OBJECT_LOAD;
             case DECORATOR_LOAD -> DesktopUiMessages.VISION_MODE_DECORATOR_LOAD;

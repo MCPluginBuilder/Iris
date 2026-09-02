@@ -1,5 +1,6 @@
 package art.arcane.iris.core.lifecycle;
 
+import art.arcane.iris.engine.IrisEngineMantle;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -83,7 +84,7 @@ public class HuskWorldQuarantineTest {
     public void aWorldWithMantleDataIsLeftForTheFailClosedGuard() throws IOException {
         Path levelRoot = level("mantle");
         Path world = dimensionRoot(levelRoot, "irisworld");
-        write(world.resolve("mantle/pv.0.ttp.lz4b"));
+        write(world.resolve(IrisEngineMantle.STORAGE_FOLDER_NAME).resolve("pv.0.ttp.lz4b"));
 
         assertQuarantinesNothing(levelRoot, world);
     }

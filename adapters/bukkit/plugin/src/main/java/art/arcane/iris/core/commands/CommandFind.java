@@ -28,6 +28,9 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.StructureReachability;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureQuery;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureRef;
+import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -37,7 +40,9 @@ import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformStructureHooks;
 import art.arcane.iris.util.common.director.DirectorExecutor;
+import art.arcane.iris.util.common.director.specialhandlers.HydrologyTypeHandler;
 import art.arcane.iris.util.common.director.specialhandlers.ObjectHandler;
+import art.arcane.iris.util.common.director.specialhandlers.ReachableBiomeHandler;
 import art.arcane.iris.util.common.director.specialhandlers.StructureHandler;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
@@ -68,7 +73,7 @@ import java.util.Set;
 public class CommandFind implements DirectorExecutor {
     @Director(description = "Find a biome", descriptionKey = "iris.director.commandfind.director.find_biome")
     public void biome(
-            @Param(description = "The biome to look for", descriptionKey = "iris.director.commandfind.param.biome_look")
+            @Param(description = "The biome to look for", descriptionKey = "iris.director.commandfind.param.biome_look", customHandler = ReachableBiomeHandler.class)
             IrisBiome biome,
             @Param(description = "Should you be teleported", descriptionKey = "iris.director.commandfind.param.should_you_be_teleported", defaultValue = "true")
             boolean teleport
@@ -114,6 +119,75 @@ public class CommandFind implements DirectorExecutor {
         }
 
         EngineBukkitOps.gotoPOI(e, type, player(), teleport);
+    }
+
+    @Director(description = "Find an accepted hydrology feature")
+    public void river(
+            @Param(description = "Feature type: surface, waterfall, underground, grotto, mouth, or a deep-fluid id", customHandler = HydrologyTypeHandler.class)
+            String type,
+            @Param(description = "Should you be teleported", defaultValue = "true")
+            boolean teleport
+    ) {
+        Engine activeEngine = engine();
+        VolmitSender commandSender = sender();
+        Player target = player();
+        if (activeEngine == null || commandSender == null || target == null) {
+            if (commandSender != null) {
+                commandSender.sendMessage(C.RED + "Run this command from an Iris world.");
+            }
+            return;
+        }
+        IrisHydrologyRuntime runtime = activeEngine.getComplex().getHydrologyRuntime();
+        if (runtime == null) {
+            commandSender.sendMessage(C.YELLOW + "Hydrology is not active in this world.");
+            return;
+        }
+        HydrologyFeatureQuery query;
+        try {
+            query = HydrologyFeatureQuery.parse(type);
+        } catch (IllegalArgumentException error) {
+            commandSender.sendMessage(C.RED + error.getMessage());
+            return;
+        }
+        Location origin = target.getLocation();
+        int requestedDistance = Math.min(8192, runtime.settings().routing().tileSize() * 15);
+        int maximumDistance = runtime.maximumFeatureSearchDistance(
+                origin.getBlockX(), origin.getBlockZ(), requestedDistance);
+        commandSender.sendMessage(C.GRAY + "Searching accepted hydrology plans for " + type + "...");
+        J.a(() -> {
+            try {
+                HydrologyFeatureRef feature = runtime.nearestFeature(
+                        query.types(),
+                        query.profileKey(),
+                        origin.getBlockX(),
+                        origin.getBlockZ(),
+                        maximumDistance,
+                        (int visited) -> sendStructureMessage(target, commandSender,
+                                C.GRAY + "Searched " + visited + " hydrology tiles for " + type + "...")
+                ).orElse(null);
+                if (feature == null) {
+                    sendStructureMessage(target, commandSender,
+                            C.YELLOW + "No accepted " + type + " hydrology feature found within "
+                                    + maximumDistance + " blocks.");
+                    return;
+                }
+                int worldY = feature.y() + activeEngine.getDimension().getMinHeight();
+                String label = type + " hydrology feature";
+                if (!teleport) {
+                    sendStructureMessage(target, commandSender,
+                            C.GREEN + "Found " + label + " at " + feature.x() + ", " + worldY + ", " + feature.z() + ".");
+                    return;
+                }
+                Location destination = new Location(
+                        target.getWorld(), feature.x(), worldY, feature.z());
+                prepareStructureTeleport(
+                        target, target.getWorld(), commandSender, label, destination, true);
+            } catch (Throwable error) {
+                sendStructureMessage(target, commandSender,
+                        C.RED + "Could not locate " + type + " hydrology: " + error.getClass().getSimpleName());
+                Iris.reportError("Could not locate accepted hydrology feature '" + type + "'.", error);
+            }
+        });
     }
 
     @Director(description = "Find a structure (a vanilla key like minecraft:village_plains or minecraft:stronghold, or an imported iris structure key)", descriptionKey = "iris.director.commandfind.director.find_structure_vanilla_key_like_minecraft_village_plains_minecraft_stronghold_imported_iris", sync = true)

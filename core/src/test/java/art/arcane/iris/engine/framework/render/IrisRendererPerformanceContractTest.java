@@ -71,25 +71,33 @@ public class IrisRendererPerformanceContractTest {
     }
 
     @Test
-    public void studioAndProtocolHeightUseOrdinaryTerrain() {
+    public void studioHeightUsesNaturalTerrainWhileProtocolRenderRemainsExact() {
         Engine engine = mock(Engine.class);
         IrisComplex complex = mock(IrisComplex.class);
+        @SuppressWarnings("unchecked")
+        ProceduralStream<Double> natural = mock(ProceduralStream.class);
         @SuppressWarnings("unchecked")
         ProceduralStream<Double> exact = mock(ProceduralStream.class);
         when(engine.getComplex()).thenReturn(complex);
         when(engine.getHeight()).thenReturn(320);
+        when(complex.getNaturalHeightStream()).thenReturn(natural);
         when(complex.getHeightStream()).thenReturn(exact);
+        when(natural.getDouble(0D, 0D)).thenReturn(80D);
         when(exact.getDouble(0D, 0D)).thenReturn(96D);
         IrisRenderer renderer = new IrisRenderer(engine);
 
         renderer.renderStudio(0D, 0D, 1D, 1, RenderType.HEIGHT, () -> false);
+
+        verify(natural).getDouble(0D, 0D);
+        verifyNoInteractions(exact);
+
         renderer.render(0D, 0D, 1D, 1, RenderType.HEIGHT);
 
-        verify(exact, times(2)).getDouble(0D, 0D);
+        verify(exact).getDouble(0D, 0D);
     }
 
     @Test
-    public void studioBiomeAndContinentAvoidEngineBiomeLookups() {
+    public void studioBiomeAndContinentAvoidRiverAdjustedEngineLookups() {
         Engine engine = mock(Engine.class);
         IrisComplex complex = mock(IrisComplex.class);
         IrisBiome biome = mock(IrisBiome.class);
@@ -136,12 +144,12 @@ public class IrisRendererPerformanceContractTest {
         Engine engine = mock(Engine.class);
         IrisComplex complex = mock(IrisComplex.class);
         @SuppressWarnings("unchecked")
-        ProceduralStream<Double> exact = mock(ProceduralStream.class);
+        ProceduralStream<Double> natural = mock(ProceduralStream.class);
         AtomicInteger samples = new AtomicInteger();
         when(engine.getComplex()).thenReturn(complex);
         when(engine.getHeight()).thenReturn(320);
-        when(complex.getHeightStream()).thenReturn(exact);
-        when(exact.getDouble(org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble()))
+        when(complex.getNaturalHeightStream()).thenReturn(natural);
+        when(natural.getDouble(org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyDouble()))
                 .thenAnswer(invocation -> {
                     samples.incrementAndGet();
                     double x = invocation.getArgument(0);

@@ -74,6 +74,20 @@ public final class IrisProceduralBlocks {
         return key.indexOf(',', valueStart) >= 0 || key.indexOf(']', valueStart) >= 0;
     }
 
+    /** Blocks that fall when unsupported: sand, gravel and concrete powder. */
+    public static boolean isGravityAffected(PlatformBlockState state) {
+        if (state == null) {
+            return false;
+        }
+        String key = materialKey(state);
+        return key.equals("minecraft:sand")
+                || key.equals("minecraft:red_sand")
+                || key.equals("minecraft:gravel")
+                || key.equals("minecraft:suspicious_sand")
+                || key.equals("minecraft:suspicious_gravel")
+                || key.endsWith("_concrete_powder");
+    }
+
     public static String materialKey(PlatformBlockState state) {
         String memoized = state.materialKey();
         if (memoized != null) {

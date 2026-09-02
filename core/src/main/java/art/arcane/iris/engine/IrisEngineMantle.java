@@ -29,7 +29,9 @@ import art.arcane.iris.engine.mantle.MantlePass;
 import art.arcane.iris.engine.mantle.components.MantleCarvingComponent;
 import art.arcane.iris.engine.mantle.components.MantleFloatingObjectComponent;
 import art.arcane.iris.engine.mantle.components.MantleObjectComponent;
+import art.arcane.iris.engine.mantle.components.MantleHydrologyComponent;
 import art.arcane.iris.engine.mantle.components.IrisStructureComponent;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -72,6 +74,7 @@ import java.util.function.Supplier;
 @EqualsAndHashCode(exclude = "engine")
 @ToString(exclude = "engine")
 public class IrisEngineMantle implements EngineMantle {
+    public static final String STORAGE_FOLDER_NAME = "mantle-hydrology";
     private final Engine engine;
     private final Mantle<Matter> mantle;
     @Getter(AccessLevel.NONE)
@@ -86,6 +89,7 @@ public class IrisEngineMantle implements EngineMantle {
         this.mantle = createMantle(engine);
         components = new KMap<>();
         registerComponent(new MantleCarvingComponent(this));
+        registerComponent(new MantleHydrologyComponent(this));
         object = new MantleObjectComponent(this);
         registerComponent(object);
         registerComponent(new MantleFloatingObjectComponent(this));
@@ -121,7 +125,7 @@ public class IrisEngineMantle implements EngineMantle {
                 List<MantleComponent> pass = passes.get(i);
                 int passBlockRadius = pass.stream()
                         .filter(MantleComponent::isEnabled)
-                        .mapToInt(MantleComponent::getRadius)
+                        .mapToInt(MantleComponent::getOutputRadius)
                         .max()
                         .orElse(0);
                 int passInputRadius = pass.stream()
@@ -174,8 +178,16 @@ public class IrisEngineMantle implements EngineMantle {
             if (!getDimension().isCarvingEnabled()) {
                 disabled.addIfMissing(ReservedFlag.CARVED);
             }
+            if (disabled.contains(ReservedFlag.CARVED)
+                    || !isHydrologyEnabled(getDimension())) {
+                disabled.addIfMissing(ReservedFlag.RIVER_HYDROLOGY);
+            }
             return Set.copyOf(disabled);
         });
+    }
+
+    static boolean isHydrologyEnabled(IrisDimension dimension) {
+        return MantleHydrologyComponent.isEnabledFor(dimension);
     }
 
     @Override
@@ -185,7 +197,7 @@ public class IrisEngineMantle implements EngineMantle {
 
     private static Mantle<Matter> createMantle(Engine engine) {
         IrisMatterSupport.ensureRegistered();
-        File dataFolder = new File(engine.getWorld().worldFolder(), "mantle");
+        File dataFolder = new File(engine.getWorld().worldFolder(), STORAGE_FOLDER_NAME);
         int worldHeight = engine.getTarget().getHeight();
         MantleDataAdapter<Matter> adapter = createDataAdapter(engine::getData);
         MantleHooks hooks = createHooks(EnginePanic.scoped("world " + engine.getWorld().name()));

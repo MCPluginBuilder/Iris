@@ -7,6 +7,7 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.project.stream.ProceduralStream;
@@ -91,6 +92,7 @@ public class HintedLocatorTest {
         when(engine.isClosed()).thenReturn(false);
         when(engine.acquireGenerationLease(any(String.class))).thenReturn(GenerationSessionLease.noop());
         when(data.getBiomeLoader()).thenReturn(biomeLoader);
+        when(dimension.getReachableBiomes(engine)).thenReturn(new KList<>());
     }
 
     private static IrisBiome biome(String key) {
@@ -209,6 +211,57 @@ public class HintedLocatorTest {
         HintedLocator.SearchPlan plan = HintedLocator.biomePlan(engine, "missing");
 
         assertFalse(plan.isPossible());
+    }
+
+    @Test
+    public void biomePlanFindsPolicyOnlyReachableBiome() throws Exception {
+        IrisRegion regionA = region("reg_a");
+        regionA.setLandBiomes(keys("plains"));
+
+        IrisBiome plains = biome("plains");
+        IrisBiome riverChild = biome("river_child");
+        stubBiome(plains);
+        stubBiome(riverChild);
+        stubRegions(regionA);
+
+        when(dimension.getReachableBiomes(engine)).thenReturn(new KList<>(riverChild));
+        when(complex.getRegionStream()).thenReturn(constantStream(regionA));
+        when(engine.getSurfaceBiome(anyInt(), anyInt())).thenAnswer(invocation -> {
+            int x = invocation.getArgument(0);
+            return x >= 1024 ? riverChild : plains;
+        });
+
+        HintedLocator.SearchPlan plan = HintedLocator.biomePlan(engine, "river_child");
+        assertTrue(plan.isPossible());
+        assertNull(plan.getCoarse());
+
+        Locator<IrisBiome> locator = Locator.surfaceBiome("river_child");
+        Position2 result = locator.find(engine, new Position2(0, 0), 60_000, (Integer count) -> {
+        }).get();
+
+        assertNotNull(result);
+        assertTrue(((result.getX() << 4) + 8) >= 1024);
+    }
+
+    @Test
+    public void surfaceBiomeLocatorFindsNarrowAcceptedBiomeAwayFromChunkCenter() {
+        IrisBiome riverShore = biome("river_shore");
+        IrisBiome plains = biome("plains");
+        IrisHydrologyRuntime hydrology = mock(IrisHydrologyRuntime.class);
+        when(engine.getSurfaceBiome(anyInt(), anyInt())).thenReturn(plains);
+        when(complex.getHydrologyRuntime()).thenReturn(hydrology);
+        when(hydrology.hasAcceptedSurfaceBiomeInChunk("river_shore", 0, 0)).thenReturn(true);
+
+        assertTrue(Locator.chunkContainsSurfaceBiome(
+                engine,
+                new Position2(0, 0),
+                riverShore.getLoadKey()
+        ));
+        assertFalse(Locator.chunkContainsSurfaceBiome(
+                engine,
+                new Position2(1, 0),
+                riverShore.getLoadKey()
+        ));
     }
 
     @Test

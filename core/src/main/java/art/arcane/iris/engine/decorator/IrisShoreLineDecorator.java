@@ -40,19 +40,46 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
     @Override
     public void decorate(int x, int z, int realX, int realX1, int realX_1, int realZ, int realZ1, int realZ_1,
                          Hunk<PlatformBlockState> data, IrisBiome biome, int height, int max) {
-        if (height != getDimension().getFluidHeight()) {
+        double localFluidHeight = getComplex().getRiverWaterSurfaceStream().get(realX, realZ);
+        if (height != Math.round(localFluidHeight)) {
             return;
         }
 
-        double complexFluidHeight = getComplex().getFluidHeight();
         ProceduralStream<Double> heightStream = getComplex().getHeightStream();
-        if (Math.round(heightStream.get(realX1, realZ)) >= complexFluidHeight
-                && Math.round(heightStream.get(realX_1, realZ)) >= complexFluidHeight
-                && Math.round(heightStream.get(realX, realZ1)) >= complexFluidHeight
-                && Math.round(heightStream.get(realX, realZ_1)) >= complexFluidHeight) {
+        ProceduralStream<Double> fluidStream = getComplex().getRiverWaterSurfaceStream();
+        if (Math.round(heightStream.get(realX1, realZ)) >= Math.round(fluidStream.get(realX1, realZ))
+                && Math.round(heightStream.get(realX_1, realZ)) >= Math.round(fluidStream.get(realX_1, realZ))
+                && Math.round(heightStream.get(realX, realZ1)) >= Math.round(fluidStream.get(realX, realZ1))
+                && Math.round(heightStream.get(realX, realZ_1)) >= Math.round(fluidStream.get(realX, realZ_1))) {
             return;
         }
 
+        place(x, z, realX, realZ, data, biome, height, max);
+    }
+
+    public void decorateAcceptedShore(
+            int x,
+            int z,
+            int realX,
+            int realZ,
+            Hunk<PlatformBlockState> data,
+            IrisBiome biome,
+            int height,
+            int max
+    ) {
+        place(x, z, realX, realZ, data, biome, height, max);
+    }
+
+    private void place(
+            int x,
+            int z,
+            int realX,
+            int realZ,
+            Hunk<PlatformBlockState> data,
+            IrisBiome biome,
+            int height,
+            int max
+    ) {
         RNG rng = getRNG(realX, realZ);
         IrisDecorator decorator = DecoratorCore.pickDecorator(biome, getPart(), partRNG, rng, getData(), realX, realZ);
 
@@ -70,6 +97,8 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             return;
         }
 
+        IrisSurfaceDecorator.AquaticPlacementSnapshot aquaticSnapshot = IrisSurfaceDecorator.captureAquaticPlacement(
+                decorator, getData(), data, x, z, height, max);
         if (!decorator.isStacking()) {
             int targetY = height + 1;
             if (targetY >= data.getHeight()
@@ -79,6 +108,7 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             PlatformBlockState block = decorator.getBlockData100(biome, rng, realX, height, realZ, getData());
             if (block != null && DecoratorCore.isValidShorelineSupport(decorator, block, support)) {
                 data.set(x, targetY, z, block);
+                aquaticSnapshot.restoreIfUnsupported(data, x, z);
             }
             return;
         }
@@ -99,6 +129,7 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             PlatformBlockState block = decorator.getBlockDataForTop(biome, rng, realX, height, realZ, getData());
             if (block != null && DecoratorCore.isValidShorelineSupport(decorator, block, support)) {
                 data.set(x, targetY, z, block);
+                aquaticSnapshot.restoreIfUnsupported(data, x, z);
             }
             return;
         }
@@ -122,5 +153,6 @@ public class IrisShoreLineDecorator extends IrisEngineDecorator {
             }
             data.set(x, targetY, z, block);
         }
+        aquaticSnapshot.restoreIfUnsupported(data, x, z);
     }
 }

@@ -1,20 +1,29 @@
 package art.arcane.iris.util.project.context;
 
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import org.bukkit.block.data.BlockData;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 public class ChunkContextPrefillPlanTest {
     @Test
@@ -83,6 +92,73 @@ public class ChunkContextPrefillPlanTest {
         assertFalse(ChunkContext.shouldPrefillAsync(1));
     }
 
+    @Test
+    public void hydrologyPreparationCompletesBeforeDependentPrefills() throws Exception {
+        AtomicInteger caveCalls = new AtomicInteger();
+        AtomicInteger heightCalls = new AtomicInteger();
+        AtomicInteger biomeCalls = new AtomicInteger();
+        AtomicInteger rockCalls = new AtomicInteger();
+        AtomicInteger fluidCalls = new AtomicInteger();
+        AtomicInteger regionCalls = new AtomicInteger();
+        CountDownLatch preparationStarted = new CountDownLatch(1);
+        CountDownLatch preparationRelease = new CountDownLatch(1);
+        IrisHydrologyRuntime runtime = mock(IrisHydrologyRuntime.class);
+        doAnswer(invocation -> {
+            preparationStarted.countDown();
+            assertTrue(preparationRelease.await(10L, TimeUnit.SECONDS));
+            return null;
+        }).when(runtime).prepareChunkColumns(32, 48);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<ChunkContext> future = executor.submit(() -> createContext(
+                    ChunkContext.PrefillPlan.NO_CAVE,
+                    caveCalls,
+                    heightCalls,
+                    biomeCalls,
+                    rockCalls,
+                    fluidCalls,
+                    regionCalls,
+                    runtime
+            ));
+            assertTrue(preparationStarted.await(10L, TimeUnit.SECONDS));
+            assertEquals(0, heightCalls.get());
+            assertEquals(0, biomeCalls.get());
+            preparationRelease.countDown();
+            future.get(10L, TimeUnit.SECONDS);
+        } finally {
+            preparationRelease.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(10L, TimeUnit.SECONDS));
+        }
+        assertEquals(256, heightCalls.get());
+        assertEquals(256, biomeCalls.get());
+        verify(runtime).prepareChunkColumns(32, 48);
+    }
+
+    @Test
+    public void hydrologyPreparationIsSkippedWithoutDependentPrefills() {
+        AtomicInteger caveCalls = new AtomicInteger();
+        AtomicInteger heightCalls = new AtomicInteger();
+        AtomicInteger biomeCalls = new AtomicInteger();
+        AtomicInteger rockCalls = new AtomicInteger();
+        AtomicInteger fluidCalls = new AtomicInteger();
+        AtomicInteger regionCalls = new AtomicInteger();
+        IrisHydrologyRuntime runtime = mock(IrisHydrologyRuntime.class);
+
+        createContext(
+                ChunkContext.PrefillPlan.NONE,
+                caveCalls,
+                heightCalls,
+                biomeCalls,
+                rockCalls,
+                fluidCalls,
+                regionCalls,
+                runtime
+        );
+
+        verify(runtime, never()).prepareChunkColumns(32, 48);
+    }
+
     private ChunkContext createContext(
             ChunkContext.PrefillPlan prefillPlan,
             AtomicInteger caveCalls,
@@ -91,6 +167,28 @@ public class ChunkContextPrefillPlanTest {
             AtomicInteger rockCalls,
             AtomicInteger fluidCalls,
             AtomicInteger regionCalls
+    ) {
+        return createContext(
+                prefillPlan,
+                caveCalls,
+                heightCalls,
+                biomeCalls,
+                rockCalls,
+                fluidCalls,
+                regionCalls,
+                null
+        );
+    }
+
+    private ChunkContext createContext(
+            ChunkContext.PrefillPlan prefillPlan,
+            AtomicInteger caveCalls,
+            AtomicInteger heightCalls,
+            AtomicInteger biomeCalls,
+            AtomicInteger rockCalls,
+            AtomicInteger fluidCalls,
+            AtomicInteger regionCalls,
+            IrisHydrologyRuntime runtime
     ) {
         IrisComplex complex = mock(IrisComplex.class);
 
@@ -151,6 +249,7 @@ public class ChunkContextPrefillPlanTest {
         doReturn(rockStream).when(complex).getRockStream();
         doReturn(fluidStream).when(complex).getFluidStream();
         doReturn(regionStream).when(complex).getRegionStream();
+        doReturn(runtime).when(complex).getHydrologyRuntime();
 
         return new ChunkContext(32, 48, complex, true, prefillPlan, null);
     }

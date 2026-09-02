@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.engine.IrisEngineMantle;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -41,7 +42,7 @@ public final class MainWorldService {
             "region",
             "entities",
             "poi",
-            "mantle",
+            IrisEngineMantle.STORAGE_FOLDER_NAME,
             "dimensions/minecraft/overworld",
             "dimensions/minecraft/the_nether",
             "dimensions/minecraft/the_end",

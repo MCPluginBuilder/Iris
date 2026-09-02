@@ -2,10 +2,12 @@ package art.arcane.iris.engine.mantle.components;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.MantleComponent;
 import art.arcane.iris.engine.mantle.MantlePass;
+import art.arcane.iris.engine.mantle.MantleWriter;
 import art.arcane.iris.engine.mantle.MatterGenerator;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -42,9 +44,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -60,9 +62,16 @@ public class MantleObjectComponentBoundaryRadiusTest {
     @Before
     public void bindPlatform() {
         IrisPlatforms.unbind();
-        PlatformBlockState block = mock(PlatformBlockState.class);
         PlatformRegistries registries = mock(PlatformRegistries.class);
-        when(registries.block(anyString())).thenReturn(block);
+        when(registries.block(anyString())).thenAnswer(invocation -> {
+            String key = invocation.getArgument(0);
+            PlatformBlockState block = mock(PlatformBlockState.class);
+            when(block.key()).thenReturn(key);
+            when(block.materialKey()).thenReturn(key);
+            when(block.isSolid()).thenReturn(!key.toLowerCase().contains("air"));
+            when(block.isOccluding()).thenReturn(!key.toLowerCase().contains("air"));
+            return block;
+        });
         IrisPlatform platform = mock(IrisPlatform.class);
         when(platform.registries()).thenReturn(registries);
         IrisPlatforms.bind(platform);
@@ -94,6 +103,49 @@ public class MantleObjectComponentBoundaryRadiusTest {
     }
 
     @Test
+    public void sourceReplayUsesAscendingSignedCoordinates() {
+        List<String> replayedSources = new ArrayList<>();
+
+        MantleObjectComponent.replaySourceChunks(
+                -2,
+                -3,
+                16,
+                (chunkX, chunkZ) -> replayedSources.add(chunkX + "," + chunkZ)
+        );
+
+        assertEquals(List.of(
+                "-3,-4", "-3,-3", "-3,-2",
+                "-2,-4", "-2,-3", "-2,-2",
+                "-1,-4", "-1,-3", "-1,-2"
+        ), replayedSources);
+    }
+
+    @Test
+    public void sourcePredecessorReplayUsesTheStableAnchoredPrefix() {
+        List<String> replayedSources = new ArrayList<>();
+
+        MantleObjectComponent.replaySourcePredecessors(
+                -2,
+                -3,
+                16,
+                (chunkX, chunkZ) -> replayedSources.add(chunkX + "," + chunkZ)
+        );
+
+        assertEquals(List.of(
+                "-3,-4", "-3,-3", "-3,-2",
+                "-2,-4"
+        ), replayedSources);
+    }
+
+    @Test
+    public void collisionInputRadiusCoversBothSourceTraversalLegs() {
+        assertEquals(82, MantleObjectComponent.calculateInputRadius(33, false));
+        assertEquals(130, MantleObjectComponent.calculateInputRadius(33, true));
+        assertEquals(Integer.MAX_VALUE,
+                MantleObjectComponent.calculateInputRadius(Integer.MAX_VALUE, true));
+    }
+
+    @Test
     public void proceduralTreeTransformsContributeToRadius() {
         IrisObjectPlacement placement = new IrisObjectPlacement()
                 .setRotation(IrisObjectRotation.of(90, 0, 0))
@@ -118,6 +170,47 @@ public class MantleObjectComponentBoundaryRadiusTest {
         when(engineMantle.getData()).thenReturn(data);
 
         assertEquals(53, new MantleObjectComponent(engineMantle).getRadius());
+    }
+
+    @Test
+    public void upperDimensionObjectsDriveRadiusAndCollisionMode() {
+        IrisObjectPlacement placement = new IrisObjectPlacement()
+                .setRotation(IrisObjectRotation.of(90, 0, 0))
+                .setTranslate(new IrisObjectTranslate().setX(3).setY(4));
+        placement.getForbiddenCollisions().add("upper/blocker");
+        IrisData baseData = mock(IrisData.class);
+        IrisData upperData = mock(IrisData.class);
+        IrisProceduralPlacement proceduralPlacement = mock(IrisProceduralPlacement.class);
+        when(proceduralPlacement.getVariantObjects(upperData))
+                .thenReturn(new KList<>(new IrisObject(5, 48, 7)));
+        when(proceduralPlacement.asPlacement()).thenReturn(placement);
+        IrisProceduralObjects proceduralObjects = mock(IrisProceduralObjects.class);
+        when(proceduralObjects.isEmpty()).thenReturn(false);
+        when(proceduralObjects.getAllPlacements()).thenReturn(new KList<>(proceduralPlacement));
+        IrisRegion upperRegion = mock(IrisRegion.class);
+        when(upperRegion.getObjects()).thenReturn(new KList<>());
+        when(upperRegion.getProceduralObjects()).thenReturn(proceduralObjects);
+        IrisDimension baseDimension = mock(IrisDimension.class);
+        when(baseDimension.isUpperDimensionObjects()).thenReturn(true);
+        when(baseDimension.getAllRegions(any())).thenReturn(new KList<>());
+        when(baseDimension.getReachableBiomes(any())).thenReturn(new KList<>());
+        IrisDimension upperDimension = mock(IrisDimension.class);
+        when(upperDimension.getAllRegions(any())).thenReturn(new KList<>(upperRegion));
+        when(upperDimension.getReachableBiomes(any())).thenReturn(new KList<>());
+        UpperDimensionContext upperContext = mock(UpperDimensionContext.class);
+        when(upperContext.getDimension()).thenReturn(upperDimension);
+        when(upperContext.getData()).thenReturn(upperData);
+        Engine engine = mock(Engine.class);
+        when(engine.getDimension()).thenReturn(baseDimension);
+        when(engine.getUpperContext()).thenReturn(upperContext);
+        EngineMantle engineMantle = mock(EngineMantle.class);
+        when(engineMantle.getEngine()).thenReturn(engine);
+        when(engineMantle.getData()).thenReturn(baseData);
+
+        MantleObjectComponent component = new MantleObjectComponent(engineMantle);
+
+        assertEquals(53, component.getRadius());
+        assertEquals(182, component.getInputRadius());
     }
 
     @Test
@@ -153,11 +246,12 @@ public class MantleObjectComponentBoundaryRadiusTest {
 
         MantleObjectComponent component = spy(new MantleObjectComponent(engineMantle));
         assertEquals(33, component.getRadius());
-        int chunkRadius = Math.ceilDiv(component.getRadius(), 16);
-        assertEquals(3, chunkRadius);
+        assertEquals(33, component.getOutputRadius());
+        assertEquals(0, component.getInputRadius());
 
         Mantle<Matter> mantle = mock(Mantle.class);
         MantleChunk<Matter> chunk = mock(MantleChunk.class);
+        when(mantle.getWorldHeight()).thenReturn(64);
         when(mantle.getChunk(anyInt(), anyInt())).thenReturn(chunk);
         when(chunk.use()).thenReturn(chunk);
         doAnswer(invocation -> {
@@ -165,6 +259,25 @@ public class MantleObjectComponentBoundaryRadiusTest {
             task.run();
             return null;
         }).when(chunk).raiseFlagSuspend(any(), any(Runnable.class));
+
+        MantleWriter directWriter = mock(MantleWriter.class);
+        when(directWriter.getMantle()).thenReturn(mantle);
+        doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(2);
+            task.run();
+            return null;
+        }).when(directWriter).withChunkFence(anyInt(), anyInt(), any(Runnable.class));
+        AtomicInteger directOrigins = new AtomicInteger();
+        doAnswer(invocation -> {
+            directOrigins.incrementAndGet();
+            return null;
+        }).when(component).generateOrigin(any(), anyInt(), anyInt(), any());
+
+        component.generateLayer(directWriter, 0, 0, mock(ChunkContext.class));
+
+        assertEquals(1, directOrigins.get());
+        component.generateLayer(directWriter, 0, 0, mock(ChunkContext.class));
+        assertEquals(2, directOrigins.get());
 
         List<String> generatedChunks = new ArrayList<>();
         doAnswer(invocation -> {
@@ -174,11 +287,31 @@ public class MantleObjectComponentBoundaryRadiusTest {
             return null;
         }).when(component).generateLayer(any(), anyInt(), anyInt(), any());
 
-        TestMatterGenerator generator = new TestMatterGenerator(new GeneratorOptions(engine, mantle, component, chunkRadius));
+        TestMatterGenerator generator = new TestMatterGenerator(new GeneratorOptions(
+                engine,
+                mantle,
+                component,
+                component.getOutputRadius()
+        ));
         generator.generateMatter(0, 0, false, mock(ChunkContext.class));
 
-        assertTrue(generatedChunks.contains("-2,0"));
-        assertTrue(generatedChunks.contains("2,0"));
+        assertEquals(49, generatedChunks.size());
+
+        List<String> replayedSources = new ArrayList<>();
+        MantleObjectComponent.replaySourceChunks(
+                0,
+                0,
+                component.getRadius(),
+                (chunkX, chunkZ) -> replayedSources.add(chunkX + "," + chunkZ)
+        );
+        assertEquals(49, replayedSources.size());
+        assertEquals("-3,-3", replayedSources.getFirst());
+        assertEquals("-3,-2", replayedSources.get(1));
+        assertEquals("3,3", replayedSources.getLast());
+
+        placement.getForbiddenCollisions().add("test/tree");
+        component.hotload();
+        assertEquals(130, component.getInputRadius());
     }
 
     private static final class TestMatterGenerator implements MatterGenerator {

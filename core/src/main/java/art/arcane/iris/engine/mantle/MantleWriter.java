@@ -21,16 +21,18 @@ package art.arcane.iris.engine.mantle;
 
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.project.matter.TileWrapper;
+import art.arcane.iris.util.project.matter.PreObjectMatterCell;
 import com.google.common.collect.ImmutableList;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
-import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.IrisGeneratorStyle;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.TileData;
+import art.arcane.iris.engine.mantle.components.ObjectPassPlacer;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.volmlib.util.function.Function3;
@@ -43,19 +45,27 @@ import art.arcane.volmlib.util.matter.MatterSlice;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.common.scheduling.J;
 import lombok.Data;
+import lombok.AccessLevel;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.B;
 import org.bukkit.util.Vector;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 import static art.arcane.iris.engine.mantle.EngineMantle.AIR;
 
 @Data
-public class MantleWriter implements IObjectPlacer, AutoCloseable {
+public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
+    private static final int OBJECT_COMPONENT_PRIORITY = 2;
+
     private final EngineMantle engineMantle;
     private final Mantle<Matter> mantle;
     private final int radius;
@@ -63,6 +73,11 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
     private final int z;
     private final int windowSide;
     private final AtomicReferenceArray<MantleChunk<Matter>> window;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private final ThreadLocal<Integer> activeComponentPriority = new ThreadLocal<>();
 
     public MantleWriter(EngineMantle engineMantle, Mantle<Matter> mantle, int x, int z, int radius, boolean multicore) {
         this(engineMantle, mantle, x, z, radius, radius * 2, multicore);
@@ -121,6 +136,34 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
             return 4;
         }
         return Math.max(1, availableProcessors / 2);
+    }
+
+    public void withComponentPriority(int priority, Runnable task) {
+        Objects.requireNonNull(task, "task");
+        Integer previous = activeComponentPriority.get();
+        activeComponentPriority.set(priority);
+        try {
+            task.run();
+        } finally {
+            if (previous == null) {
+                activeComponentPriority.remove();
+            } else {
+                activeComponentPriority.set(previous);
+            }
+        }
+    }
+
+    @ChunkCoordinates
+    public void withChunkFence(int chunkX, int chunkZ, Runnable task) {
+        Objects.requireNonNull(task, "task");
+        MantleChunk<Matter> chunk = acquireChunk(chunkX, chunkZ);
+        if (chunk == null) {
+            throw new IllegalArgumentException("Chunk fence exceeds the prepared Mantle radius at "
+                    + chunkX + "," + chunkZ);
+        }
+        synchronized (chunk) {
+            task.run();
+        }
     }
 
     private static Set<IrisPosition> getBallooned(Set<IrisPosition> vset, double radius) {
@@ -205,12 +248,19 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         MantleChunk<Matter> chunk = acquireChunk(cx, cz);
         if (chunk == null) return;
 
-        Matter matter = chunk.getOrCreate(y >> 4);
-        if (t instanceof PlatformBlockState) {
-            clearDeferredPlacement(matter, x, y, z);
+        synchronized (chunk) {
+            Matter matter = chunk.getOrCreate(y >> 4);
+            if ((t instanceof PlatformBlockState || t instanceof MatterCavern)
+                    && hasProtectedHydrology(matter, x, y, z)) {
+                return;
+            }
+            if (t instanceof PlatformBlockState) {
+                clearDeferredPlacement(matter, x, y, z);
+            }
+            Class<?> sliceType = t instanceof PlatformBlockState ? PlatformBlockState.class : matter.getClass(t);
+            capturePreObjectOriginal(matter, x, y, z, sliceType);
+            matter.slice(sliceType).set(x & 15, y & 15, z & 15, t);
         }
-        Class<?> sliceType = t instanceof PlatformBlockState ? PlatformBlockState.class : matter.getClass(t);
-        matter.slice(sliceType).set(x & 15, y & 15, z & 15, t);
     }
 
     public boolean setDataIfAbsent(int x, int y, int z, MatterCavern value) {
@@ -230,14 +280,28 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
             return false;
         }
 
-        Matter matter = chunk.getOrCreate(y >> 4);
-        MatterCavern existing = matter.<MatterCavern>slice(MatterCavern.class).get(x & 15, y & 15, z & 15);
-        if (existing != null) {
-            return false;
-        }
+        synchronized (chunk) {
+            Matter matter = chunk.getOrCreate(y >> 4);
+            if (hasProtectedHydrology(matter, x, y, z)) {
+                return false;
+            }
+            MatterSlice<MatterCavern> cavernSlice = matter.hasSlice(MatterCavern.class)
+                    ? matter.getSlice(MatterCavern.class)
+                    : null;
+            MatterCavern existing = cavernSlice == null
+                    ? null
+                    : cavernSlice.get(x & 15, y & 15, z & 15);
+            if (existing != null) {
+                return false;
+            }
 
-        matter.<MatterCavern>slice(MatterCavern.class).set(x & 15, y & 15, z & 15, value);
-        return true;
+            capturePreObjectOriginal(matter, x, y, z, MatterCavern.class);
+            if (cavernSlice == null) {
+                cavernSlice = matter.slice(MatterCavern.class);
+            }
+            cavernSlice.set(x & 15, y & 15, z & 15, value);
+            return true;
+        }
     }
 
     public boolean carveDataIfAbsent(int x, int y, int z, MatterCavern value) {
@@ -250,17 +314,30 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
             return false;
         }
 
-        Matter matter = chunk.getOrCreate(y >> 4);
-        if (matter.hasSlice(PlatformBlockState.class)) {
-            matter.<PlatformBlockState>getSlice(PlatformBlockState.class).set(x & 15, y & 15, z & 15, null);
+        synchronized (chunk) {
+            Matter matter = chunk.getOrCreate(y >> 4);
+            if (hasProtectedHydrology(matter, x, y, z)) {
+                return false;
+            }
+            if (matter.hasSlice(PlatformBlockState.class)) {
+                capturePreObjectOriginal(matter, x, y, z, PlatformBlockState.class);
+                matter.<PlatformBlockState>getSlice(PlatformBlockState.class)
+                        .set(x & 15, y & 15, z & 15, null);
+            }
+            clearDeferredPlacement(matter, x, y, z);
+            MatterSlice<MatterCavern> cavernSlice = matter.hasSlice(MatterCavern.class)
+                    ? matter.getSlice(MatterCavern.class)
+                    : null;
+            if (cavernSlice != null && cavernSlice.get(x & 15, y & 15, z & 15) != null) {
+                return false;
+            }
+            capturePreObjectOriginal(matter, x, y, z, MatterCavern.class);
+            if (cavernSlice == null) {
+                cavernSlice = matter.slice(MatterCavern.class);
+            }
+            cavernSlice.set(x & 15, y & 15, z & 15, value);
+            return true;
         }
-        clearDeferredPlacement(matter, x, y, z);
-        MatterSlice<MatterCavern> cavernSlice = matter.slice(MatterCavern.class);
-        if (cavernSlice.get(x & 15, y & 15, z & 15) != null) {
-            return false;
-        }
-        cavernSlice.set(x & 15, y & 15, z & 15, value);
-        return true;
     }
 
     public void setForcedCarve(int x, int y, int z, MatterCavern value) {
@@ -272,12 +349,20 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
             throw new IllegalStateException("Forced structure carve exceeded its prepared Mantle radius at "
                     + x + "," + y + "," + z);
         }
-        Matter matter = chunk.getOrCreate(y >> 4);
-        if (matter.hasSlice(PlatformBlockState.class)) {
-            matter.<PlatformBlockState>getSlice(PlatformBlockState.class).set(x & 15, y & 15, z & 15, null);
+        synchronized (chunk) {
+            Matter matter = chunk.getOrCreate(y >> 4);
+            if (hasProtectedHydrology(matter, x, y, z)) {
+                return;
+            }
+            if (matter.hasSlice(PlatformBlockState.class)) {
+                capturePreObjectOriginal(matter, x, y, z, PlatformBlockState.class);
+                matter.<PlatformBlockState>getSlice(PlatformBlockState.class)
+                        .set(x & 15, y & 15, z & 15, null);
+            }
+            clearDeferredPlacement(matter, x, y, z);
+            capturePreObjectOriginal(matter, x, y, z, MatterCavern.class);
+            matter.<MatterCavern>slice(MatterCavern.class).set(x & 15, y & 15, z & 15, value);
         }
-        clearDeferredPlacement(matter, x, y, z);
-        matter.<MatterCavern>slice(MatterCavern.class).set(x & 15, y & 15, z & 15, value);
     }
 
     public void clearBlock(int x, int y, int z) {
@@ -292,14 +377,21 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         if (!chunk.exists(section)) {
             return;
         }
-        Matter matter = chunk.get(section);
-        if (matter == null) {
-            return;
+        synchronized (chunk) {
+            Matter matter = chunk.get(section);
+            if (matter == null) {
+                return;
+            }
+            if (hasProtectedHydrology(matter, x, y, z)) {
+                return;
+            }
+            if (matter.hasSlice(PlatformBlockState.class)) {
+                capturePreObjectOriginal(matter, x, y, z, PlatformBlockState.class);
+                matter.<PlatformBlockState>getSlice(PlatformBlockState.class)
+                        .set(x & 15, y & 15, z & 15, null);
+            }
+            clearDeferredPlacement(matter, x, y, z);
         }
-        if (matter.hasSlice(PlatformBlockState.class)) {
-            matter.<PlatformBlockState>getSlice(PlatformBlockState.class).set(x & 15, y & 15, z & 15, null);
-        }
-        clearDeferredPlacement(matter, x, y, z);
     }
 
     public <T> T getData(int x, int y, int z, Class<T> type) {
@@ -338,6 +430,159 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         return matter.<T>getSlice(type).get(x & 15, y & 15, z & 15);
     }
 
+    public <T> T getPrerequisiteDataIfPresent(int x, int y, int z, Class<T> type) {
+        Objects.requireNonNull(type, "type");
+        if (y < 0 || y >= mantle.getWorldHeight()) {
+            return null;
+        }
+
+        MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
+        int section = y >> 4;
+        if (chunk == null) {
+            return null;
+        }
+
+        synchronized (chunk) {
+            if (!chunk.exists(section)) {
+                return null;
+            }
+            Matter matter = chunk.get(section);
+            if (matter == null) {
+                return null;
+            }
+            return prerequisiteValue(matter, x, y, z, type);
+        }
+    }
+
+    public PlatformBlockState getPrerequisiteBlock(int x, int y, int z) {
+        PlatformBlockState block = getPrerequisiteDataIfPresent(x, y, z, PlatformBlockState.class);
+        return block == null ? AIR : block;
+    }
+
+    public boolean isPrerequisiteCarved(int x, int y, int z) {
+        HydrologyCaveCell hydrology = getPrerequisiteDataIfPresent(x, y, z, HydrologyCaveCell.class);
+        if (hydrology != null) {
+            return hydrology.carves();
+        }
+        return getPrerequisiteDataIfPresent(x, y, z, MatterCavern.class) != null;
+    }
+
+    public byte[] getPrerequisiteCarvedColumn(int x, int z, int height) {
+        int cappedHeight = Math.min(Math.max(height, 0), mantle.getWorldHeight());
+        byte[] carvedColumn = new byte[cappedHeight];
+        if (cappedHeight <= 0) {
+            return carvedColumn;
+        }
+
+        MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
+        if (chunk == null) {
+            return carvedColumn;
+        }
+
+        synchronized (chunk) {
+            int lastSection = (cappedHeight - 1) >> 4;
+            for (int section = 0; section <= lastSection; section++) {
+                if (!chunk.exists(section)) {
+                    continue;
+                }
+                Matter matter = chunk.get(section);
+                if (matter == null) {
+                    continue;
+                }
+                MatterSlice<PreObjectMatterCell> journalSlice = matter.hasSlice(PreObjectMatterCell.class)
+                        ? matter.getSlice(PreObjectMatterCell.class)
+                        : null;
+                MatterSlice<MatterCavern> cavernSlice = matter.hasSlice(MatterCavern.class)
+                        ? matter.getSlice(MatterCavern.class)
+                        : null;
+                MatterSlice<HydrologyCaveCell> hydrologySlice = matter.hasSlice(HydrologyCaveCell.class)
+                        ? matter.getSlice(HydrologyCaveCell.class)
+                        : null;
+                int sectionBaseY = section << 4;
+                int sectionMaxY = Math.min(cappedHeight, sectionBaseY + 16);
+                for (int y = sectionBaseY; y < sectionMaxY; y++) {
+                    int localY = y & 15;
+                    HydrologyCaveCell hydrology = hydrologySlice == null
+                            ? null
+                            : hydrologySlice.get(x & 15, localY, z & 15);
+                    if (hydrology != null) {
+                        carvedColumn[y] = hydrology.carves() ? (byte) 1 : 0;
+                        continue;
+                    }
+                    PreObjectMatterCell cell = journalSlice == null
+                            ? null
+                            : journalSlice.get(x & 15, localY, z & 15);
+                    MatterCavern cavern = cell != null && cell.cavernCaptured()
+                            ? cell.cavern()
+                            : cavernSlice == null ? null : cavernSlice.get(x & 15, localY, z & 15);
+                    if (cavern != null) {
+                        carvedColumn[y] = 1;
+                    }
+                }
+            }
+        }
+        return carvedColumn;
+    }
+
+    public boolean restorePrerequisiteData(int x, int y, int z, Class<?> type) {
+        Objects.requireNonNull(type, "type");
+        if (y < 0 || y >= mantle.getWorldHeight() || !isPreObjectType(type)) {
+            return false;
+        }
+
+        MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
+        int section = y >> 4;
+        if (chunk == null) {
+            return false;
+        }
+
+        synchronized (chunk) {
+            if (!chunk.exists(section)) {
+                return false;
+            }
+            Matter matter = chunk.get(section);
+            PreObjectMatterCell cell = preObjectCell(matter, x, y, z);
+            if (cell == null || !cell.captures(type)) {
+                return false;
+            }
+            restoreRaw(matter, x, y, z, type, cell.original(type));
+            return true;
+        }
+    }
+
+    public boolean restorePrerequisiteCell(int x, int y, int z) {
+        if (y < 0 || y >= mantle.getWorldHeight()) {
+            return false;
+        }
+
+        MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
+        int section = y >> 4;
+        if (chunk == null) {
+            return false;
+        }
+
+        synchronized (chunk) {
+            if (!chunk.exists(section)) {
+                return false;
+            }
+            Matter matter = chunk.get(section);
+            PreObjectMatterCell cell = preObjectCell(matter, x, y, z);
+            if (cell == null) {
+                return false;
+            }
+            if (cell.blockCaptured()) {
+                restoreRaw(matter, x, y, z, PlatformBlockState.class, cell.block());
+            }
+            if (cell.stringCaptured()) {
+                restoreRaw(matter, x, y, z, String.class, cell.string());
+            }
+            if (cell.cavernCaptured()) {
+                restoreRaw(matter, x, y, z, MatterCavern.class, cell.cavern());
+            }
+            return true;
+        }
+    }
+
     public void clearData(int x, int y, int z, Class<?> type) {
         if (y < 0 || y >= mantle.getWorldHeight()) {
             return;
@@ -349,17 +594,135 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
             return;
         }
 
-        Matter matter = chunk.get(section);
-        if (matter == null || !matter.hasSlice(type)) {
-            return;
+        synchronized (chunk) {
+            Matter matter = chunk.get(section);
+            if (matter == null || !matter.hasSlice(type)) {
+                return;
+            }
+            if ((type == PlatformBlockState.class || type == MatterCavern.class)
+                    && hasProtectedHydrology(matter, x, y, z)) {
+                return;
+            }
+            capturePreObjectOriginal(matter, x, y, z, type);
+            matter.getSlice(type).set(x & 15, y & 15, z & 15, null);
         }
-        matter.getSlice(type).set(x & 15, y & 15, z & 15, null);
+    }
+
+    private static boolean hasProtectedHydrology(Matter matter, int x, int y, int z) {
+        if (!matter.hasSlice(HydrologyCaveCell.class)) {
+            return false;
+        }
+        HydrologyCaveCell hydrology = matter.<HydrologyCaveCell>getSlice(HydrologyCaveCell.class)
+                .get(x & 15, y & 15, z & 15);
+        return hydrology != null && hydrology.protectsPlacement();
     }
 
     private static void clearDeferredPlacement(Matter matter, int x, int y, int z) {
         if (matter.hasSlice(Identifier.class)) {
             matter.<Identifier>getSlice(Identifier.class).set(x & 15, y & 15, z & 15, null);
         }
+    }
+
+    private void setCustomBlock(int x, int y, int z, PlatformBlockState baseState, Identifier identifier) {
+        if (y < 0 || y >= mantle.getWorldHeight()) {
+            return;
+        }
+        if (y == 0 && engineMantle.getEngine().getDimension().isBedrock()) {
+            return;
+        }
+
+        MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
+        if (chunk == null) {
+            return;
+        }
+
+        synchronized (chunk) {
+            Matter matter = chunk.getOrCreate(y >> 4);
+            if (hasProtectedHydrology(matter, x, y, z)) {
+                return;
+            }
+            MatterSlice<PlatformBlockState> blockSlice = matter.slice(PlatformBlockState.class);
+            MatterSlice<Identifier> identifierSlice = matter.slice(Identifier.class);
+            capturePreObjectOriginal(matter, x, y, z, PlatformBlockState.class);
+            blockSlice.set(x & 15, y & 15, z & 15, baseState);
+            identifierSlice.set(x & 15, y & 15, z & 15, identifier);
+        }
+    }
+
+    private void capturePreObjectOriginal(Matter matter, int x, int y, int z, Class<?> type) {
+        Integer priority = activeComponentPriority.get();
+        if (priority == null || priority < OBJECT_COMPONENT_PRIORITY || !isPreObjectType(type)) {
+            return;
+        }
+
+        int localX = x & 15;
+        int localY = y & 15;
+        int localZ = z & 15;
+        MatterSlice<PreObjectMatterCell> journal = matter.slice(PreObjectMatterCell.class);
+        PreObjectMatterCell current = journal.get(localX, localY, localZ);
+        if (current != null && current.captures(type)) {
+            return;
+        }
+        Object original = rawValue(matter, localX, localY, localZ, type);
+        PreObjectMatterCell updated;
+        if (type == PlatformBlockState.class) {
+            updated = current == null
+                    ? PreObjectMatterCell.block((PlatformBlockState) original)
+                    : current.captureBlock((PlatformBlockState) original);
+        } else if (type == String.class) {
+            updated = current == null
+                    ? PreObjectMatterCell.string((String) original)
+                    : current.captureString((String) original);
+        } else {
+            updated = current == null
+                    ? PreObjectMatterCell.cavern((MatterCavern) original)
+                    : current.captureCavern((MatterCavern) original);
+        }
+        journal.set(localX, localY, localZ, updated);
+    }
+
+    private static boolean isPreObjectType(Class<?> type) {
+        return type == PlatformBlockState.class || type == String.class || type == MatterCavern.class;
+    }
+
+    private static PreObjectMatterCell preObjectCell(Matter matter, int x, int y, int z) {
+        if (matter == null || !matter.hasSlice(PreObjectMatterCell.class)) {
+            return null;
+        }
+        return matter.<PreObjectMatterCell>getSlice(PreObjectMatterCell.class)
+                .get(x & 15, y & 15, z & 15);
+    }
+
+    private static <T> T prerequisiteValue(Matter matter, int x, int y, int z, Class<T> type) {
+        PreObjectMatterCell cell = preObjectCell(matter, x, y, z);
+        if (cell != null && cell.captures(type)) {
+            return cell.original(type);
+        }
+        if (!matter.hasSlice(type)) {
+            return null;
+        }
+        return matter.<T>getSlice(type).get(x & 15, y & 15, z & 15);
+    }
+
+    private static Object rawValue(Matter matter, int x, int y, int z, Class<?> type) {
+        if (!matter.hasSlice(type)) {
+            return null;
+        }
+        return matter.getSlice(type).get(x, y, z);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void restoreRaw(Matter matter, int x, int y, int z, Class<?> type, Object value) {
+        MatterSlice<Object> slice;
+        if (value == null) {
+            if (!matter.hasSlice(type)) {
+                return;
+            }
+            slice = (MatterSlice<Object>) matter.getSlice(type);
+        } else {
+            slice = (MatterSlice<Object>) matter.slice(type);
+        }
+        slice.set(x & 15, y & 15, z & 15, value);
     }
 
     @ChunkCoordinates
@@ -426,8 +789,8 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
         String placementKey = s.deferredPlacementKey();
         PlatformBlockState baseState = s.placementBaseState();
         if (s.isCustom() && placementKey != null && baseState != null) {
-            setData(x, y, z, baseState);
-            setData(x, y, z, Identifier.fromString(placementKey));
+            Identifier identifier = Identifier.fromString(placementKey);
+            setCustomBlock(x, y, z, baseState, identifier);
             return;
         }
         setData(x, y, z, s);
@@ -450,6 +813,10 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
 
     @Override
     public boolean isCarved(int x, int y, int z) {
+        HydrologyCaveCell hydrology = getDataIfPresent(x, y, z, HydrologyCaveCell.class);
+        if (hydrology != null) {
+            return hydrology.carves();
+        }
         return getDataIfPresent(x, y, z, MatterCavern.class) != null;
     }
 
@@ -474,14 +841,28 @@ public class MantleWriter implements IObjectPlacer, AutoCloseable {
             }
 
             Matter matter = chunk.get(section);
-            if (matter == null || !matter.hasSlice(MatterCavern.class)) {
+            if (matter == null) {
                 continue;
             }
-            MatterSlice<MatterCavern> slice = matter.getSlice(MatterCavern.class);
+
+            MatterSlice<MatterCavern> cavernSlice = matter.hasSlice(MatterCavern.class)
+                    ? matter.getSlice(MatterCavern.class)
+                    : null;
+            MatterSlice<HydrologyCaveCell> hydrologySlice = matter.hasSlice(HydrologyCaveCell.class)
+                    ? matter.getSlice(HydrologyCaveCell.class)
+                    : null;
+            if (cavernSlice == null && hydrologySlice == null) {
+                continue;
+            }
             int sectionBaseY = section << 4;
             int sectionMaxY = Math.min(cappedHeight, sectionBaseY + 16);
             for (int y = sectionBaseY; y < sectionMaxY; y++) {
-                if (slice.get(localX, y & 15, localZ) != null) {
+                HydrologyCaveCell hydrology = hydrologySlice == null
+                        ? null
+                        : hydrologySlice.get(localX, y & 15, localZ);
+                if (hydrology != null) {
+                    carvedColumn[y] = hydrology.carves() ? (byte) 1 : 0;
+                } else if (cavernSlice != null && cavernSlice.get(localX, y & 15, localZ) != null) {
                     carvedColumn[y] = 1;
                 }
             }

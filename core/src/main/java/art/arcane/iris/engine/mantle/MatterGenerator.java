@@ -1,6 +1,7 @@
 package art.arcane.iris.engine.mantle;
 
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.project.context.ChunkContext;
@@ -43,6 +44,10 @@ public interface MatterGenerator {
         if (!getEngine().getDimension().isUseMantle()) {
             return;
         }
+        generateMatterWindow(x, z, multicore, context);
+    }
+
+    private void generateMatterWindow(int x, int z, boolean multicore, ChunkContext context) {
 
         MatterGenerationPlan generationPlan = resolveGenerationPlan(x, z, context);
         MatterPassPlan[] passPlans = generationPlan.passPlans();
@@ -74,10 +79,10 @@ public interface MatterGenerator {
                     int[] componentPassRadii = new int[passComponents.size()];
                     int enabledComponentCount = 0;
                     for (MantleComponent component : passComponents) {
-                        if (component.isEnabled()) {
+                        if (shouldGenerateComponent(component)) {
                             // A component must cover its own reach plus every later pass' reach, or a
                             // later pass reads this component's data from chunks it never wrote.
-                            int componentReach = component.getRadius() + passPlan.downstreamBlockRadius();
+                            int componentReach = component.getOutputRadius() + passPlan.downstreamBlockRadius();
                             componentPassRadii[enabledComponentCount] = componentReach > 0 ? Math.ceilDiv(componentReach, 16) : 0;
                             enabledComponents[enabledComponentCount++] = component;
                         }
@@ -89,7 +94,8 @@ public interface MatterGenerator {
 
                     // A dispatcher thread runs its components inline: dispatching from inside the pool
                     // only trades a worker for a blocked worker.
-                    boolean asyncComponents = multicore && !DISPATCHER.ownsCurrentThread();
+                    boolean asyncComponents = multicore
+                            && !DISPATCHER.ownsCurrentThread();
                     if (asyncComponents && outstandingTasks == null) {
                         outstandingTasks = new ArrayList<>();
                     }
@@ -222,12 +228,12 @@ public interface MatterGenerator {
             int passAccessInputRadius = 0;
             int passGenerationInputRadius = 0;
             for (MantleComponent component : pass.components()) {
-                if (!component.isEnabled()) {
+                if (!shouldGenerateComponent(component)) {
                     continue;
                 }
-                int componentRadius = component.getRadius();
-                passBlockRadius = Math.max(passBlockRadius, componentRadius);
-                int componentReach = componentRadius + generationDownstreamBlockRadius;
+                int componentOutputRadius = component.getOutputRadius();
+                passBlockRadius = Math.max(passBlockRadius, componentOutputRadius);
+                int componentReach = componentOutputRadius + generationDownstreamBlockRadius;
                 int invocationChunkRadius = componentReach > 0
                         ? Math.ceilDiv(componentReach, 16)
                         : 0;
@@ -248,6 +254,15 @@ public interface MatterGenerator {
                 ? Math.ceilDiv(accessDownstreamBlockRadius, 16)
                 : 0;
         return new MatterGenerationPlan(plans, writerChunkRadius * 2);
+    }
+
+    private boolean shouldGenerateComponent(MantleComponent component) {
+        if (!component.isEnabled()) {
+            return false;
+        }
+        Engine engine = getEngine();
+        EnginePlatformHooks hooks = engine.getPlatformHooks();
+        return hooks == null || hooks.shouldGenerateMantleComponent(engine, component);
     }
 
     private MatterComponentTask runComponentAsync(
@@ -438,7 +453,10 @@ public interface MatterGenerator {
             int chunkZ,
             ChunkContext context
     ) {
-        chunk.raiseFlagSuspend(component.getFlag(), () -> component.generateLayer(writer, chunkX, chunkZ, context));
+        chunk.raiseFlagSuspend(component.getFlag(), () -> writer.withComponentPriority(
+                component.getPriority(),
+                () -> component.generateLayer(writer, chunkX, chunkZ, context)
+        ));
     }
 
     /**

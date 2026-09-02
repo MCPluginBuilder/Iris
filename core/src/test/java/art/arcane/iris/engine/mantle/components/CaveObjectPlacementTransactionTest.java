@@ -21,6 +21,8 @@ package art.arcane.iris.engine.mantle.components;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.TileData;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.spi.PlatformBlockState;
 import org.junit.Test;
 
@@ -107,6 +109,21 @@ public class CaveObjectPlacementTransactionTest {
         assertEquals(CaveObjectPlacementTransaction.CommitResult.COMMITTED, transaction.commit());
         assertEquals(71, MantleObjectComponent.caveAnchorScanUpperBound(128, 80, 10));
         assertEquals(61, MantleObjectComponent.caveAnchorScanUpperBound(128, 80, 20));
+    }
+
+    @Test
+    public void dryHydrologyHeadroomRejectsTheWholePlacement() {
+        IObjectPlacer delegate = createPlacer(128, 80, 20, 90);
+        when(delegate.getData(4, 30, 7, HydrologyCaveCell.class))
+                .thenReturn(HydrologyCaveCell.of(HydrologyCaveAction.DRY_AIR));
+        CaveObjectPlacementTransaction transaction = new CaveObjectPlacementTransaction(delegate, 20, 10);
+
+        transaction.set(4, 30, 7, mock(PlatformBlockState.class));
+        transaction.setData(5, 30, 7, "object@1");
+
+        assertEquals(CaveObjectPlacementTransaction.CommitResult.REJECTED_HYDROLOGY, transaction.commit());
+        verify(delegate, never()).set(anyInt(), anyInt(), anyInt(), any());
+        verify(delegate, never()).setData(anyInt(), anyInt(), anyInt(), any());
     }
 
     private IObjectPlacer createPlacer(int worldHeight, int surfaceHeight, int caveFloor, int caveCeiling) {

@@ -2,7 +2,9 @@ package art.arcane.iris.core.service;
 
 import art.arcane.iris.api.terrain.IrisColumnField;
 import art.arcane.iris.api.terrain.IrisColumnQuery;
+import art.arcane.iris.api.terrain.IrisColumnSample;
 import art.arcane.iris.api.terrain.IrisColumnSink;
+import art.arcane.iris.api.terrain.IrisRiverState;
 import art.arcane.iris.api.terrain.IrisSurfaceKind;
 import art.arcane.iris.api.terrain.IrisTerrainService;
 import art.arcane.iris.api.terrain.IrisWorldInfo;
@@ -13,6 +15,8 @@ import art.arcane.iris.core.service.terrain.IrisSampleLimits;
 import art.arcane.iris.core.service.terrain.IrisSurfaceClassifier;
 import art.arcane.iris.core.service.terrain.IrisWorldInfoFactory;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
 import art.arcane.iris.engine.object.InferredType;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -101,13 +105,15 @@ public class IrisTerrainSVC implements IrisService, IrisTerrainService {
 
         try {
             int surface = engine.getHeight(blockX, blockZ);
-            int fluid = engine.getDimension().getFluidHeight();
+            HydrologyColumnSample hydrology = hydrologySample(engine, blockX, blockZ);
+            int fluid = (int) Math.round(
+                    engine.getComplex().getRiverWaterSurfaceStream().get(blockX, blockZ));
             InferredType inferredType = null;
             if (IrisSurfaceClassifier.requiresSurfaceBiome(surface, fluid)) {
                 IrisBiome biome = engine.getSurfaceBiome(blockX, blockZ);
                 inferredType = biome == null ? null : biome.getInferredType();
             }
-            return IrisSurfaceClassifier.classify(surface, fluid, inferredType);
+            return IrisSurfaceClassifier.classify(surface, fluid, inferredType, hydrology);
         } catch (Throwable error) {
             reportQueryFault("surfaceKind", world, error);
             return IrisSurfaceKind.UNKNOWN;
@@ -224,26 +230,75 @@ public class IrisTerrainSVC implements IrisService, IrisTerrainService {
 
         EnumSet<IrisColumnField> fields = query.fields();
         boolean wantHeight = fields.contains(IrisColumnField.SURFACE_HEIGHT);
+        boolean wantNaturalHeight = fields.contains(IrisColumnField.NATURAL_HEIGHT);
         boolean wantKind = fields.contains(IrisColumnField.SURFACE_KIND);
         boolean wantBiome = fields.contains(IrisColumnField.BIOME_KEY);
+        boolean wantRiverState = fields.contains(IrisColumnField.RIVER_STATE);
+        boolean wantRiverDistance = fields.contains(IrisColumnField.RIVER_DISTANCE);
+        boolean wantRiverFlow = fields.contains(IrisColumnField.RIVER_FLOW);
+        boolean wantRiverWaterSurface = fields.contains(IrisColumnField.RIVER_WATER_SURFACE_Y);
+        boolean wantRiver = wantKind || wantRiverState || wantRiverDistance || wantRiverFlow
+                || wantRiverWaterSurface;
 
         try {
             int minHeight = engine.getMinHeight();
-            int fluid = engine.getDimension().getFluidHeight();
             long visited = IrisColumnWalk.walk(query, (int blockX, int blockZ) -> {
                 if (engine.isClosed()) {
                     return false;
                 }
 
+                HydrologyColumnSample hydrology = wantRiver
+                        ? hydrologySample(engine, blockX, blockZ)
+                        : null;
                 int surface = wantHeight || wantKind ? engine.getHeight(blockX, blockZ) : 0;
+                int fluid = wantRiver
+                        ? (int) Math.round(engine.getComplex().getRiverWaterSurfaceStream().get(blockX, blockZ))
+                        : engine.getDimension().getFluidHeight();
                 boolean needsBiome = wantBiome
                         || (wantKind && IrisSurfaceClassifier.requiresSurfaceBiome(surface, fluid));
                 IrisBiome biome = needsBiome ? engine.getSurfaceBiome(blockX, blockZ) : null;
                 IrisSurfaceKind kind = wantKind
-                        ? IrisSurfaceClassifier.classify(surface, fluid, biome == null ? null : biome.getInferredType())
+                        ? IrisSurfaceClassifier.classify(
+                                surface,
+                                fluid,
+                                biome == null ? null : biome.getInferredType(),
+                                hydrology
+                        )
                         : IrisSurfaceKind.UNKNOWN;
                 String biomeKey = wantBiome && biome != null ? biome.getLoadKey() : null;
-                sink.accept(blockX, blockZ, wantHeight ? surface + minHeight : -1, kind, biomeKey);
+                int natural = wantNaturalHeight
+                        ? (int) Math.round(engine.getComplex().getNaturalHeightStream().get(blockX, blockZ)) + minHeight
+                        : IrisColumnSample.UNAVAILABLE_HEIGHT;
+                HydrologyColumnLayer surfaceLayer = hydrology == null
+                        ? null
+                        : hydrology.primarySurfaceLayer().orElse(null);
+                boolean riverPresent = surfaceLayer != null;
+                IrisRiverState riverState = wantRiverState
+                        ? riverState(hydrology)
+                        : IrisRiverState.NONE;
+                double riverDistance = wantRiverDistance && riverPresent
+                        ? engine.getComplex().getRiverDistanceStream().get(blockX, blockZ)
+                        : IrisColumnSample.UNAVAILABLE_RIVER_DISTANCE;
+                int riverFlow = wantRiverFlow && riverPresent
+                        ? (int) Math.round(engine.getComplex().getRiverFlowStream().get(blockX, blockZ))
+                        : IrisColumnSample.UNAVAILABLE_RIVER_FLOW;
+                int riverWaterSurfaceY = wantRiverWaterSurface
+                        && surfaceLayer != null
+                        && surfaceLayer.connectedFluid()
+                        ? fluid + minHeight
+                        : IrisColumnSample.UNAVAILABLE_HEIGHT;
+                sink.accept(new IrisColumnSample(
+                        blockX,
+                        blockZ,
+                        wantHeight ? surface + minHeight : IrisColumnSample.UNAVAILABLE_HEIGHT,
+                        natural,
+                        kind,
+                        biomeKey,
+                        riverState,
+                        riverDistance,
+                        riverFlow,
+                        riverWaterSurfaceY
+                ));
                 return true;
             });
             return visited == query.columnCount();
@@ -251,6 +306,23 @@ public class IrisTerrainSVC implements IrisService, IrisTerrainService {
             reportSinkFault(world, error);
             return false;
         }
+    }
+
+    static IrisRiverState riverState(HydrologyColumnSample hydrology) {
+        HydrologyColumnLayer layer = hydrology == null
+                ? null
+                : hydrology.primarySurfaceLayer().orElse(null);
+        if (layer == null || !layer.channel()) {
+            return IrisRiverState.NONE;
+        }
+        return layer.connectedFluid() ? IrisRiverState.WET : IrisRiverState.DRY;
+    }
+
+    private static HydrologyColumnSample hydrologySample(Engine engine, int blockX, int blockZ) {
+        if (engine.getComplex().getHydrologyRuntime() == null) {
+            return null;
+        }
+        return engine.getComplex().getHydrologyRuntime().sample(blockX, blockZ).orElse(null);
     }
 
     private static Optional<String> key(IrisBiome biome) {

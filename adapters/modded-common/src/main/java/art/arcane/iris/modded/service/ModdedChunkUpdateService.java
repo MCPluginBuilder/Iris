@@ -301,7 +301,7 @@ public final class ModdedChunkUpdateService implements ModdedTickableService {
         }
     }
 
-    private void runUpdatePass(Engine engine, ServerLevel level, int chunkX, int chunkZ, MantleChunk<Matter> chunk) {
+    void runUpdatePass(Engine engine, ServerLevel level, int chunkX, int chunkZ, MantleChunk<Matter> chunk) {
         PrecisionStopwatch stopwatch = PrecisionStopwatch.start();
         int minHeight = engine.getWorld().minHeight();
         int baseX = chunkX << 4;

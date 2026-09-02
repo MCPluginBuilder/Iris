@@ -66,8 +66,8 @@ public class UpperDimensionContext implements DataProvider {
                 engine.getDimension(),
                 engine.getData(),
                 chunkHeight,
-                complex.getHeightStream(),
-                complex.getTrueBiomeStream(),
+                complex.getNaturalHeightStream(),
+                complex.getNaturalTrueBiomeStream(),
                 complex.getRegionStream(),
                 complex.getRockStream(),
                 complex.getImageMapRuntime(),
@@ -99,12 +99,12 @@ public class UpperDimensionContext implements DataProvider {
         upperDim.getRegions().forEach(regionKey -> {
             IrisRegion region = upperData.getRegionLoader().load(regionKey);
             if (region != null) {
-                region.getAllBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
+                region.getNaturalBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
                         biome, dataProvider, allBiomes, generators));
             }
         });
         for (IrisRegion mappedRegion : imageMapRuntime.getMappedRegions()) {
-            mappedRegion.getAllBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
+            mappedRegion.getNaturalBiomes(dataProvider).forEach(biome -> registerBiomeGenerators(
                     biome, dataProvider, allBiomes, generators));
         }
         for (IrisBiome mappedBiome : imageMapRuntime.getMappedBiomes()) {

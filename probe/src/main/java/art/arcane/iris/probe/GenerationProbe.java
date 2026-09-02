@@ -482,17 +482,28 @@ public final class GenerationProbe {
 
     private static void updateSignature(MessageDigest digest, ChunkCoordinate coordinate,
                                         Hunk<PlatformBlockState> blocks, Hunk<PlatformBiome> biomes, int height) {
+        MessageDigest blockDigest = sha256();
+        MessageDigest biomeDigest = sha256();
         updateDigest(digest, coordinate.x() + "," + coordinate.z());
+        updateDigest(blockDigest, coordinate.x() + "," + coordinate.z());
+        updateDigest(biomeDigest, coordinate.x() + "," + coordinate.z());
         for (int x = 0; x < 16; x++) {
             for (int z = 0; z < 16; z++) {
                 for (int y = 0; y < height; y++) {
                     PlatformBlockState state = blocks.get(x, y, z);
                     PlatformBiome biome = biomes.get(x, y, z);
-                    updateDigest(digest, state == null ? "minecraft:air" : state.key());
-                    updateDigest(digest, biome == null ? "null" : biome.key());
+                    String stateKey = state == null ? "minecraft:air" : state.key();
+                    String biomeKey = biome == null ? "null" : biome.key();
+                    updateDigest(digest, stateKey);
+                    updateDigest(digest, biomeKey);
+                    updateDigest(blockDigest, stateKey);
+                    updateDigest(biomeDigest, biomeKey);
                 }
             }
         }
+        System.out.println("GENPROBE_CHUNK_HASH chunk=" + coordinate.x() + "," + coordinate.z()
+                + " blocks=" + HexFormat.of().formatHex(blockDigest.digest()).substring(0, 16)
+                + " biomes=" + HexFormat.of().formatHex(biomeDigest.digest()).substring(0, 16));
     }
 
     private static void updateDigest(MessageDigest digest, String value) {

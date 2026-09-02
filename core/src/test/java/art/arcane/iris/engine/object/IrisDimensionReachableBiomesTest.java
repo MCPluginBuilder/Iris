@@ -130,6 +130,120 @@ public class IrisDimensionReachableBiomesTest {
         verify(biomeLoader, times(1)).load("d");
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    public void includesEveryBiomeReferencedByEnabledPolicyHierarchy() {
+        IrisDimension dimension = new IrisDimension()
+                .setRegions(new KList<>("reachable"))
+                .setRiverPolicy(new IrisRiverPolicy()
+                        .setSurfaceBiomes(new KList<>("dimension-channel")));
+        dimension.getHydrology().getRivers().setEnabled(true);
+        IrisRegion reachable = new IrisRegion()
+                .setLandBiomes(new KList<>("root"))
+                .setRiverPolicy(new IrisRiverPolicy()
+                        .setMouthBiomes(new KList<>("region-mouth")));
+        IrisBiome root = biome("root").setRiverPolicy(new IrisRiverPolicy()
+                .setShoreBiomes(new KList<>("biome-shore")));
+        IrisBiome dimensionChannel = biome("dimension-channel")
+                .setChildren(new KList<>("dimension-child"));
+        IrisBiome dimensionChild = biome("dimension-child");
+        IrisBiome regionMouth = biome("region-mouth").setRiverPolicy(new IrisRiverPolicy()
+                .setBankBiomes(new KList<>("nested-dry")));
+        IrisBiome biomeShore = biome("biome-shore");
+        IrisBiome nestedDry = biome("nested-dry");
+
+        IrisData data = mock(IrisData.class);
+        ResourceLoader<IrisRegion> regionLoader = mock(ResourceLoader.class);
+        ResourceLoader<IrisBiome> biomeLoader = mock(ResourceLoader.class);
+        when(data.getRegionLoader()).thenReturn(regionLoader);
+        when(data.getBiomeLoader()).thenReturn(biomeLoader);
+        when(regionLoader.load("reachable")).thenReturn(reachable);
+        when(biomeLoader.load("root")).thenReturn(root);
+        when(biomeLoader.load("dimension-channel")).thenReturn(dimensionChannel);
+        when(biomeLoader.load("dimension-child")).thenReturn(dimensionChild);
+        when(biomeLoader.load("region-mouth")).thenReturn(regionMouth);
+        when(biomeLoader.load("biome-shore")).thenReturn(biomeShore);
+        when(biomeLoader.load("nested-dry")).thenReturn(nestedDry);
+
+        Set<String> keys = dimension.getReachableBiomes(() -> data).stream()
+                .map(IrisBiome::getLoadKey)
+                .collect(Collectors.toSet());
+
+        assertEquals(Set.of(
+                "root",
+                "dimension-channel",
+                "dimension-child",
+                "region-mouth",
+                "biome-shore",
+                "nested-dry"
+        ), keys);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void excludesPolicyOnlyBiomesWhenRiverHydrologyIsDisabled() {
+        IrisDimension dimension = new IrisDimension()
+                .setRegions(new KList<>("reachable"))
+                .setRiverPolicy(new IrisRiverPolicy()
+                        .setSurfaceBiomes(new KList<>("dimension-channel")));
+        IrisRegion reachable = new IrisRegion()
+                .setLandBiomes(new KList<>("root"))
+                .setRiverPolicy(new IrisRiverPolicy()
+                        .setMouthBiomes(new KList<>("region-mouth")));
+        IrisBiome root = biome("root").setRiverPolicy(new IrisRiverPolicy()
+                .setShoreBiomes(new KList<>("biome-shore")));
+
+        IrisData data = mock(IrisData.class);
+        ResourceLoader<IrisRegion> regionLoader = mock(ResourceLoader.class);
+        ResourceLoader<IrisBiome> biomeLoader = mock(ResourceLoader.class);
+        when(data.getRegionLoader()).thenReturn(regionLoader);
+        when(data.getBiomeLoader()).thenReturn(biomeLoader);
+        when(regionLoader.load("reachable")).thenReturn(reachable);
+        when(biomeLoader.load("root")).thenReturn(root);
+
+        Set<String> keys = dimension.getReachableBiomes(() -> data).stream()
+                .map(IrisBiome::getLoadKey)
+                .collect(Collectors.toSet());
+
+        assertEquals(Set.of("root"), keys);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void includesPolicyBiomesForActiveDeepOnlyHydrology() {
+        IrisDimension dimension = new IrisDimension()
+                .setRegions(new KList<>("reachable"))
+                .setRiverPolicy(new IrisRiverPolicy()
+                        .setFloodedCaveBiomes(new KList<>("dimension-flooded")));
+        dimension.getHydrology().getRivers().setEnabled(false);
+        dimension.getHydrology().getDeepFluids().add(new IrisDeepFluidConfig()
+                .setDensity(1D)
+                .setContainedPools(true));
+        IrisRegion reachable = new IrisRegion()
+                .setLandBiomes(new KList<>("root"))
+                .setRiverPolicy(new IrisRiverPolicy()
+                        .setBankBiomes(new KList<>("region-dry")));
+        IrisBiome root = biome("root").setRiverPolicy(new IrisRiverPolicy()
+                .setFloodedCaveBiomes(new KList<>("biome-flooded")));
+
+        IrisData data = mock(IrisData.class);
+        ResourceLoader<IrisRegion> regionLoader = mock(ResourceLoader.class);
+        ResourceLoader<IrisBiome> biomeLoader = mock(ResourceLoader.class);
+        when(data.getRegionLoader()).thenReturn(regionLoader);
+        when(data.getBiomeLoader()).thenReturn(biomeLoader);
+        when(regionLoader.load("reachable")).thenReturn(reachable);
+        when(biomeLoader.load("root")).thenReturn(root);
+        when(biomeLoader.load("dimension-flooded")).thenReturn(biome("dimension-flooded"));
+        when(biomeLoader.load("region-dry")).thenReturn(biome("region-dry"));
+        when(biomeLoader.load("biome-flooded")).thenReturn(biome("biome-flooded"));
+
+        Set<String> keys = dimension.getReachableBiomes(() -> data).stream()
+                .map(IrisBiome::getLoadKey)
+                .collect(Collectors.toSet());
+
+        assertEquals(Set.of("root", "dimension-flooded", "region-dry", "biome-flooded"), keys);
+    }
+
     private IrisBiome biome(String loadKey) {
         IrisBiome biome = new IrisBiome();
         biome.setLoadKey(loadKey);

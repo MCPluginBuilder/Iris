@@ -1,0 +1,13 @@
+package art.arcane.iris.engine.hydrology;
+
+import art.arcane.iris.engine.hydrology.cave.CaveVoxelView;
+
+@FunctionalInterface
+public interface HydrologyCaveVoxelViewFactory {
+    CaveVoxelView create(PlannedSurface plannedSurface);
+
+    @FunctionalInterface
+    interface PlannedSurface {
+        int resolve(int x, int z, int naturalHeight);
+    }
+}

@@ -1,5 +1,6 @@
 package art.arcane.iris.engine.mantle.components;
 
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.mantle.MantleComponent;
 import art.arcane.iris.engine.mantle.MantlePass;
@@ -11,6 +12,7 @@ import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.util.project.context.ChunkContext;
+import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.matter.Matter;
@@ -23,11 +25,14 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class MantleCarvingComponentBoundaryRadiusTest {
@@ -54,6 +59,25 @@ public class MantleCarvingComponentBoundaryRadiusTest {
 
         assertEquals(1, component.getRadius());
         assertEquals(1, Math.ceilDiv(component.getRadius(), 16));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void carvingSurfaceInputUsesNaturalTerrainInsteadOfHydrologyHeight() {
+        IrisComplex complex = mock(IrisComplex.class);
+        ProceduralStream<Double> naturalHeight = mock(ProceduralStream.class);
+        when(complex.getNaturalHeightStream()).thenReturn(naturalHeight);
+        when(naturalHeight.getDouble(anyDouble(), anyDouble())).thenReturn(70D);
+        ChunkContext context = mock(ChunkContext.class);
+        when(context.getComplex()).thenReturn(complex);
+
+        int[] heights = MantleCarvingComponent.prepareChunkSurfaceHeights(2, -3, context, new int[256]);
+
+        for (int height : heights) {
+            assertEquals(70, height);
+        }
+        verify(complex, never()).getHeightStream();
+        verify(context, never()).getHeight();
     }
 
     @Test

@@ -23,7 +23,11 @@ import art.arcane.iris.engine.framework.EngineAssignedActuator;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.UpperDimensionContext;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisProceduralBlocks;
+import art.arcane.iris.engine.object.IrisSurfaceRiverBedConfig;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisOreGenerator;
 import art.arcane.iris.engine.object.IrisOreGeneratorBounds;
@@ -88,13 +92,10 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         IrisData data = getData();
         IrisComplex complex = getComplex();
         RNG localRng = rng;
-        int fluidHeight = dimension.getFluidHeight();
-        int clampedFluidHeight = Math.min(chunkHeight, fluidHeight);
         boolean bedrockEnabled = dimension.isBedrock();
         boolean hideOres = dimension.isHideOresForHiddenOre();
         ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
         ChunkedDataCache<IrisRegion> regionCache = context.getRegion();
-        ChunkedDataCache<PlatformBlockState> fluidCache = context.getFluid();
         ChunkedDataCache<PlatformBlockState> rockCache = context.getRock();
         int realX = xf + x;
         UpperDimensionContext upperContext = getEngine().getUpperContext();
@@ -104,19 +105,47 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         KList<IrisOreGenerator> dimensionUndergroundOres = hideOres ? null : dimension.getUndergroundOreGenerators();
         IrisOreGeneratorBounds dimensionSurfaceOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getSurfaceOreGeneratorBounds();
         IrisOreGeneratorBounds dimensionUndergroundOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getUndergroundOreGeneratorBounds();
+        boolean exposeCutStrata = dimension.getHydrology() != null
+                && dimension.getHydrology().getRivers().getSurface().getBanks().isExposeCutStrata();
+        IrisSurfaceRiverBedConfig riverBed = dimension.getHydrology() == null
+                ? null
+                : dimension.getHydrology().getRivers().getSurface().getBed();
+        boolean padRiverBed = riverBed != null && !riverBed.isAllowGravityBlocks();
 
         for (int zf = 0; zf < chunkDepth; zf++) {
             int realZ = zf + z;
             IrisBiome biome = biomeCache.get(xf, zf);
             IrisRegion region = regionCache.get(xf, zf);
             int he = Math.min(chunkHeight, context.getRoundedHeight(xf, zf));
-            int hf = Math.max(clampedFluidHeight, he);
+            int surfaceFluidHeight = Math.min(
+                    chunkHeight,
+                    (int) Math.round(complex.getRiverWaterSurfaceStream().get(realX, realZ))
+            );
+            int hf = Math.max(surfaceFluidHeight, he);
             if (hf < 0) {
                 continue;
             }
 
             int topY = Math.min(hf, chunkHeight - 1);
-            PlatformBlockState fluid = fluidCache.get(xf, zf);
+            HydrologyColumnSample hydrology = complex.getHydrologyRuntime() == null
+                    ? null
+                    : complex.getHydrologyRuntime().sample(realX, realZ).orElse(null);
+            HydrologyColumnLayer hydrologyFluid = hydrology == null
+                    ? null
+                    : hydrology.primarySurfaceFluidLayer().orElse(null);
+            HydrologyColumnLayer hydrologyTerrain = hydrology == null
+                    ? null
+                    : hydrology.primarySurfaceLayer().orElse(null);
+            int cut = exposeCutStrata
+                    && hydrologyTerrain != null
+                    && hydrologyTerrain.terrainOwned()
+                    && !hydrologyTerrain.channel()
+                    ? Math.max(0, hydrology.naturalHeight() - he)
+                    : 0;
+            boolean riverOwned = padRiverBed && hydrologyTerrain != null && hydrologyTerrain.terrainOwned();
+            PlatformBlockState fluid = hydrologyFluid == null
+                    ? complex.resolveSurfaceFluid(realX, realZ)
+                    : complex.resolveHydrologyFluid(hydrologyFluid.profileKey(), realX, realZ);
             PlatformBlockState rock = rockCache.get(xf, zf);
             PlatformBlockState mappedSurfaceBlock = complex.getImageMapRuntime().sampleSurfaceBlock(realX, realZ);
             KList<IrisOreGenerator> biomeSurfaceOres = hideOres ? null : biome.getSurfaceOreGenerators();
@@ -158,15 +187,15 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
 
                 if (i > he && i <= hf) {
                     int fdepth = hf - i;
-                    if (fblocks == null) {
+                    if (hydrologyFluid == null && fblocks == null) {
                         fblocks = biome.generateSeaLayers(realX, realZ, localRng, hf - he, data);
                     }
-
-                    if (fblocks.hasIndex(fdepth)) {
-                        h.setRaw(xf, i, zf, fblocks.get(fdepth));
-                    } else {
-                        h.setRaw(xf, i, zf, fluid);
-                    }
+                    h.setRaw(xf, i, zf, HydrologyFluidLayerSelector.select(
+                            fblocks,
+                            fdepth,
+                            fluid,
+                            hydrologyFluid != null
+                    ));
                     continue;
                 }
 
@@ -177,11 +206,15 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
                         continue;
                     }
                     if (blocks == null) {
-                        blocks = biome.generateLayers(dimension, realX, realZ, localRng, he, he, data, complex);
+                        blocks = biome.generateLayers(dimension, realX, realZ, localRng, he + cut, he + cut, data, complex);
                     }
 
-                    if (blocks.hasIndex(depth)) {
-                        h.setRaw(xf, i, zf, blocks.get(depth));
+                    if (blocks.hasIndex(depth + cut)) {
+                        PlatformBlockState layerBlock = blocks.get(depth + cut);
+                        if (riverOwned && depth <= riverBed.getPadding() && IrisProceduralBlocks.isGravityAffected(layerBlock)) {
+                            layerBlock = riverBed.getPaddingPalette().get(localRng, realX, i, realZ, data);
+                        }
+                        h.setRaw(xf, i, zf, layerBlock);
                         continue;
                     }
 

@@ -8,6 +8,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 public final class StubPlatformStateTest {
@@ -44,6 +45,19 @@ public final class StubPlatformStateTest {
     }
 
     @Test
+    public void noOpStateTransformsReuseTheCanonicalInstance() {
+        PlatformBlockState stone = state("minecraft:stone");
+        PlatformBlockState leaves = state("minecraft:oak_leaves[distance=7,persistent=false]");
+
+        assertSame(stone, StubPlatform.rotateForTest(IrisObjectRotation.of(0, 90, 0), stone));
+        assertSame(leaves, leaves.withProperty("distance", "7"));
+        assertSame(leaves, StubPlatform.mergeForTest(
+                leaves,
+                state("minecraft:oak_leaves[persistent=false]")
+        ));
+    }
+
+    @Test
     public void classifiesVanillaFluidStates() {
         PlatformBlockState water = state("minecraft:water[level=0]");
         PlatformBlockState lava = state("minecraft:lava[level=0]");
@@ -57,6 +71,13 @@ public final class StubPlatformStateTest {
         assertFalse(lava.isSolid());
         assertFalse(stone.isFluid());
         assertTrue(stone.isSolid());
+    }
+
+    @Test
+    public void classifiesCanonicalWaterloggedProperty() {
+        assertTrue(state("minecraft:brain_coral_fan[waterlogged=true]").isWaterLogged());
+        assertFalse(state("minecraft:brain_coral_fan[waterlogged=false]").isWaterLogged());
+        assertFalse(state("minecraft:brain_coral_fan").isWaterLogged());
     }
 
     private PlatformBlockState state(String key) {

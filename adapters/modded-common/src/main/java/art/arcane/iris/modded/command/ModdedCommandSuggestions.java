@@ -25,6 +25,8 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.StructureReachability;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureQuery;
+import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
@@ -62,6 +64,7 @@ final class ModdedCommandSuggestions {
     static final SuggestionProvider<CommandSourceStack> OBJECT_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestObjectKeys(context, builder);
     static final SuggestionProvider<CommandSourceStack> STRUCTURE_KEYS = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestStructureKeys(context, builder);
     static final SuggestionProvider<CommandSourceStack> POI_TYPES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> SharedSuggestionProvider.suggest(List.of("buried_treasure"), builder);
+    static final SuggestionProvider<CommandSourceStack> HYDROLOGY_TYPES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestHydrologyTypes(context, builder);
     static final SuggestionProvider<CommandSourceStack> PACK_NAMES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestPackNames(context, builder);
     static final SuggestionProvider<CommandSourceStack> DIMENSION_NAMES = (CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) -> suggestDimensionNames(context, builder);
 
@@ -79,12 +82,52 @@ final class ModdedCommandSuggestions {
         try {
             Engine engine = IrisModdedCommands.engineFor(context.getSource().getLevel());
             if (engine != null) {
-                return SharedSuggestionProvider.suggest(engine.getData().getBiomeLoader().getPossibleKeys(), builder);
+                return SharedSuggestionProvider.suggest(reachableBiomeKeys(engine), builder);
             }
         } catch (Throwable e) {
             warnTabFailure("biome keys", context.getSource(), e);
         }
         return builder.buildFuture();
+    }
+
+    private static CompletableFuture<Suggestions> suggestHydrologyTypes(
+            CommandContext<CommandSourceStack> context,
+            SuggestionsBuilder builder
+    ) {
+        ModdedCommandFeedback.tab(context.getSource());
+        try {
+            Engine engine = IrisModdedCommands.engineFor(context.getSource().getLevel());
+            if (engine != null && engine.getComplex().getHydrologyRuntime() != null) {
+                return SharedSuggestionProvider.suggest(
+                        engine.getComplex().getHydrologyRuntime().featureQueryKeys(), builder);
+            }
+        } catch (Throwable error) {
+            warnTabFailure("hydrology types", context.getSource(), error);
+        }
+        return SharedSuggestionProvider.suggest(
+                HydrologyFeatureQuery.suggestions(List.of()), builder);
+    }
+
+    static Set<String> reachableBiomeKeys(Engine engine) {
+        return reachableBiomeKeys(engine.getAllBiomes());
+    }
+
+    static Set<String> reachableBiomeKeys(Iterable<IrisBiome> biomes) {
+        Set<String> keys = new TreeSet<>();
+        for (IrisBiome biome : biomes) {
+            if (biome != null && biome.getLoadKey() != null && !biome.getLoadKey().isBlank()) {
+                keys.add(biome.getLoadKey());
+            }
+        }
+        return keys;
+    }
+
+    static boolean isReachableBiome(Engine engine, String biomeKey) {
+        return isReachableBiome(engine.getAllBiomes(), biomeKey);
+    }
+
+    static boolean isReachableBiome(Iterable<IrisBiome> biomes, String biomeKey) {
+        return biomeKey != null && reachableBiomeKeys(biomes).contains(biomeKey.trim());
     }
 
     private static CompletableFuture<Suggestions> suggestRegionKeys(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {

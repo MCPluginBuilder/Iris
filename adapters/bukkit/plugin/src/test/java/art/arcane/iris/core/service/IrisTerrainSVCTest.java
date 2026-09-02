@@ -2,8 +2,13 @@ package art.arcane.iris.core.service;
 
 import art.arcane.iris.api.terrain.IrisColumnField;
 import art.arcane.iris.api.terrain.IrisColumnQuery;
+import art.arcane.iris.api.terrain.IrisRiverState;
 import art.arcane.iris.api.terrain.IrisSurfaceKind;
 import art.arcane.iris.api.terrain.IrisTerrainService;
+import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
+import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureRef;
+import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
 import art.arcane.iris.util.common.plugin.IrisService;
 import org.bukkit.World;
 import org.junit.Test;
@@ -12,6 +17,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -82,9 +88,7 @@ public class IrisTerrainSVCTest {
         IrisTerrainSVC service = new IrisTerrainSVC();
         AtomicInteger sinkCalls = new AtomicInteger();
 
-        boolean answered = service.sampleColumns(null, SMALL,
-                (int blockX, int blockZ, int surfaceHeight, IrisSurfaceKind kind, String biomeKey)
-                        -> sinkCalls.incrementAndGet());
+        boolean answered = service.sampleColumns(null, SMALL, sample -> sinkCalls.incrementAndGet());
 
         assertFalse(answered);
         assertEquals(0, sinkCalls.get());
@@ -96,5 +100,49 @@ public class IrisTerrainSVCTest {
 
         assertFalse(service.sampleColumns(null, null, null));
         assertFalse(service.sampleColumns(null, SMALL, null));
+    }
+
+    @Test
+    public void acceptedHydrologyMapsToThePublicDiagnosticStates() {
+        assertEquals(IrisRiverState.NONE, IrisTerrainSVC.riverState(null));
+        assertEquals(IrisRiverState.WET, IrisTerrainSVC.riverState(river(true)));
+        assertEquals(IrisRiverState.DRY, IrisTerrainSVC.riverState(river(false)));
+    }
+
+    private static HydrologyColumnSample river(boolean connectedFluid) {
+        HydrologyFeatureRef feature = new HydrologyFeatureRef(
+                1L,
+                HydrologyFeatureType.SURFACE_POOL,
+                2L,
+                3L,
+                0,
+                63,
+                0,
+                1,
+                0,
+                false
+        );
+        HydrologyColumnLayer layer = new HydrologyColumnLayer(
+                feature,
+                60,
+                63,
+                63,
+                true,
+                false,
+                false,
+                connectedFluid,
+                false,
+                false,
+                true,
+                connectedFluid,
+                false,
+                "water",
+                "river",
+                "mouth",
+                "shore",
+                "dry",
+                "cave"
+        );
+        return new HydrologyColumnSample(0, 0, 70, 63, false, "parent", List.of(layer));
     }
 }

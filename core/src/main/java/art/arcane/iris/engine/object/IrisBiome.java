@@ -130,6 +130,8 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     private int lockLayersMax = 7;
     @Desc("Profile-driven 3D cave configuration")
     private IrisCaveProfile caveProfile = new IrisCaveProfile();
+    @Desc("Biome-level river placement, routing, profile, biome, and geometry policy. Omit to inherit region and dimension settings.")
+    private IrisRiverPolicy riverPolicy = null;
     @MinNumber(1)
     @MaxNumber(512)
     @Desc("The rarity of this biome (integer)")

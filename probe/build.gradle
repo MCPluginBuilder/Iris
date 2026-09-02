@@ -48,6 +48,15 @@ tasks.named('test').configure {
     dependsOn(':core:compileJava')
 }
 
+tasks.register('hydrologyProbe', JavaExec) {
+    group = 'verification'
+    description = 'Scans deterministic hydrology seeds and reports accepted feature coordinates plus cold and warm planner timings.'
+    mainClass = 'art.arcane.iris.probe.HydrologyPlannerProbe'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+    dependsOn(':core:compileJava')
+}
+
 Provider<String> probePack = providers.gradleProperty('probePack')
 Provider<String> probeDimension = providers.gradleProperty('probeDimension')
 Provider<String> probeWarmupChunks = providers.gradleProperty('probeWarmupChunks').orElse('256')
@@ -56,6 +65,25 @@ Provider<String> probeCenterChunkX = providers.gradleProperty('probeCenterChunkX
 Provider<String> probeCenterChunkZ = providers.gradleProperty('probeCenterChunkZ').orElse('2048')
 Provider<String> probeMulticore = providers.gradleProperty('probeMulticore').orElse('false')
 Provider<String> probeStudio = providers.gradleProperty('probeStudio').orElse('false')
+Provider<String> explicitProbeMulticore = providers.gradleProperty('probeMulticore')
+Provider<String> explicitProbeStudio = providers.gradleProperty('probeStudio')
+Provider<String> probeSeeds = providers.gradleProperty('probeSeeds')
+Provider<String> probeMinimumTileX = providers.gradleProperty('probeMinimumTileX')
+Provider<String> probeMaximumTileX = providers.gradleProperty('probeMaximumTileX')
+Provider<String> probeMinimumTileZ = providers.gradleProperty('probeMinimumTileZ')
+Provider<String> probeMaximumTileZ = providers.gradleProperty('probeMaximumTileZ')
+Provider<String> probeRequiredCoverage = providers.gradleProperty('probeRequiredCoverage')
+Provider<String> probeSeed = providers.gradleProperty('probeSeed')
+Provider<String> probeMinimumChunkX = providers.gradleProperty('probeMinimumChunkX')
+Provider<String> probeMaximumChunkX = providers.gradleProperty('probeMaximumChunkX')
+Provider<String> probeMinimumChunkZ = providers.gradleProperty('probeMinimumChunkZ')
+Provider<String> probeMaximumChunkZ = providers.gradleProperty('probeMaximumChunkZ')
+Provider<String> probeParallelism = providers.gradleProperty('probeParallelism')
+Provider<String> probeShuffleSeed = providers.gradleProperty('probeShuffleSeed')
+Provider<String> probeJfr = providers.gradleProperty('probeJfr')
+Provider<String> probeTileX = providers.gradleProperty('probeTileX')
+Provider<String> probeTileZ = providers.gradleProperty('probeTileZ')
+Provider<String> probeOutput = providers.gradleProperty('probeOutput')
 
 tasks.register('genProbe', JavaExec) {
     group = 'verification'
@@ -80,6 +108,149 @@ tasks.register('genProbe', JavaExec) {
             probeCenterChunkZ.get(),
             probeMulticore.get(),
             probeStudio.get())
+    }
+}
+
+tasks.register('hydrologyPackProbe', JavaExec) {
+    group = 'verification'
+    description = 'Scans explicitly bounded real-pack hydrology tiles across multiple engine seeds and enforces accepted feature/profile coverage.'
+    mainClass = 'art.arcane.iris.probe.HydrologyPackProbe'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+    dependsOn(':core:compileJava')
+    doFirst {
+        Map<String, Provider<String>> required = [
+            probePack: probePack,
+            probeDimension: probeDimension,
+            probeSeeds: probeSeeds,
+            probeMinimumTileX: probeMinimumTileX,
+            probeMaximumTileX: probeMaximumTileX,
+            probeMinimumTileZ: probeMinimumTileZ,
+            probeMaximumTileZ: probeMaximumTileZ,
+            probeRequiredCoverage: probeRequiredCoverage,
+            probeStudio: explicitProbeStudio
+        ]
+        required.each { String name, Provider<String> value ->
+            if (!value.isPresent() || value.get().isBlank()) {
+                throw new GradleException("hydrologyPackProbe requires -P${name}=<value>")
+            }
+        }
+        args(
+            probePack.get(),
+            probeDimension.get(),
+            probeSeeds.get(),
+            probeMinimumTileX.get(),
+            probeMaximumTileX.get(),
+            probeMinimumTileZ.get(),
+            probeMaximumTileZ.get(),
+            probeRequiredCoverage.get(),
+            explicitProbeStudio.get())
+    }
+}
+
+tasks.register('generationOrderProbe', JavaExec) {
+    group = 'verification'
+    description = 'Compares complete real-pack chunk block and biome hashes across forward, reverse, shuffled and bounded-parallel generation orders.'
+    mainClass = 'art.arcane.iris.probe.GenerationOrderProbe'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs('--add-modules', 'jdk.incubator.vector')
+    dependsOn(':core:compileJava')
+    doFirst {
+        Map<String, Provider<String>> required = [
+            probePack: probePack,
+            probeDimension: probeDimension,
+            probeSeed: probeSeed,
+            probeMinimumChunkX: probeMinimumChunkX,
+            probeMaximumChunkX: probeMaximumChunkX,
+            probeMinimumChunkZ: probeMinimumChunkZ,
+            probeMaximumChunkZ: probeMaximumChunkZ,
+            probeParallelism: probeParallelism,
+            probeShuffleSeed: probeShuffleSeed,
+            probeMulticore: explicitProbeMulticore,
+            probeStudio: explicitProbeStudio
+        ]
+        required.each { String name, Provider<String> value ->
+            if (!value.isPresent() || value.get().isBlank()) {
+                throw new GradleException("generationOrderProbe requires -P${name}=<value>")
+            }
+        }
+        args(
+            probePack.get(),
+            probeDimension.get(),
+            probeSeed.get(),
+            probeMinimumChunkX.get(),
+            probeMaximumChunkX.get(),
+            probeMinimumChunkZ.get(),
+            probeMaximumChunkZ.get(),
+            probeParallelism.get(),
+            probeShuffleSeed.get(),
+            explicitProbeMulticore.get(),
+            explicitProbeStudio.get())
+    }
+}
+
+tasks.register('riverTransectProbe', JavaExec) {
+    group = 'verification'
+    description = 'Plans one hydrology tile over a real pack and renders every surface river as a plan, cross-sections and a summary with ocean-write and containment gates.'
+    mainClass = 'art.arcane.iris.probe.RiverTransectProbe'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs('--add-modules', 'jdk.incubator.vector', '-Djava.awt.headless=true')
+    dependsOn(':core:compileJava')
+    doFirst {
+        Map<String, Provider<String>> required = [
+            probePack: probePack,
+            probeDimension: probeDimension,
+            probeSeed: probeSeed,
+            probeTileX: probeTileX,
+            probeTileZ: probeTileZ,
+            probeOutput: probeOutput
+        ]
+        required.each { String name, Provider<String> value ->
+            if (!value.isPresent() || value.get().isBlank()) {
+                throw new GradleException("riverTransectProbe requires -P${name}=<value>")
+            }
+        }
+        args(
+            probePack.get(),
+            probeDimension.get(),
+            probeSeed.get(),
+            probeTileX.get(),
+            probeTileZ.get(),
+            probeOutput.get(),
+            probeStudio.get())
+    }
+}
+
+['hydrologyProbe', 'genProbe', 'hydrologyPackProbe', 'generationOrderProbe', 'riverTransectProbe'].each { String taskName ->
+    tasks.named(taskName, JavaExec).configure { JavaExec task ->
+        doFirst {
+            if (probeJfr.isPresent()) {
+                String requestedPath = probeJfr.get()
+                if (requestedPath.isBlank()) {
+                    throw new GradleException('probeJfr must be a nonblank absolute path')
+                }
+                File recording = new File(requestedPath)
+                if (!recording.isAbsolute()) {
+                    throw new GradleException('probeJfr must be an absolute path')
+                }
+                if (recording.isDirectory()) {
+                    throw new GradleException('probeJfr must name a recording file, not a directory')
+                }
+                java.nio.file.Path normalized = recording.canonicalFile.toPath()
+                java.nio.file.Path repository = rootProject.projectDir.canonicalFile.toPath()
+                if (normalized.startsWith(repository)) {
+                    throw new GradleException('probeJfr must point outside the repository')
+                }
+                File parent = normalized.toFile().parentFile
+                if (parent == null || !parent.isDirectory()) {
+                    throw new GradleException('probeJfr parent directory must already exist')
+                }
+                task.jvmArgs(
+                        '-XX:FlightRecorderOptions=stackdepth=256',
+                        "-XX:StartFlightRecording=filename=${normalized},settings=profile,dumponexit=true"
+                )
+            }
+        }
     }
 }
 

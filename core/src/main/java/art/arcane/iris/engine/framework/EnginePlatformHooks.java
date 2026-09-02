@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.mantle.MantleComponent;
 import art.arcane.volmlib.util.collection.KList;
 
 public interface EnginePlatformHooks {
@@ -69,5 +70,9 @@ public interface EnginePlatformHooks {
 
     default boolean shouldBypassMantleStages(Engine engine) {
         return false;
+    }
+
+    default boolean shouldGenerateMantleComponent(Engine engine, MantleComponent component) {
+        return true;
     }
 }

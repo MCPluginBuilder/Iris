@@ -56,7 +56,6 @@ public class BukkitChunkGeneratorInitialSpawnTest {
             chunkFuture.complete(chunk);
             assertNotNull(regionTask.get());
             assertFalse(readiness.isDone());
-
             regionTask.get().run();
             readiness.get(5L, TimeUnit.SECONDS);
         }

@@ -481,8 +481,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
                 listener.onChunkFailed(x, z);
             } else {
                 listener.onChunkGenerated(x, z);
-                cleanupMantleChunk(x, z);
-                listener.onChunkCleaned(x, z);
+                cleanupMantleChunksCoveredBy(x, z, listener);
                 onChunkCompleted(x, z, chunk);
                 success = true;
             }
@@ -692,11 +691,11 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         }
     }
 
-    private void cleanupMantleChunk(int x, int z) {
+    private void cleanupMantleChunksCoveredBy(int x, int z, PregenListener listener) {
         Engine engine = resolveMetricsEngine();
         if (engine != null) {
             try {
-                engine.getMantle().forceCleanupChunk(x, z);
+                engine.getMantle().cleanupChunksCoveredBy(x, z, true, listener::onChunkCleaned);
             } catch (Throwable ignored) {
             }
         }

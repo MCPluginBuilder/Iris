@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.engine.IrisEngineMantle;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.Level;
@@ -33,7 +34,12 @@ import java.util.List;
 import java.util.stream.Stream;
 
 public final class ModdedDimensionStorage {
-    private static final List<String> CHUNK_DATA_FOLDERS = List.of("region", "entities", "poi", "mantle");
+    private static final List<String> CHUNK_DATA_FOLDERS = List.of(
+            "region",
+            "entities",
+            "poi",
+            IrisEngineMantle.STORAGE_FOLDER_NAME
+    );
 
     private ModdedDimensionStorage() {
     }
