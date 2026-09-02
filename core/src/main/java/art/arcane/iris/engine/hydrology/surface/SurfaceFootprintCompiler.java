@@ -82,7 +82,8 @@ public final class SurfaceFootprintCompiler {
             HydraulicSegment segment = exposed.get(stations.segmentIndex()[column.station()]);
             int flowX = (int) StrictMath.round(centerline.tangentX()[column.station()]);
             int flowZ = (int) StrictMath.round(centerline.tangentZ()[column.station()]);
-            boolean source = column.station() == 0 && column.role() == SurfaceRole.CHANNEL && !column.apron();
+            boolean source = column.station() == 0 && column.role() == SurfaceRole.CHANNEL && !column.apron()
+                    && column.x() == centerline.x()[0] && column.z() == centerline.z()[0];
             int y = column.role() == SurfaceRole.CHANNEL ? column.headY() : column.height();
             HydrologyFeatureRef feature = features.feature(segment, column.role(), source, column.x(), y, column.z(), flowX, flowZ);
             columns.add(new SurfaceLayerColumn(

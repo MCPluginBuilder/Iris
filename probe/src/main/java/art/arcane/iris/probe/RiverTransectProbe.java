@@ -47,6 +47,7 @@ public final class RiverTransectProbe {
     private static final int MAXIMUM_PLAN_COLUMNS = 6_000_000;
     private static final int MAXIMUM_DETAILS = 16;
     private static final int TABLE_HALF_SECTION = 16;
+    private static final int[] HEADWATER_SECTIONS = {0, 6, 12, 18, 24};
 
     private RiverTransectProbe() {
     }
@@ -495,10 +496,14 @@ public final class RiverTransectProbe {
             IrisComplex complex,
             IrisHydrologyRuntime runtime
     ) throws IOException {
-        int[] stations = sectionStations(centerline.size());
+        int[] spaced = sectionStations(centerline.size());
+        int[] stations = new int[HEADWATER_SECTIONS.length + spaced.length];
+        for (int index = 0; index < HEADWATER_SECTIONS.length; index++) {
+            stations[index] = Math.min(centerline.size() - 1, HEADWATER_SECTIONS[index]);
+        }
+        System.arraycopy(spaced, 0, stations, HEADWATER_SECTIONS.length, spaced.length);
         StringBuilder text = new StringBuilder();
-        for (int section = 0; section < SECTIONS; section++) {
-            int station = stations[section];
+        for (int station : stations) {
             text.append("station ").append(station)
                     .append(" at ").append(centerline.x()[station]).append(',').append(centerline.z()[station])
                     .append(" head=").append(column(complex, runtime, centerline.x()[station], centerline.z()[station]).water())

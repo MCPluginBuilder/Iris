@@ -74,9 +74,11 @@ public class HydrologyStyledGeometryTest {
         RiverCourse surface = courses(first, RiverCourseType.SURFACE).getFirst();
         DrainageNode surfaceSource = first.node(surface.sourceNodeId().orElseThrow()).orElseThrow();
         HydraulicSegment surfaceStart = surface.segments().getFirst();
-        int maximumSurfaceWidth = surfaceSettings.surface().maximumWidth()
+        // The first segment carries the spring pool: wider by the spring ratio and one block deeper.
+        int maximumSurfaceWidth = (int) Math.ceil(surfaceSettings.surface().maximumWidth()
+                * surfaceSettings.surface().banks().springWidthRatio())
                 + (surfaceStart.receivingPool() ? 2 : 0);
-        int maximumSurfaceDepth = surfaceSettings.surface().maximumDepth()
+        int maximumSurfaceDepth = surfaceSettings.surface().maximumDepth() + 1
                 + (surfaceStart.receivingPool() ? 1 : 0);
         assertTrue(surfaceStart.width() >= surfaceSettings.surface().minimumWidth());
         assertTrue(surfaceStart.width() <= maximumSurfaceWidth);

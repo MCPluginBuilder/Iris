@@ -1367,7 +1367,7 @@ public class HydrologyFootprintCompilerTest {
     }
 
     @Test
-    public void surfaceHeadwaterTapersUpToChannelWidthWithoutARadialBasin() {
+    public void surfaceHeadwaterOpensAsASpringPoolThatNarrowsToTheChannel() {
         HydraulicSegment segment = new HydraulicSegment(
                 521L,
                 520L,
@@ -1385,16 +1385,21 @@ public class HydrologyFootprintCompilerTest {
         HydrologyFootprintCompiler compiler = compiler(terrain);
         RiverFootprint footprint = compiler.compile(List.of(course));
 
-        assertTrue(surfaceFluidLayer(footprint, -4, 0) == null);
-        assertTrue(wetHalfWidth(footprint, 0) < wetHalfWidth(footprint, 32));
-        assertTrue(wetHalfWidth(footprint, 32) <= wetHalfWidth(footprint, 56));
+        assertTrue(wetHalfWidth(footprint, 0) > wetHalfWidth(footprint, 32));
+        assertTrue(wetHalfWidth(footprint, 0) >= 2 * wetHalfWidth(footprint, 56));
+        assertTrue(Math.abs(wetHalfWidth(footprint, 32) - wetHalfWidth(footprint, 56)) <= 1);
+        for (int x = 1; x <= 24; x++) {
+            assertTrue(wetHalfWidth(footprint, x) <= wetHalfWidth(footprint, x - 1) + 1);
+        }
         HydrologyColumnLayer source = surfaceFluidLayer(footprint, 0, 0);
         HydrologyColumnLayer cruise = surfaceFluidLayer(footprint, 56, 0);
         assertTrue(source != null);
         assertTrue(cruise != null);
+        assertTrue(source.feature().source());
+        assertFalse(surfaceFluidLayer(footprint, 0, 3).feature().source());
         int sourceDepth = source.fluidHeadY() - source.bedY();
         int cruiseDepth = cruise.fluidHeadY() - cruise.bedY();
-        assertTrue(Math.abs(sourceDepth - cruiseDepth) <= 1);
+        assertTrue(sourceDepth >= cruiseDepth + 1);
     }
 
     @Test
