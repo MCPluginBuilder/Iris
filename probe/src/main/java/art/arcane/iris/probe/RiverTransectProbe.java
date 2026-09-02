@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -42,6 +43,8 @@ public final class RiverTransectProbe {
     private static final int SECTION_SCALE = 4;
     private static final int SECTION_ROW_HEIGHT = 120;
     private static final int MAXIMUM_PLAN_COLUMNS = 6_000_000;
+    private static final int MAXIMUM_DETAILS = 16;
+    private static final int TABLE_HALF_SECTION = 16;
 
     private RiverTransectProbe() {
     }
@@ -72,7 +75,8 @@ public final class RiverTransectProbe {
             int maximumCut,
             int maximumBankStep,
             int oceanWrites,
-            int uncontainedWetCells
+            int uncontainedWetCells,
+            List<String> details
     ) {
         boolean passes() {
             return oceanWrites == 0 && uncontainedWetCells == 0;
@@ -187,7 +191,12 @@ public final class RiverTransectProbe {
                 writePlan(new File(configuration.output(), "course-" + course.id() + ".png"), bounds, columns);
                 writeSections(new File(configuration.output(), "course-" + course.id() + "-sections.png"),
                         centerline, complex, runtime);
+                writeSectionTable(new File(configuration.output(), "course-" + course.id() + "-sections.txt"),
+                        centerline, complex, runtime);
                 System.out.println(summary.line());
+                for (String detail : summary.details()) {
+                    System.out.println(PREFIX + "   " + detail);
+                }
             }
             writeSummary(new File(configuration.output(), "summary.txt"), configuration, tile, summaries);
             boolean pass = summaries.stream().allMatch(CourseSummary::passes);
@@ -214,10 +223,18 @@ public final class RiverTransectProbe {
         int maximumBankStep = 0;
         int oceanWrites = 0;
         int uncontained = 0;
-        for (ColumnView column : columns.values()) {
+        ArrayList<String> details = new ArrayList<>();
+        String worstStep = null;
+        ArrayList<ColumnView> ordered = new ArrayList<>(columns.values());
+        ordered.sort(Comparator.comparingInt(ColumnView::z).thenComparingInt(ColumnView::x));
+        for (ColumnView column : ordered) {
             boolean submerged = column.natural() <= seaLevel;
             if (submerged && (column.terrain() != column.natural() || column.role().owned())) {
                 oceanWrites++;
+                if (details.size() < MAXIMUM_DETAILS) {
+                    details.add("oceanWrite " + column.x() + "," + column.z()
+                            + " natural=" + column.natural() + " terrain=" + column.terrain() + " role=" + column.role());
+                }
             }
             if (!column.role().owned()) {
                 continue;
@@ -228,17 +245,46 @@ public final class RiverTransectProbe {
             if (column.role() == Role.CHANNEL) {
                 if (column.water() != NO_WATER && spills(column, columns)) {
                     uncontained++;
+                    if (details.size() < MAXIMUM_DETAILS) {
+                        details.add("uncontained " + column.x() + "," + column.z()
+                                + " water=" + column.water() + " terrain=" + column.terrain()
+                                + " natural=" + column.natural() + " neighbours=" + neighbourHeights(column, columns));
+                    }
                 }
                 continue;
             }
-            maximumBankStep = Math.max(maximumBankStep, bankStep(column, columns.get(RiverFootprint.pack(column.x() + 1, column.z()))));
-            maximumBankStep = Math.max(maximumBankStep, bankStep(column, columns.get(RiverFootprint.pack(column.x(), column.z() + 1))));
+            for (int[] offset : new int[][] {{1, 0}, {0, 1}}) {
+                ColumnView neighbour = columns.get(RiverFootprint.pack(column.x() + offset[0], column.z() + offset[1]));
+                int step = bankStep(column, neighbour);
+                if (step > maximumBankStep) {
+                    maximumBankStep = step;
+                    worstStep = "bankStep " + step + " at " + column.x() + "," + column.z()
+                            + " (" + column.role() + " terrain=" + column.terrain() + " natural=" + column.natural()
+                            + ") vs " + neighbour.x() + "," + neighbour.z()
+                            + " (" + neighbour.role() + " terrain=" + neighbour.terrain() + " natural=" + neighbour.natural() + ")";
+                }
+            }
+        }
+        if (worstStep != null) {
+            details.add(worstStep);
         }
         if (owned == 0) {
             minimumCut = 0;
             maximumCut = 0;
         }
-        return new CourseSummary(id, stations, owned, minimumCut, maximumCut, maximumBankStep, oceanWrites, uncontained);
+        return new CourseSummary(id, stations, owned, minimumCut, maximumCut, maximumBankStep, oceanWrites, uncontained, List.copyOf(details));
+    }
+
+    private static String neighbourHeights(ColumnView channel, Map<Long, ColumnView> columns) {
+        StringBuilder text = new StringBuilder();
+        for (int[] offset : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+            ColumnView neighbour = columns.get(RiverFootprint.pack(channel.x() + offset[0], channel.z() + offset[1]));
+            if (!text.isEmpty()) {
+                text.append(' ');
+            }
+            text.append(neighbour == null ? "?" : neighbour.role() + ":" + neighbour.terrain());
+        }
+        return text.toString();
     }
 
     private static boolean spills(ColumnView channel, Map<Long, ColumnView> columns) {
@@ -425,6 +471,37 @@ public final class RiverTransectProbe {
         ImageIO.write(image, "png", file);
     }
 
+    private static void writeSectionTable(
+            File file,
+            SurfaceCenterline centerline,
+            IrisComplex complex,
+            IrisHydrologyRuntime runtime
+    ) throws IOException {
+        int[] stations = sectionStations(centerline.size());
+        StringBuilder text = new StringBuilder();
+        for (int section = 0; section < SECTIONS; section++) {
+            int station = stations[section];
+            text.append("station ").append(station)
+                    .append(" at ").append(centerline.x()[station]).append(',').append(centerline.z()[station])
+                    .append(" head=").append(column(complex, runtime, centerline.x()[station], centerline.z()[station]).water())
+                    .append('\n');
+            text.append("offset natural terrain water role\n");
+            double normalX = centerline.normalX(station);
+            double normalZ = centerline.normalZ(station);
+            for (int offset = -TABLE_HALF_SECTION; offset <= TABLE_HALF_SECTION; offset++) {
+                int x = (int) Math.round(centerline.x()[station] + normalX * offset);
+                int z = (int) Math.round(centerline.z()[station] + normalZ * offset);
+                ColumnView column = column(complex, runtime, x, z);
+                int streamNatural = (int) Math.round(complex.getNaturalHeightStream().getDouble(x, z));
+                text.append(String.format(Locale.ROOT, "%4d %4d %4d %5s %s%s\n",
+                        offset, column.natural(), column.terrain(),
+                        column.water() == NO_WATER ? "-" : Integer.toString(column.water()), column.role(),
+                        streamNatural == column.natural() ? "" : " stream=" + streamNatural));
+            }
+        }
+        Files.writeString(file.toPath(), text.toString(), StandardCharsets.UTF_8);
+    }
+
     private static int rowY(int rowTop, int height, int minimum, double scale) {
         return rowTop + SECTION_ROW_HEIGHT - 6 - (int) Math.round((height - minimum + 1) * scale);
     }
@@ -458,6 +535,9 @@ public final class RiverTransectProbe {
         int uncontained = 0;
         for (CourseSummary summary : summaries) {
             text.append(summary.line()).append('\n');
+            for (String detail : summary.details()) {
+                text.append("  ").append(detail).append('\n');
+            }
             maximumCut = Math.max(maximumCut, summary.maximumCut());
             maximumBankStep = Math.max(maximumBankStep, summary.maximumBankStep());
             oceanWrites += summary.oceanWrites();

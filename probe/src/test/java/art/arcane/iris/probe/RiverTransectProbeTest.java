@@ -42,6 +42,10 @@ public class RiverTransectProbeTest {
         assertEquals(1, summary.oceanWrites());
         assertEquals(1, summary.uncontainedWetCells());
         assertFalse(summary.passes());
+        assertEquals(3, summary.details().size());
+        assertTrue(summary.details().get(0).startsWith("uncontained 0,0"));
+        assertTrue(summary.details().get(1).startsWith("oceanWrite 5,5"));
+        assertTrue(summary.details().get(2).startsWith("bankStep 1"));
     }
 
     @Test

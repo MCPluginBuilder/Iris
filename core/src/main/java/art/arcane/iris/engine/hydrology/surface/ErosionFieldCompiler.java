@@ -12,7 +12,10 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.util.Objects;
 
 public final class ErosionFieldCompiler {
+    private static final int BLEND_SMOOTHING_RADIUS = 12;
+    private static final double THALWEG_FRACTION = 0.45D;
     private static final int[][] CARDINALS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    private static final int[][] DIAGONALS = {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
     private static final long OUTLINE_SALT = 0x4f55544c494e45L;
     private static final long BED_SALT = 0x424544L;
     private static final double EPSILON = 1.0E-9D;
@@ -64,9 +67,11 @@ public final class ErosionFieldCompiler {
                     }
                     long key = RiverFootprint.pack(cellX, cellZ);
                     int existing = nearest.get(key);
+                    // A cell on a station's cross-section row ties between the two segments meeting
+                    // there; the later station owns it so the row uses the head its own ring bounded.
                     if (existing < 0
                             || cellDistance < distance.get(key) - EPSILON
-                            || Math.abs(cellDistance - distance.get(key)) <= EPSILON && station < existing) {
+                            || Math.abs(cellDistance - distance.get(key)) <= EPSILON && station > existing) {
                         nearest.put(key, station);
                         distance.put(key, cellDistance);
                     }
@@ -100,7 +105,7 @@ public final class ErosionFieldCompiler {
             if (wet) {
                 double normalized = Math.min(1D, cellDistance / Math.max(0.5D, outline));
                 double depth = channel.depth()[station];
-                double local = 1D + (depth - 1D) * (1D - normalized * normalized)
+                double local = 1D + (depth - 1D) * bowl(normalized)
                         + 0.5D * roughness * SurfaceNoise.signed(courseSeed ^ BED_SALT, cellX, cellZ, banks.roughnessWavelength())
                         + (basin[station] ? 1D : 0D);
                 int bed = Math.min(natural, head - Math.max(1, (int) StrictMath.round(local)));
@@ -131,31 +136,48 @@ public final class ErosionFieldCompiler {
         return new ErosionField(columns, uncontained);
     }
 
+    /**
+     * Every dry cell touching water, diagonals included, keeps the lip; only cardinal neighbours can
+     * spill, so only they count as uncontained.
+     */
     private int contain(Long2ObjectOpenHashMap<SurfaceColumn> columns, LongArrayList wetKeys, int freeboard) {
         int uncontained = 0;
         for (int index = 0; index < wetKeys.size(); index++) {
             SurfaceColumn wet = columns.get(wetKeys.getLong(index));
-            for (int[] offset : CARDINALS) {
-                long key = RiverFootprint.pack(wet.x() + offset[0], wet.z() + offset[1]);
-                SurfaceColumn neighbour = columns.get(key);
-                if (neighbour == null) {
-                    if (wet.headY() != seaLevel) {
-                        uncontained++;
-                    }
-                    continue;
-                }
-                if (neighbour.role() == SurfaceRole.CHANNEL) {
-                    continue;
-                }
-                int required = wet.headY() + freeboard;
-                if (neighbour.height() < required) {
-                    int raised = Math.min(neighbour.terrain().naturalHeight(), required);
-                    neighbour = neighbour.withHeight(raised);
-                    columns.put(key, neighbour);
-                }
-                if (neighbour.height() < wet.headY()) {
+            uncontained += lip(columns, wet, CARDINALS, freeboard, true);
+            lip(columns, wet, DIAGONALS, freeboard, false);
+        }
+        return uncontained;
+    }
+
+    private int lip(
+            Long2ObjectOpenHashMap<SurfaceColumn> columns,
+            SurfaceColumn wet,
+            int[][] offsets,
+            int freeboard,
+            boolean countSpills
+    ) {
+        int uncontained = 0;
+        for (int[] offset : offsets) {
+            long key = RiverFootprint.pack(wet.x() + offset[0], wet.z() + offset[1]);
+            SurfaceColumn neighbour = columns.get(key);
+            if (neighbour == null) {
+                if (countSpills && wet.headY() != seaLevel) {
                     uncontained++;
                 }
+                continue;
+            }
+            if (neighbour.role() == SurfaceRole.CHANNEL) {
+                continue;
+            }
+            int required = wet.headY() + freeboard;
+            if (neighbour.height() < required) {
+                int raised = Math.min(neighbour.terrain().naturalHeight(), required);
+                neighbour = neighbour.withHeight(raised);
+                columns.put(key, neighbour);
+            }
+            if (countSpills && neighbour.height() < wet.headY()) {
+                uncontained++;
             }
         }
         return uncontained;
@@ -193,7 +215,48 @@ public final class ErosionFieldCompiler {
                 widths[station][side] = Math.max(banks.minimumBlendWidth(), Math.min(banks.maximumBlendWidth(), width));
             }
         }
-        return widths;
+        return smoothWidths(widths, BLEND_SMOOTHING_RADIUS);
+    }
+
+    /**
+     * Moving average along the course so the valley outline widens and narrows gradually instead of
+     * stepping between neighbouring stations.
+     */
+    static double[][] smoothWidths(double[][] widths, int radius) {
+        int count = widths.length;
+        double[][] smoothed = new double[count][2];
+        for (int side = 0; side < 2; side++) {
+            double sum = 0D;
+            int window = 0;
+            int head = -1;
+            int tail = 0;
+            for (int station = 0; station < count; station++) {
+                while (head + 1 < count && head + 1 <= station + radius) {
+                    head++;
+                    sum += widths[head][side];
+                    window++;
+                }
+                while (tail < station - radius) {
+                    sum -= widths[tail][side];
+                    tail++;
+                    window--;
+                }
+                smoothed[station][side] = sum / window;
+            }
+        }
+        return smoothed;
+    }
+
+    /**
+     * Bed depth factor across the channel: a level thalweg over the inner part of the width that eases
+     * up to a one-block edge, so the channel reads as a broad bowl rather than a V-shaped trough.
+     */
+    static double bowl(double normalized) {
+        if (normalized <= THALWEG_FRACTION) {
+            return 1D;
+        }
+        double t = Math.min(1D, (normalized - THALWEG_FRACTION) / (1D - THALWEG_FRACTION));
+        return 1D - t * t * (3D - 2D * t);
     }
 
     private static double side(SurfaceCenterline centerline, int station, int cellX, int cellZ) {

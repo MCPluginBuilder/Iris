@@ -183,4 +183,83 @@ public class ErosionFieldCompilerTest {
     static long key(int x, int z) {
         return RiverFootprint.pack(x, z);
     }
+
+    @Test
+    public void blendWidthSmoothingSpreadsASpikeAcrossItsNeighbours() {
+        double[][] widths = new double[9][2];
+        for (int station = 0; station < widths.length; station++) {
+            widths[station][0] = 4D;
+            widths[station][1] = 4D;
+        }
+        widths[4][1] = 34D;
+
+        double[][] smoothed = ErosionFieldCompiler.smoothWidths(widths, 2);
+
+        for (int station = 0; station < widths.length; station++) {
+            assertEquals(4D, smoothed[station][0], 1e-9);
+        }
+        assertEquals(4D, smoothed[0][1], 1e-9);
+        assertEquals(10D, smoothed[2][1], 1e-9);
+        assertEquals(10D, smoothed[4][1], 1e-9);
+        assertEquals(10D, smoothed[6][1], 1e-9);
+        assertEquals(4D, smoothed[8][1], 1e-9);
+        for (int station = 1; station < widths.length; station++) {
+            assertTrue(Math.abs(smoothed[station][1] - smoothed[station - 1][1]) <= 6D + 1e-9);
+        }
+    }
+
+    @Test
+    public void bedBowlIsLevelAcrossTheThalwegAndOneBlockAtTheEdge() {
+        assertEquals(1D, ErosionFieldCompiler.bowl(0D), 1e-9);
+        assertEquals(1D, ErosionFieldCompiler.bowl(0.45D), 1e-9);
+        assertTrue(ErosionFieldCompiler.bowl(0.6D) > 0.8D);
+        assertTrue(ErosionFieldCompiler.bowl(0.8D) > 0.3D && ErosionFieldCompiler.bowl(0.8D) < 0.7D);
+        assertEquals(0D, ErosionFieldCompiler.bowl(1D), 1e-9);
+        double previous = 1D;
+        for (double normalized = 0D; normalized <= 1D; normalized += 0.05D) {
+            double value = ErosionFieldCompiler.bowl(normalized);
+            assertTrue(value <= previous + 1e-9);
+            previous = value;
+        }
+    }
+
+    @Test
+    public void everyCellTouchingWaterKeepsTheLipAcrossHeadSteps() {
+        Compiled compiled = compile(400, (x, z) -> 120 - x / 8, SurfaceTerminal.SINKHOLE, 40);
+        int freeboard = zeroRoughnessSurface().banks().freeboard();
+        int checked = 0;
+
+        for (SurfaceColumn column : compiled.field().columns().values()) {
+            if (column.role() != SurfaceRole.CHANNEL) {
+                continue;
+            }
+            for (int deltaX = -1; deltaX <= 1; deltaX++) {
+                for (int deltaZ = -1; deltaZ <= 1; deltaZ++) {
+                    SurfaceColumn neighbour = compiled.field().column(column.x() + deltaX, column.z() + deltaZ);
+                    if (neighbour == null || neighbour.role() == SurfaceRole.CHANNEL) {
+                        continue;
+                    }
+                    int required = Math.min(neighbour.terrain().naturalHeight(), column.headY() + freeboard);
+                    assertTrue(neighbour.x() + "," + neighbour.z() + " height " + neighbour.height() + " < " + required,
+                            neighbour.height() >= required);
+                    checked++;
+                }
+            }
+        }
+        assertTrue(checked > 100);
+    }
+
+    @Test
+    public void aLowCellBesideTheChannelLowersTheHeadSoTheLipSurvives() {
+        Compiled compiled = compile(300, (x, z) -> x == 150 && z == 4 ? 79 : 80, SurfaceTerminal.SINKHOLE, 40);
+
+        SurfaceColumn center = compiled.field().column(150, 0);
+        assertNotNull(center);
+        assertTrue("head " + center.headY(), center.headY() <= 78);
+        SurfaceColumn low = compiled.field().column(150, 4);
+        assertEquals(SurfaceRole.SHORE, low.role());
+        assertNotNull(low);
+        assertTrue(low.height() >= center.headY() + 1);
+        assertEquals(0, compiled.field().uncontainedWetCells());
+    }
 }

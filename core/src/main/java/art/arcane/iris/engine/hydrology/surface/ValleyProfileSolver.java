@@ -40,6 +40,8 @@ public final class ValleyProfileSolver {
         int exposed = count;
         for (int station = 0; station < count; station++) {
             double outline = channel.halfWidth()[station] * (1D + roughness);
+            // Every cell from the narrowest possible outline outward can end up beside water, so it joins the minimum.
+            double innerOutline = channel.halfWidth()[station] * (1D - roughness);
             double reach = outline + 2D;
             int stationX = centerline.x()[station];
             int stationZ = centerline.z()[station];
@@ -63,7 +65,7 @@ public final class ValleyProfileSolver {
                     blocked = true;
                     break;
                 }
-                if (Math.abs(offset) <= outline + 0.25D) {
+                if (Math.abs(offset) < innerOutline - 0.75D) {
                     continue;
                 }
                 minimum = Math.min(minimum, terrain.naturalHeight());
