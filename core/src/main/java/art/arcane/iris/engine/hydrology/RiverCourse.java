@@ -88,7 +88,7 @@ public record RiverCourse(
         HydraulicSegment lip = segments.get(segments.size() - 3);
         HydraulicSegment sinkhole = segments.get(segments.size() - 2);
         HydraulicSegment grotto = segments.getLast();
-        if (!lip.type().isSurface() && lip.type() != HydrologyFeatureType.RIDGE_BORE
+        if (!lip.type().isSurface()
                 || sinkhole.type() != HydrologyFeatureType.SINKHOLE
                 || sinkhole.drop() <= 0
                 || !sinkhole.receivingPool()

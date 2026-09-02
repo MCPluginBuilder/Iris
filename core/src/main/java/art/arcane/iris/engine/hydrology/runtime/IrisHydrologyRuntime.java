@@ -65,9 +65,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
     private static final int BIOME_PATCH_SCALE = 32;
     private static final long SURFACE_WIDTH_SALT = 0x5355524657494454L;
     private static final long SURFACE_DEPTH_SALT = 0x5355524644455054L;
-    private static final long SURFACE_INSET_SALT = 0x53555246494e5345L;
     private static final long SURFACE_BLEND_SALT = 0x53555246424c454eL;
-    private static final long TARGET_POOL_SALT = 0x544152474554504fL;
     private static final long UNDERGROUND_LEVEL_SALT = 0x554e4445524c564cL;
     private static final long UNDERGROUND_WIDTH_SALT = 0x554e444552574944L;
     private static final long UNDERGROUND_DEPTH_SALT = 0x554e444552444550L;
@@ -556,9 +554,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         IrisUndergroundRiverConfig underground = rivers.getUnderground();
         ProceduralStream<Double> surfaceWidth = styledStream(context, channel.getWidth(), SURFACE_WIDTH_SALT);
         ProceduralStream<Double> surfaceDepth = styledStream(context, channel.getDepth(), SURFACE_DEPTH_SALT);
-        ProceduralStream<Double> surfaceInset = ProceduralStream.ofDouble((x, z) -> (double) channel.getInset());
         ProceduralStream<Double> surfaceBlend = ProceduralStream.ofDouble((x, z) -> (double) banks.getMaximumBlendWidth());
-        ProceduralStream<Double> targetPool = ProceduralStream.ofDouble((x, z) -> 128D);
         ProceduralStream<Double> undergroundLevel = styledStream(
                 context,
                 underground.getFluidLevel(),
@@ -589,9 +585,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
             ProceduralStream<Double> stream = switch (request.field()) {
                 case SURFACE_WIDTH -> surfaceWidth;
                 case SURFACE_DEPTH -> surfaceDepth;
-                case SURFACE_INSET -> surfaceInset;
                 case SURFACE_BLEND_WIDTH -> surfaceBlend;
-                case TARGET_POOL_LENGTH -> targetPool;
                 case UNDERGROUND_FLUID_LEVEL -> undergroundLevel;
                 case UNDERGROUND_WIDTH -> undergroundWidth;
                 case UNDERGROUND_DEPTH -> undergroundDepth;
@@ -639,7 +633,6 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         IrisUndergroundRiverConfig underground = rivers.getUnderground();
         IrisUndergroundRiverSourceConfig undergroundSources = underground.getSources();
         int routeNodes = maximumRouteNodes(routing);
-        int refinementSpacing = refinementSpacing(routing.getSampleSpacing());
         int minimumWorldY = dimension.getMinHeight();
         boolean riversEnabled = rivers.isEnabled();
         boolean surfaceEnabled = riversEnabled && surface.isEnabled();
@@ -647,13 +640,10 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         HydrologyPlannerSettings.Routing plannerRouting = new HydrologyPlannerSettings.Routing(
                 routing.getTileSize(),
                 routing.getSampleSpacing(),
-                refinementSpacing,
                 routeNodes,
                 routing.getMaximumRouteLength(),
-                new HydrologyPlannerSettings.Branching(
-                        routing.getMinimumSurfaceCourseLength(),
-                        routing.getMinimumUndergroundCourseLength()
-                ),
+                routing.getMinimumSurfaceCourseLength(),
+                routing.getMinimumUndergroundCourseLength(),
                 routing.getValleyPreference(),
                 routing.getUphillPenalty(),
                 routing.getSlopePenalty(),
@@ -674,15 +664,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 maximumInt(channel.getWidth()),
                 minimumInt(channel.getDepth()),
                 maximumInt(channel.getDepth()),
-                channel.getInset(),
-                channel.getInset(),
                 channel.getMaximumIncision(),
                 banks.getShoreWidth(),
-                banks.getMinimumBlendWidth(),
-                banks.getMaximumBlendWidth(),
-                false,
-                1,
-                1,
                 new HydrologyPlannerSettings.Banks(
                         channel.getInset(),
                         banks.getFreeboard(),
@@ -697,14 +680,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                         banks.isExposeCutStrata()
                 )
         );
-        HydrologyPlannerSettings.Hydraulics plannerHydraulics = new HydrologyPlannerSettings.Hydraulics(
-                80,
-                180,
-                1,
-                flow.getWaterfallMinimumDrop() - 1,
-                24,
-                flow.getWaterfallMinimumDrop()
-        );
+        HydrologyPlannerSettings.Hydraulics plannerHydraulics =
+                new HydrologyPlannerSettings.Hydraulics(flow.getWaterfallMinimumDrop());
         HydrologyPlannerSettings.Source plannerUndergroundSources = new HydrologyPlannerSettings.Source(
                 undergroundEnabled,
                 undergroundSources.getDensity(),
@@ -760,15 +737,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 plannerUnderground,
                 plannerOutlets,
                 plannerGeometry,
-                deepFluids(hydrology.getDeepFluids(), minimumWorldY, routing, refinementSpacing)
+                deepFluids(hydrology.getDeepFluids(), minimumWorldY, routing, plannerRouting.refinementSpacing())
         );
-    }
-
-    static int refinementSpacing(int sampleSpacing) {
-        if (sampleSpacing % 4 == 0) {
-            return 4;
-        }
-        return sampleSpacing % 2 == 0 ? 2 : 1;
     }
 
     private static HydrologyPlannerSettings.Geometry geometry(
@@ -877,7 +847,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
             return 0;
         }
         int configuredLength = Math.max(
-                refinementSpacing(routing.getSampleSpacing()), configuration.getSpacing() / 3);
+                HydrologyPlannerSettings.Routing.refinementSpacing(routing.getSampleSpacing()),
+                configuration.getSpacing() / 3);
         return Math.min(configuredLength, routing.getTileSize() / 2);
     }
 

@@ -114,14 +114,14 @@ public class IrisHydrologyRuntimeSettingsTest {
         assertEquals(8, settings.hydraulics().waterfallMinimumDrop());
         assertEquals(96, settings.outlets().mouthLevelingDistance());
         assertEquals(4, settings.routing().refinementSpacing());
-        assertEquals(500, settings.routing().branching().minimumSurfaceCourseLength());
-        assertEquals(250, settings.routing().branching().minimumUndergroundCourseLength());
+        assertEquals(500, settings.routing().minimumSurfaceCourseLength());
+        assertEquals(250, settings.routing().minimumUndergroundCourseLength());
         assertEquals(2.5D, settings.routing().valleyPreference(), 0D);
         assertEquals(30D, settings.routing().uphillPenalty(), 0D);
         assertEquals(3D, settings.routing().slopePenalty(), 0D);
         assertEquals(0.4D, settings.routing().confluenceAttraction(), 0D);
-        assertEquals(2, IrisHydrologyRuntime.refinementSpacing(50));
-        assertEquals(1, IrisHydrologyRuntime.refinementSpacing(45));
+        assertEquals(2, HydrologyPlannerSettings.Routing.refinementSpacing(50));
+        assertEquals(1, HydrologyPlannerSettings.Routing.refinementSpacing(45));
     }
 
     @Test

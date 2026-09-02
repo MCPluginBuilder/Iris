@@ -639,33 +639,31 @@ public class HydrologyPlannerGlobalInvariantTest {
             boolean undergroundEnabled,
             List<HydrologyPlannerSettings.DeepFluid> deepFluids
     ) {
-        return settingsWithRefinement(
+        return plannerSettings(
                 surfaceSources,
                 undergroundSources,
                 surfaceEnabled,
                 undergroundEnabled,
-                deepFluids,
-                4
+                deepFluids
         );
     }
 
-    private HydrologyPlannerSettings settingsWithRefinement(
+    private HydrologyPlannerSettings plannerSettings(
             HydrologyPlannerSettings.Source surfaceSources,
             HydrologyPlannerSettings.Source undergroundSources,
             boolean surfaceEnabled,
             boolean undergroundEnabled,
-            List<HydrologyPlannerSettings.DeepFluid> deepFluids,
-            int refinementSpacing
+            List<HydrologyPlannerSettings.DeepFluid> deepFluids
     ) {
         return new HydrologyPlannerSettings(
                 63,
                 new HydrologyPlannerSettings.Routing(
                         TILE_SIZE,
                         16,
-                        refinementSpacing,
                         512,
                         256,
-                        new HydrologyPlannerSettings.Branching(16, 8),
+                        16,
+                        8,
                         0.5D,
                         12D,
                         0.5D,
@@ -678,18 +676,10 @@ public class HydrologyPlannerGlobalInvariantTest {
                         4,
                         1,
                         2,
-                        4,
-                        8,
                         128,
                         1D,
-                        1,
-                        2,
-                        false,
-                        0,
-                        0
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
-                new HydrologyPlannerSettings.Hydraulics(8, 16, 1, 3, 8, 4),
+                new HydrologyPlannerSettings.Hydraulics(4),
                 new HydrologyPlannerSettings.Underground(
                         undergroundEnabled,
                         undergroundSources,
@@ -724,13 +714,12 @@ public class HydrologyPlannerGlobalInvariantTest {
             boolean surfaceEnabled,
             boolean undergroundEnabled
     ) {
-        HydrologyPlannerSettings base = settingsWithRefinement(
+        HydrologyPlannerSettings base = plannerSettings(
                 surfaceSources,
                 undergroundSources,
                 surfaceEnabled,
                 undergroundEnabled,
-                List.of(),
-                8
+                List.of()
         );
         HydrologyPlannerSettings.Surface surface = base.surface();
         HydrologyPlannerSettings.Underground underground = base.underground();
@@ -744,16 +733,8 @@ public class HydrologyPlannerGlobalInvariantTest {
                         surface.minimumWidth(),
                         surface.minimumDepth(),
                         surface.maximumDepth(),
-                        surface.minimumSurfaceInset(),
-                        surface.maximumSurfaceInset(),
                         surface.maximumIncision(),
                         surface.shoreWidth(),
-                        surface.minimumTerrainBlendWidth(),
-                        surface.maximumTerrainBlendWidth(),
-                        surface.ridgeTunnelsEnabled(),
-                        surface.maximumRidgeTunnelLength(),
-                        surface.ridgeTunnelHeadroom()
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
                 base.hydraulics(),
                 new HydrologyPlannerSettings.Underground(

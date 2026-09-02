@@ -1576,7 +1576,7 @@ public final class HydrologyPackProbe {
             publishedMorphology.observe(
                     tile,
                     settings.surface().minimumWidth(),
-                    settings.routing().branching().minimumSurfaceCourseLength()
+                    settings.routing().minimumSurfaceCourseLength()
             );
             HydrologyPlannerSettings.Routing routing = settings.routing();
             int sampleSpacing = routing.sampleSpacing();
@@ -1704,7 +1704,7 @@ public final class HydrologyPackProbe {
             List<ChannelIncision> incisions = channelIncisions(
                     tile.footprint(),
                     scopedCourseIds,
-                    settings.surface().minimumSurfaceInset(),
+                    settings.surface().banks().inset(),
                     settings.surface().maximumIncision()
             );
             for (ChannelIncision incision : incisions) {

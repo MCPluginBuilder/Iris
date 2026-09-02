@@ -12,19 +12,15 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 final class HydrologyFootprintCompiler {
     private static final int FEATURE_ROLE_COUNT = 7;
     private static final int COURSE_FOOTPRINT_CACHE_SIZE = 8;
     private static final int VALIDATION_RASTER_CACHE_SIZE = 8;
-    private static final int MINIMUM_ENDPOINT_PROFILE_LENGTH = 48;
-    private static final double MINIMUM_ENDPOINT_RAMP_WIDTHS = 2D;
     private static final int[][] HORIZONTAL_NEIGHBORS = {
             {1, 0}, {-1, 0}, {0, 1}, {0, -1}
     };
@@ -53,7 +49,7 @@ final class HydrologyFootprintCompiler {
             HydrologyPlannerSettings settings,
             HydrologyTerrainSampler sampler
     ) {
-        this(settings, sampler, HydrologyGeometrySampler.deterministic(0L, sampler));
+        this(settings, sampler, HydrologyGeometrySampler.deterministic(sampler));
     }
 
     HydrologyFootprintCompiler(
@@ -170,404 +166,6 @@ final class HydrologyFootprintCompiler {
 
     int fullMaterializationCount() {
         return fullMaterializationCount;
-    }
-
-    boolean surfaceHeadwaterRampSupported(RiverCourse course) {
-        Objects.requireNonNull(course, "course");
-        if (course.type() != RiverCourseType.SURFACE) {
-            return true;
-        }
-        if (settings.routing().branching().minimumSurfaceCourseLength()
-                < MINIMUM_ENDPOINT_PROFILE_LENGTH) {
-            return true;
-        }
-        RiverFootprint footprint = compileCourse(course);
-        List<HydrologyPoint> raster = surfaceCourseCenterline(course);
-        if (raster.size() < 2) {
-            return false;
-        }
-        HashSet<Long> ownedCells = new HashSet<>();
-        for (HydrologyColumnSample sample : footprint.columns().values()) {
-            HydrologyColumnLayer fluid = sample.primarySurfaceFluidLayer().orElse(null);
-            if (fluid != null
-                    && fluid.feature().courseId() == course.id()
-                    && fluid.feature().type().isSurface()
-                    && fluid.channel()
-                    && fluid.connectedFluid()
-                    && fluid.fluidOwned()
-                    && !fluid.oceanApron()) {
-                ownedCells.add(RiverFootprint.pack(sample.x(), sample.z()));
-            }
-        }
-        int maximumWidth = 1;
-        for (HydraulicSegment segment : course.segments()) {
-            if (segment.type().isSurface()) {
-                maximumWidth = Math.max(maximumWidth, segment.width());
-            }
-        }
-        HydrologyPoint source = raster.getFirst();
-        if (!ownedNear(ownedCells, source.x(), source.z(), maximumWidth)) {
-            return false;
-        }
-        int cruiseWidth = cruiseWidth(ownedCells, raster, maximumWidth);
-        double transitionLength = endpointTransitionLength(
-                ownedCells,
-                raster,
-                maximumWidth,
-                cruiseWidth
-        );
-        return transitionLength >= cruiseWidth * MINIMUM_ENDPOINT_RAMP_WIDTHS;
-    }
-
-    boolean surfaceIncisionContained(RiverCourse course) {
-        Objects.requireNonNull(course, "course");
-        if (course.type() != RiverCourseType.SURFACE) {
-            return true;
-        }
-        RiverFootprint footprint = compileCourse(course);
-        for (HydrologyColumnSample sample : footprint.columns().values()) {
-            HydrologyColumnLayer fluid = sample.primarySurfaceFluidLayer().orElse(null);
-            if (fluid == null
-                    || fluid.feature().courseId() != course.id()
-                    || fluid.feature().type() == HydrologyFeatureType.MOUTH
-                    || fluid.oceanApron()
-                    || fluid.fallingFluid()
-                    || !fluid.channel()
-                    || !fluid.fluidOwned()) {
-                continue;
-            }
-            HydrologyTerrainSample basis = sampleTerrainBasis(sample.x(), sample.z());
-            HydrologyTerrainSample terrain = sampleTerrain(sample.x(), sample.z());
-            if (terrain == null
-                    || basis == null
-                    || (terrain.naturalHeight() - fluid.fluidHeadY() > permittedSurfaceIncision(terrain)
-                    && basis.naturalHeight() - fluid.fluidHeadY() <= permittedSurfaceIncision(basis))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    boolean surfaceIncisionContained(RiverCourse course, RiverFootprint footprint) {
-        Objects.requireNonNull(course, "course");
-        Objects.requireNonNull(footprint, "footprint");
-        if (course.type() != RiverCourseType.SURFACE) {
-            return true;
-        }
-        for (HydrologyColumnSample sample : footprint.columns().values()) {
-            for (HydrologyColumnLayer fluid : sample.layers()) {
-                if (fluid.feature().courseId() != course.id()
-                        || fluid.feature().type() == HydrologyFeatureType.MOUTH
-                        || fluid.oceanApron()
-                        || fluid.fallingFluid()
-                        || !fluid.channel()
-                        || !fluid.fluidOwned()) {
-                    continue;
-                }
-                HydrologyTerrainSample basis = sampleTerrainBasis(sample.x(), sample.z());
-                HydrologyTerrainSample terrain = sampleTerrain(sample.x(), sample.z());
-                if (basis == null
-                        || terrain == null
-                        || (terrain.naturalHeight() - fluid.fluidHeadY()
-                        > settings.surface().maximumIncision()
-                        && basis.naturalHeight() - fluid.fluidHeadY()
-                        <= permittedSurfaceIncision(basis))) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    boolean surfaceBanksContained(RiverCourse course) {
-        Objects.requireNonNull(course, "course");
-        if (course.type() != RiverCourseType.SURFACE) {
-            return true;
-        }
-        RiverFootprint footprint = compileCourse(course);
-        if (!surfaceCenterlinePublished(course, footprint)
-                || !surfaceTransitionCenterlinePublished(course, footprint)) {
-            return false;
-        }
-        for (HydrologyColumnSample sample : footprint.columns().values()) {
-            HydrologyColumnLayer fluid = sample.primarySurfaceFluidLayer().orElse(null);
-            if (fluid == null || fluid.oceanApron() || fluid.fallingFluid()) {
-                continue;
-            }
-            for (int[] offset : HORIZONTAL_NEIGHBORS) {
-                HydrologyColumnSample neighbor = footprint.sample(
-                        sample.x() + offset[0],
-                        sample.z() + offset[1]
-                ).orElse(null);
-                if (ownsSurfaceFluid(neighbor, course.id())) {
-                    continue;
-                }
-                if (neighbor != null
-                        && fluid.fluidHeadY() <= neighbor.seaLevel()
-                        && (neighbor.ocean() || neighbor.naturalHeight() <= neighbor.seaLevel())) {
-                    continue;
-                }
-                if (neighbor == null || neighbor.terrainHeight() <= fluid.fluidHeadY()) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    private boolean surfaceCenterlinePublished(RiverCourse course, RiverFootprint footprint) {
-        for (HydraulicSegment segment : course.segments()) {
-            if (!segment.type().isSurface()) {
-                continue;
-            }
-            for (HydrologyPoint point : segment.centerline()) {
-                HydrologyColumnSample sample = footprint.sample(point.x(), point.z()).orElse(null);
-                if (ownsSurfaceFluid(sample, course.id())
-                        || segment.type() == HydrologyFeatureType.MOUTH
-                        && ownsOceanApron(sample, course.id())) {
-                    continue;
-                }
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean surfaceTransitionCenterlinePublished(RiverCourse course, RiverFootprint footprint) {
-        for (int segmentIndex = 0; segmentIndex < course.segments().size(); segmentIndex++) {
-            HydraulicSegment segment = course.segments().get(segmentIndex);
-            if (!terrainRoofedSurfaceTransition(course, segment)) {
-                continue;
-            }
-            List<HydrologyPoint> centerline = continuousCenterline(segment);
-            for (int pointIndex = 0; pointIndex < centerline.size(); pointIndex++) {
-                HydrologyPoint point = centerline.get(pointIndex);
-                HydrologyColumnSample sample = footprint.sample(point.x(), point.z()).orElse(null);
-                if (ownsTransitionFluid(sample, course.id(), segment.id(), point.y())) {
-                    continue;
-                }
-                boolean joinedStart = pointIndex == 0
-                        && segmentIndex > 0
-                        && segmentsJoin(course.segments().get(segmentIndex - 1), segment);
-                boolean joinedEnd = pointIndex == centerline.size() - 1
-                        && segmentIndex + 1 < course.segments().size()
-                        && segmentsJoin(segment, course.segments().get(segmentIndex + 1));
-                if ((joinedStart || joinedEnd) && ownsCourseFluid(sample, course.id(), point.y())) {
-                    continue;
-                }
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean ownsTransitionFluid(
-            HydrologyColumnSample sample,
-            long courseId,
-            long segmentId,
-            int fluidHead
-    ) {
-        if (sample == null) {
-            return false;
-        }
-        for (HydrologyColumnLayer layer : sample.layers()) {
-            if (layer.feature().courseId() == courseId
-                    && layer.feature().segmentId() == segmentId
-                    && layer.fluidHeadY() == fluidHead
-                    && layer.channel()
-                    && layer.connectedFluid()
-                    && layer.fluidOwned()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean ownsCourseFluid(HydrologyColumnSample sample, long courseId, int fluidHead) {
-        if (sample == null) {
-            return false;
-        }
-        for (HydrologyColumnLayer layer : sample.layers()) {
-            if (layer.feature().courseId() == courseId
-                    && layer.fluidHeadY() == fluidHead
-                    && layer.channel()
-                    && layer.connectedFluid()
-                    && layer.fluidOwned()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private int permittedSurfaceIncision(HydrologyTerrainSample terrain) {
-        int maximumIncision = settings.surface().maximumIncision();
-        return Math.min(
-                maximumIncision,
-                (int) StrictMath.floor(maximumIncision * terrain.incisionMultiplier())
-        );
-    }
-
-    private boolean ownsSurfaceFluid(HydrologyColumnSample sample, long courseId) {
-        if (sample == null) {
-            return false;
-        }
-        HydrologyColumnLayer fluid = sample.primarySurfaceFluidLayer().orElse(null);
-        return fluid != null
-                && fluid.fluidOwned()
-                && fluid.feature().courseId() == courseId;
-    }
-
-    private boolean ownsOceanApron(HydrologyColumnSample sample, long courseId) {
-        if (sample == null) {
-            return false;
-        }
-        for (HydrologyColumnLayer layer : sample.layers()) {
-            if (layer.oceanApron() && layer.feature().courseId() == courseId) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private List<HydrologyPoint> surfaceCourseCenterline(RiverCourse course) {
-        ArrayList<HydrologyPoint> points = new ArrayList<>();
-        for (HydraulicSegment segment : course.segments()) {
-            if (!segment.type().isSurface() && segment.type() != HydrologyFeatureType.RIDGE_BORE) {
-                break;
-            }
-            for (HydrologyPoint point : segment.centerline()) {
-                if (points.isEmpty()
-                        || point.x() != points.getLast().x()
-                        || point.z() != points.getLast().z()) {
-                    points.add(point);
-                }
-            }
-        }
-        return rasterCenterline(points);
-    }
-
-    private List<HydrologyPoint> rasterCenterline(List<HydrologyPoint> points) {
-        ArrayList<HydrologyPoint> raster = new ArrayList<>();
-        for (int pairIndex = 0; pairIndex < points.size() - 1; pairIndex++) {
-            HydrologyPoint start = points.get(pairIndex);
-            HydrologyPoint end = points.get(pairIndex + 1);
-            int steps = Math.max(Math.abs(end.x() - start.x()), Math.abs(end.z() - start.z()));
-            if (steps == 0) {
-                continue;
-            }
-            int firstStep = raster.isEmpty() ? 0 : 1;
-            for (int step = firstStep; step <= steps; step++) {
-                double progress = step / (double) steps;
-                raster.add(new HydrologyPoint(
-                        (int) StrictMath.round(start.x() + (end.x() - start.x()) * progress),
-                        (int) StrictMath.round(start.y() + (end.y() - start.y()) * progress),
-                        (int) StrictMath.round(start.z() + (end.z() - start.z()) * progress)
-                ));
-            }
-        }
-        return List.copyOf(raster);
-    }
-
-    private boolean ownedNear(Set<Long> cells, int x, int z, int radius) {
-        for (int deltaZ = -radius; deltaZ <= radius; deltaZ++) {
-            for (int deltaX = -radius; deltaX <= radius; deltaX++) {
-                if (cells.contains(RiverFootprint.pack(x + deltaX, z + deltaZ))) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private int cruiseWidth(Set<Long> cells, List<HydrologyPoint> raster, int maximumWidth) {
-        int start = Math.min(raster.size() - 2, Math.max(48, maximumWidth * 4));
-        int end = Math.min(raster.size() - 1, Math.max(start + 16, maximumWidth * 6));
-        ArrayList<Integer> widths = new ArrayList<>();
-        for (int offset = start; offset <= end; offset++) {
-            if (offset <= 0 || offset >= raster.size() - 1) {
-                continue;
-            }
-            int width = crossSectionWidth(
-                    cells,
-                    raster.get(offset),
-                    raster.get(offset - 1),
-                    raster.get(offset + 1),
-                    maximumWidth
-            );
-            if (width > 0) {
-                widths.add(width);
-            }
-        }
-        if (widths.isEmpty()) {
-            return maximumWidth;
-        }
-        widths.sort(Integer::compare);
-        return Math.max(1, widths.get(widths.size() / 2));
-    }
-
-    private double endpointTransitionLength(
-            Set<Long> cells,
-            List<HydrologyPoint> raster,
-            int maximumWidth,
-            int cruiseWidth
-    ) {
-        int endpointWidth = crossSectionWidth(
-                cells,
-                raster.getFirst(),
-                raster.getFirst(),
-                raster.get(1),
-                maximumWidth
-        );
-        int widthTolerance = Math.max(1, (int) StrictMath.ceil(cruiseWidth * 0.1D));
-        if (Math.abs(endpointWidth - cruiseWidth) <= widthTolerance) {
-            return 0D;
-        }
-        int search = Math.max(32, cruiseWidth * 6);
-        double distance = 0D;
-        int pointIndex = 1;
-        while (pointIndex < raster.size() && distance <= search) {
-            int previousIndex = pointIndex - 1;
-            int nextIndex = Math.min(raster.size() - 1, pointIndex + 1);
-            HydrologyPoint previous = raster.get(previousIndex);
-            HydrologyPoint station = raster.get(pointIndex);
-            HydrologyPoint next = raster.get(nextIndex);
-            distance += StrictMath.hypot(station.x() - previous.x(), station.z() - previous.z());
-            int width = crossSectionWidth(cells, station, previous, next, maximumWidth);
-            if (Math.abs(width - cruiseWidth) <= widthTolerance) {
-                return distance;
-            }
-            pointIndex++;
-        }
-        return distance;
-    }
-
-    private int crossSectionWidth(
-            Set<Long> cells,
-            HydrologyPoint center,
-            HydrologyPoint before,
-            HydrologyPoint after,
-            int maximumWidth
-    ) {
-        double tangentX = after.x() - before.x();
-        double tangentZ = after.z() - before.z();
-        double tangentLength = StrictMath.hypot(tangentX, tangentZ);
-        if (tangentLength == 0D) {
-            tangentX = 1D;
-            tangentLength = 1D;
-        }
-        double perpendicularX = -tangentZ / tangentLength;
-        double perpendicularZ = tangentX / tangentLength;
-        int limit = Math.max(4, maximumWidth * 2);
-        HashSet<Long> sampled = new HashSet<>();
-        for (int offset = -limit; offset <= limit; offset++) {
-            int x = (int) StrictMath.round(center.x() + perpendicularX * offset);
-            int z = (int) StrictMath.round(center.z() + perpendicularZ * offset);
-            long packed = RiverFootprint.pack(x, z);
-            if (cells.contains(packed)) {
-                sampled.add(packed);
-            }
-        }
-        return sampled.size();
     }
 
     private ValidationCourseRaster compileValidationCourse(RiverCourse course) {
@@ -825,7 +423,6 @@ final class HydrologyFootprintCompiler {
             return false;
         }
         return segment.type().isSurface()
-                || segment.type() == HydrologyFeatureType.RIDGE_BORE
                 || segment.type() == HydrologyFeatureType.UNDERGROUND_POOL
                 || segment.type() == HydrologyFeatureType.UNDERGROUND_DROP
                 || segment.type() == HydrologyFeatureType.SINKHOLE
@@ -1145,21 +742,15 @@ final class HydrologyFootprintCompiler {
                     point.x(),
                     point.z(),
                     segment.id(),
-                    settings.surface().minimumTerrainBlendWidth(),
-                    settings.surface().maximumTerrainBlendWidth()
+                    settings.surface().banks().minimumBlendWidth(),
+                    settings.surface().banks().maximumBlendWidth()
             );
             if (type == HydrologyFeatureType.WATERFALL) {
                 shoreWidth = Math.min(2.5D, shoreWidth);
                 gradingWidth = Math.min(gradingWidth, Math.max(8D, channelRadius * 4D));
             }
         }
-        if (type == HydrologyFeatureType.RIDGE_BORE
-                || course.type() == RiverCourseType.SURFACE
-                && type == HydrologyFeatureType.UNDERGROUND_DROP) {
-            ceiling = fluidHead + settings.surface().ridgeTunnelHeadroom();
-            archedChannel = !falling;
-            organicBoundary = true;
-        } else if (type == HydrologyFeatureType.UNDERGROUND_POOL
+        if (type == HydrologyFeatureType.UNDERGROUND_POOL
                 || type == HydrologyFeatureType.UNDERGROUND_DROP
                 || type == HydrologyFeatureType.SINKHOLE) {
             ceiling = fluidHead + geometrySampler.sample(
@@ -1213,7 +804,7 @@ final class HydrologyFootprintCompiler {
             if (course.type() == RiverCourseType.SURFACE && type.isSurface()) {
                 gradingWidth = Math.max(
                         gradingWidth,
-                        Math.min(settings.surface().maximumTerrainBlendWidth(), channelRadius * 2D)
+                        Math.min(settings.surface().banks().maximumBlendWidth(), channelRadius * 2D)
                 );
             }
         }
@@ -1807,8 +1398,7 @@ final class HydrologyFootprintCompiler {
 
     private boolean terrainRoofedSurfaceTransition(RiverCourse course, HydraulicSegment segment) {
         return course.type() == RiverCourseType.SURFACE
-                && (segment.type() == HydrologyFeatureType.RIDGE_BORE
-                || segment.type() == HydrologyFeatureType.UNDERGROUND_POOL
+                && (segment.type() == HydrologyFeatureType.UNDERGROUND_POOL
                 || segment.type() == HydrologyFeatureType.UNDERGROUND_DROP);
     }
 
@@ -1943,8 +1533,7 @@ final class HydrologyFootprintCompiler {
     }
 
     private HydrologyPlannerSettings.ChannelShape channelShape(HydrologyFeatureType type) {
-        if (type.isGrotto() || type == HydrologyFeatureType.DEEP_POOL
-                || type == HydrologyFeatureType.RIDGE_BORE) {
+        if (type.isGrotto() || type == HydrologyFeatureType.DEEP_POOL) {
             return settings.geometry().grottos();
         }
         if (type.isUnderground() || type == HydrologyFeatureType.DEEP_CHANNEL) {

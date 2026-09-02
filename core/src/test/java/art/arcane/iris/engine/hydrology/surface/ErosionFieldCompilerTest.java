@@ -172,7 +172,7 @@ public class ErosionFieldCompilerTest {
         return new HydrologyPlannerSettings.Surface(
                 true,
                 defaults.sources(),
-                4, 8, 2, 4, 1, 1, 10, 1.5D, 4, 32, false, 1, 1,
+                4, 8, 2, 4, 10, 1.5D,
                 new HydrologyPlannerSettings.Banks(1, 1, 3D, 4, 32, 0D, 16, 2, 6, 1.6D, true)
         );
     }

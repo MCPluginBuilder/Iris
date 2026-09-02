@@ -252,8 +252,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
         );
         return new HydrologyPlannerSettings(
                 63,
-                new HydrologyPlannerSettings.Routing(256, 16, 4, 1_089, 256,
-                        new HydrologyPlannerSettings.Branching(16, 8), 0.5D, 12D, 0.5D, 0.2D),
+                new HydrologyPlannerSettings.Routing(256, 16, 1_089, 256, 16, 8, 0.5D, 12D, 0.5D, 0.2D),
                 new HydrologyPlannerSettings.Surface(
                         true,
                         surfaceSources,
@@ -261,18 +260,10 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         20,
                         2,
                         5,
-                        4,
-                        8,
                         12,
                         1.5D,
-                        4,
-                        10,
-                        true,
-                        96,
-                        10
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
-                new HydrologyPlannerSettings.Hydraulics(12, 40, 1, 3, 8, 4),
+                new HydrologyPlannerSettings.Hydraulics(4),
                 new HydrologyPlannerSettings.Underground(
                         true,
                         undergroundSources,
@@ -343,16 +334,8 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         baseSurface.maximumWidth(),
                         baseSurface.minimumDepth(),
                         baseSurface.maximumDepth(),
-                        baseSurface.minimumSurfaceInset(),
-                        baseSurface.maximumSurfaceInset(),
                         64,
                         baseSurface.shoreWidth(),
-                        baseSurface.minimumTerrainBlendWidth(),
-                        baseSurface.maximumTerrainBlendWidth(),
-                        baseSurface.ridgeTunnelsEnabled(),
-                        baseSurface.maximumRidgeTunnelLength(),
-                        baseSurface.ridgeTunnelHeadroom()
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
                 base.hydraulics(),
                 new HydrologyPlannerSettings.Underground(

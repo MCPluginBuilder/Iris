@@ -11,11 +11,19 @@ import static org.junit.Assert.assertTrue;
 
 public class HydrologyPlannerSettingsTest {
     @Test
-    public void branchingUsesIndependentSurfaceAndUndergroundCourseFloors() {
-        HydrologyPlannerSettings.Branching branching = new HydrologyPlannerSettings.Branching(384, 192);
+    public void routingUsesIndependentSurfaceAndUndergroundCourseFloors() {
+        HydrologyPlannerSettings.Routing routing = HydrologyPlannerSettings.defaults().routing();
 
-        assertEquals(384, branching.minimumCourseLength(true));
-        assertEquals(192, branching.minimumCourseLength(false));
+        assertEquals(384, routing.minimumCourseLength(true));
+        assertEquals(192, routing.minimumCourseLength(false));
+    }
+
+    @Test
+    public void refinementSpacingIsDerivedFromTheSampleLattice() {
+        assertEquals(4, HydrologyPlannerSettings.Routing.refinementSpacing(64));
+        assertEquals(2, HydrologyPlannerSettings.Routing.refinementSpacing(50));
+        assertEquals(1, HydrologyPlannerSettings.Routing.refinementSpacing(45));
+        assertEquals(4, HydrologyPlannerSettings.defaults().routing().refinementSpacing());
     }
 
     @Test
@@ -63,10 +71,10 @@ public class HydrologyPlannerSettingsTest {
         HydrologyPlannerSettings.Routing routing = new HydrologyPlannerSettings.Routing(
                 512,
                 512,
-                64,
                 4,
                 256,
-                new HydrologyPlannerSettings.Branching(0, 0),
+                0,
+                0,
                 0D,
                 0D,
                 0D,
@@ -80,25 +88,10 @@ public class HydrologyPlannerSettingsTest {
                 1,
                 1,
                 1,
-                1,
-                1,
                 0,
                 1D,
-                0,
-                0,
-                false,
-                0,
-                0
-        ,
                 HydrologyPlannerSettings.Banks.defaults());
-        HydrologyPlannerSettings.Hydraulics hydraulics = new HydrologyPlannerSettings.Hydraulics(
-                8,
-                8,
-                0,
-                0,
-                1,
-                1
-        );
+        HydrologyPlannerSettings.Hydraulics hydraulics = new HydrologyPlannerSettings.Hydraulics(1);
         HydrologyPlannerSettings.Grotto grotto = new HydrologyPlannerSettings.Grotto(true, 1, 1, 1, 1);
         HydrologyPlannerSettings.Outlets outlets = new HydrologyPlannerSettings.Outlets(
                 true,
@@ -168,20 +161,13 @@ public class HydrologyPlannerSettingsTest {
         assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Surface(
                 true,
                 new HydrologyPlannerSettings.Source(true, 1D, 0, 0, 1, 0),
-                1, 1, 1, 1, 1, 1, 0, 1D, 0, 0, false, 0, 0,
+                1, 1, 1, 1, 0, 1D,
                 null));
     }
 
     @Test
-    public void inconsistentHydraulicThresholdsAreRejected() {
-        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Hydraulics(
-                8,
-                16,
-                0,
-                2,
-                2,
-                2
-        ));
+    public void nonPositiveWaterfallThresholdsAreRejected() {
+        assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Hydraulics(0));
     }
 
     @Test

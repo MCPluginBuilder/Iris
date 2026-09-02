@@ -5,6 +5,8 @@ public enum HydrologyFeatureType {
     RIFFLE,
     CASCADE,
     WATERFALL,
+    // No planner produces a ridge bore any more. The constant stays because its ordinal seeds the
+    // segment, outlet and feature ids of every constant after it on the cave and deep-fluid paths.
     RIDGE_BORE,
     UNDERGROUND_POOL,
     UNDERGROUND_DROP,

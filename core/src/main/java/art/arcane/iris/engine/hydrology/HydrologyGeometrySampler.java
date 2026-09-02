@@ -37,10 +37,7 @@ public interface HydrologyGeometrySampler {
         return value;
     }
 
-    static HydrologyGeometrySampler deterministic(
-            long worldSeed,
-            HydrologyTerrainSampler terrainSampler
-    ) {
+    static HydrologyGeometrySampler deterministic(HydrologyTerrainSampler terrainSampler) {
         Objects.requireNonNull(terrainSampler, "terrainSampler");
         return request -> {
             if (request.field() == Field.UNDERGROUND_FLUID_LEVEL) {
@@ -52,7 +49,6 @@ public interface HydrologyGeometrySampler {
             }
             if (request.field() == Field.SURFACE_WIDTH
                     || request.field() == Field.SURFACE_DEPTH
-                    || request.field() == Field.SURFACE_INSET
                     || request.field() == Field.UNDERGROUND_WIDTH
                     || request.field() == Field.UNDERGROUND_DEPTH) {
                 return request.minimum();
@@ -63,11 +59,6 @@ public interface HydrologyGeometrySampler {
                         request.x(),
                         request.z(),
                         0x424c454e44L
-                );
-                case TARGET_POOL_LENGTH -> HydrologyHash.mix(
-                        worldSeed,
-                        request.stableId(),
-                        0x504f4f4cL
                 );
                 case UNDERGROUND_HEADROOM -> HydrologyHash.mix(
                         request.stableId(),
@@ -85,9 +76,7 @@ public interface HydrologyGeometrySampler {
     enum Field {
         SURFACE_WIDTH,
         SURFACE_DEPTH,
-        SURFACE_INSET,
         SURFACE_BLEND_WIDTH,
-        TARGET_POOL_LENGTH,
         UNDERGROUND_FLUID_LEVEL,
         UNDERGROUND_WIDTH,
         UNDERGROUND_DEPTH,

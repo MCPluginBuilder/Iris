@@ -31,12 +31,12 @@ public class HydrologyCaveCourseFilterTest {
     };
 
     @Test
-    public void rejectedRidgeBoreIsAbsentFromCoursesFootprintRendererAndLocator() {
+    public void rejectedCaveCourseIsAbsentFromCoursesFootprintRendererAndLocator() {
         HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 0D, "parent");
         HydraulicSegment ridge = new HydraulicSegment(
                 22L,
                 11L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,
@@ -81,19 +81,19 @@ public class HydrologyCaveCourseFilterTest {
         assertTrue(tile.footprint().isEmpty());
         assertTrue(tile.features().isEmpty());
         assertTrue(tile.renderAt(8, 8).features().isEmpty());
-        assertTrue(tile.nearestFeature(HydrologyFeatureType.RIDGE_BORE, 8, 8, 16).isEmpty());
+        assertTrue(tile.nearestFeature(HydrologyFeatureType.UNDERGROUND_POOL, 8, 8, 16).isEmpty());
         assertEquals(1, tile.diagnosticCandidates().size());
         assertEquals(HydrologyCandidateRejection.CAVE_CONTAINMENT,
                 tile.diagnosticCandidates().getFirst().rejection());
     }
 
     @Test
-    public void generatedSurfaceConnectedCaveAroundRidgeBoreIsSealed() {
+    public void generatedSurfaceConnectedCaveAroundAnUndergroundReachIsSealed() {
         HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 0D, "parent");
         HydraulicSegment ridge = new HydraulicSegment(
                 42L,
                 41L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,
@@ -136,7 +136,7 @@ public class HydrologyCaveCourseFilterTest {
         HydraulicSegment ridge = new HydraulicSegment(
                 420L,
                 410L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,
@@ -218,12 +218,12 @@ public class HydrologyCaveCourseFilterTest {
     }
 
     @Test
-    public void ridgeBoreAboveFinalTerrainRejectsTheWholeCourse() {
+    public void undergroundReachAboveFinalTerrainRejectsTheWholeCourse() {
         HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 0D, "parent");
         HydraulicSegment ridge = new HydraulicSegment(
                 52L,
                 51L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,
@@ -255,12 +255,12 @@ public class HydrologyCaveCourseFilterTest {
     }
 
     @Test
-    public void surfaceRidgeExposurePreflightChecksTheFullActionBoundaryBeforeVoxelExpansion() {
+    public void surfaceExposurePreflightChecksTheFullActionBoundaryBeforeVoxelExpansion() {
         HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 0D, "parent");
         HydraulicSegment ridge = new HydraulicSegment(
                 152L,
                 151L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,
@@ -294,12 +294,12 @@ public class HydrologyCaveCourseFilterTest {
     }
 
     @Test
-    public void ridgeSurfaceOpeningExemptsItsCompleteSixNeighborShell() {
+    public void caveSurfaceOpeningExemptsItsCompleteSixNeighborShell() {
         HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 0D, "parent");
         HydraulicSegment ridge = new HydraulicSegment(
                 162L,
                 161L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,
@@ -505,7 +505,7 @@ public class HydrologyCaveCourseFilterTest {
         HydraulicSegment ridge = new HydraulicSegment(
                 192L,
                 191L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,
@@ -598,12 +598,12 @@ public class HydrologyCaveCourseFilterTest {
     }
 
     @Test
-    public void acceptedRidgeBoreRetainsItsExactPlanOnTheImmutableTile() {
+    public void acceptedCaveCourseRetainsItsExactPlanOnTheImmutableTile() {
         HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 0D, "parent");
         HydraulicSegment ridge = new HydraulicSegment(
                 82L,
                 81L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,
@@ -959,7 +959,7 @@ public class HydrologyCaveCourseFilterTest {
         HydraulicSegment ridge = new HydraulicSegment(
                 102L,
                 101L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,
@@ -1034,7 +1034,7 @@ public class HydrologyCaveCourseFilterTest {
         HydraulicSegment ridge = new HydraulicSegment(
                 92L,
                 91L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 20,
                 20,
                 2,

@@ -23,7 +23,7 @@ public final class HydrologyPlannerProbeTest {
     }
 
     @Test
-    public void requiredCoverageExcludesTheRemovedRidgeBore() {
+    public void requiredCoverageExcludesTheUnproducedRidgeBore() {
         assertFalse(HydrologyPlannerProbe.REQUIRED_FEATURE_TYPES.contains(HydrologyFeatureType.RIDGE_BORE));
         assertEquals(
                 EnumSet.complementOf(EnumSet.of(HydrologyFeatureType.RIDGE_BORE)),

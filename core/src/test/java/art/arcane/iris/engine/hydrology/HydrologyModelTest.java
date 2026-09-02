@@ -153,7 +153,7 @@ public class HydrologyModelTest {
         HydraulicSegment containedLip = new HydraulicSegment(
                 4L,
                 9L,
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.SURFACE_POOL,
                 80,
                 80,
                 4,

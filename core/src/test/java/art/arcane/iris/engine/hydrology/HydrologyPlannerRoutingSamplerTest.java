@@ -38,7 +38,7 @@ public class HydrologyPlannerRoutingSamplerTest {
                 settings,
                 detailSampler,
                 routingSampler,
-                HydrologyGeometrySampler.deterministic(17L, detailSampler),
+                HydrologyGeometrySampler.deterministic(detailSampler),
                 -4096,
                 footprint -> new HydrologyTerrainCaveVoxelView(detailSampler, settings.seaLevel(), -4096, 4096)
         );
@@ -70,7 +70,7 @@ public class HydrologyPlannerRoutingSamplerTest {
                 settings,
                 detailSampler,
                 routingSampler,
-                HydrologyGeometrySampler.deterministic(19L, detailSampler),
+                HydrologyGeometrySampler.deterministic(detailSampler),
                 -4096,
                 footprint -> new HydrologyTerrainCaveVoxelView(detailSampler, settings.seaLevel(), -4096, 4096)
         );
@@ -108,7 +108,7 @@ public class HydrologyPlannerRoutingSamplerTest {
                 settings,
                 detailSampler,
                 routingSampler,
-                HydrologyGeometrySampler.deterministic(23L, detailSampler),
+                HydrologyGeometrySampler.deterministic(detailSampler),
                 -4096,
                 footprint -> new HydrologyTerrainCaveVoxelView(detailSampler, settings.seaLevel(), -4096, 4096)
         );

@@ -35,9 +35,9 @@ public record HydrologyPlannerSettings(
         Source undergroundSources = new Source(true, 0.25D, Integer.MIN_VALUE, 0, 1, 512);
         return new HydrologyPlannerSettings(
                 63,
-                new Routing(2048, 64, 8, 8192, 8192, new Branching(384, 192), 1.5D, 24D, 2D, 0.2D),
-                new Surface(true, surfaceSources, 4, 8, 2, 4, 1, 1, 10, 1.5D, 4, 32, false, 1, 1, Banks.defaults()),
-                new Hydraulics(80, 180, 1, 7, 24, 8),
+                new Routing(2048, 64, 8192, 8192, 384, 192, 1.5D, 24D, 2D, 0.2D),
+                new Surface(true, surfaceSources, 4, 8, 2, 4, 10, 1.5D, Banks.defaults()),
+                new Hydraulics(8),
                 new Underground(true, undergroundSources, -48, 72, 3, 8, 1, 3, 6, 14, true),
                 new Outlets(
                         true,
@@ -97,7 +97,7 @@ public record HydrologyPlannerSettings(
         int radius = 0;
         int routeDisplacement = Math.multiplyExact(routing.sampleSpacing(), 3);
         if (surface.enabled() && surface.sources().enabled()) {
-            int blendWidth = Math.max(surface.maximumTerrainBlendWidth(), surface.banks().maximumBlendWidth());
+            int blendWidth = surface.banks().maximumBlendWidth();
             int surfaceRadius = (int) StrictMath.ceil(
                     surface.maximumWidth() / 2D + surface.shoreWidth() + blendWidth
             );
@@ -105,7 +105,7 @@ public record HydrologyPlannerSettings(
                     surfaceRadius,
                     (int) StrictMath.ceil(geometry.drops().basinWidth(
                             geometry.drops().flowWidth(surface.maximumWidth())
-                    ) / 2D + surface.shoreWidth() + surface.maximumTerrainBlendWidth())
+                    ) / 2D + surface.shoreWidth() + blendWidth)
             );
             surfaceRadius = Math.max(surfaceRadius, outlets.coastalGrotto().horizontalRadius());
             surfaceRadius = Math.max(surfaceRadius, outlets.inlandGrotto().horizontalRadius());
@@ -144,18 +144,17 @@ public record HydrologyPlannerSettings(
     public record Routing(
             int tileSize,
             int sampleSpacing,
-            int refinementSpacing,
             int maximumRouteNodes,
             int maximumRouteLength,
-            Branching branching,
+            int minimumSurfaceCourseLength,
+            int minimumUndergroundCourseLength,
             double valleyPreference,
             double uphillPenalty,
             double slopePenalty,
             double confluenceAttraction
     ) {
         public Routing {
-            if (tileSize < 32 || sampleSpacing < 4 || refinementSpacing < 1 || branching == null
-                    || tileSize % sampleSpacing != 0 || sampleSpacing % refinementSpacing != 0) {
+            if (tileSize < 32 || sampleSpacing < 4 || tileSize % sampleSpacing != 0) {
                 throw new IllegalArgumentException("Routing sizes must form an exact bounded tile lattice.");
             }
             int latticeWidth = tileSize / sampleSpacing + 1;
@@ -166,8 +165,12 @@ public record HydrologyPlannerSettings(
             if (maximumRouteNodes < latticeNodes || maximumRouteNodes > 1_000_000 || maximumRouteLength < 1) {
                 throw new IllegalArgumentException("maximumRouteNodes must contain the complete lattice and remain bounded.");
             }
-            if (branching.minimumSurfaceCourseLength() > maximumRouteLength
-                    || branching.minimumUndergroundCourseLength() > maximumRouteLength) {
+            if (minimumSurfaceCourseLength < 0 || minimumSurfaceCourseLength > 32_768
+                    || minimumUndergroundCourseLength < 0 || minimumUndergroundCourseLength > 32_768) {
+                throw new IllegalArgumentException("Hydrology course lengths are invalid.");
+            }
+            if (minimumSurfaceCourseLength > maximumRouteLength
+                    || minimumUndergroundCourseLength > maximumRouteLength) {
                 throw new IllegalArgumentException("Minimum course lengths cannot exceed maximum route length.");
             }
             requireFiniteNonNegative(valleyPreference, "valleyPreference");
@@ -175,17 +178,17 @@ public record HydrologyPlannerSettings(
             requireFiniteNonNegative(slopePenalty, "slopePenalty");
             requireFiniteNonNegative(confluenceAttraction, "confluenceAttraction");
         }
-    }
 
-    public record Branching(
-            int minimumSurfaceCourseLength,
-            int minimumUndergroundCourseLength
-    ) {
-        public Branching {
-            if (minimumSurfaceCourseLength < 0 || minimumSurfaceCourseLength > 32_768
-                    || minimumUndergroundCourseLength < 0 || minimumUndergroundCourseLength > 32_768) {
-                throw new IllegalArgumentException("Hydrology branching lengths are invalid.");
+        // Route refinement is derived from the lattice, never authored.
+        public static int refinementSpacing(int sampleSpacing) {
+            if (sampleSpacing % 4 == 0) {
+                return 4;
             }
+            return sampleSpacing % 2 == 0 ? 2 : 1;
+        }
+
+        public int refinementSpacing() {
+            return refinementSpacing(sampleSpacing);
         }
 
         public int minimumCourseLength(boolean surface) {
@@ -221,15 +224,8 @@ public record HydrologyPlannerSettings(
             int maximumWidth,
             int minimumDepth,
             int maximumDepth,
-            int minimumSurfaceInset,
-            int maximumSurfaceInset,
             int maximumIncision,
             double shoreWidth,
-            int minimumTerrainBlendWidth,
-            int maximumTerrainBlendWidth,
-            boolean ridgeTunnelsEnabled,
-            int maximumRidgeTunnelLength,
-            int ridgeTunnelHeadroom,
             Banks banks
     ) {
         public Surface {
@@ -238,13 +234,8 @@ public record HydrologyPlannerSettings(
             }
             requireRange(minimumWidth, maximumWidth, 1, 256, "surface width");
             requireRange(minimumDepth, maximumDepth, 1, 64, "surface depth");
-            requireRange(minimumSurfaceInset, maximumSurfaceInset, 1, 64, "surface inset");
             if (maximumIncision < 0 || !Double.isFinite(shoreWidth) || shoreWidth < 0D || shoreWidth > 32D) {
                 throw new IllegalArgumentException("Surface incision and shore width are invalid.");
-            }
-            requireRange(minimumTerrainBlendWidth, maximumTerrainBlendWidth, 0, 128, "terrain blend width");
-            if (maximumRidgeTunnelLength < 0 || ridgeTunnelHeadroom < 0) {
-                throw new IllegalArgumentException("Ridge tunnel bounds cannot be negative.");
             }
         }
     }
@@ -280,21 +271,11 @@ public record HydrologyPlannerSettings(
         }
     }
 
-    public record Hydraulics(
-            int minimumTargetPoolLength,
-            int maximumTargetPoolLength,
-            int riffleDrop,
-            int maximumGradualDrop,
-            int maximumGradualLength,
-            int waterfallMinimumDrop
-    ) {
+    // The routing gates read one hydraulic threshold: the drop that makes a reach a waterfall.
+    public record Hydraulics(int waterfallMinimumDrop) {
         public Hydraulics {
-            requireRange(minimumTargetPoolLength, maximumTargetPoolLength, 1, 4096, "target pool length");
-            if (riffleDrop < 0 || maximumGradualDrop < riffleDrop
-                    || maximumGradualLength < Math.max(1, maximumGradualDrop)
-                    || waterfallMinimumDrop != maximumGradualDrop + 1
-                    || minimumTargetPoolLength < maximumGradualLength) {
-                throw new IllegalArgumentException("Hydraulic transition thresholds are inconsistent.");
+            if (waterfallMinimumDrop < 1) {
+                throw new IllegalArgumentException("waterfallMinimumDrop must be at least one block.");
             }
         }
     }

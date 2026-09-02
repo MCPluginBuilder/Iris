@@ -522,34 +522,13 @@ public class HydrologyPlannerTest {
         assertFalse("diagnostics=" + tile.diagnosticCandidates(), surfaceCourses(tile).isEmpty());
         boolean aggregateTransition = false;
         for (RiverCourse course : surfaceCourses(tile)) {
-            double recovery = Double.POSITIVE_INFINITY;
-            boolean transitionActive = false;
             for (HydraulicSegment segment : course.segments()) {
-                boolean surfaceDrop = segment.type().isSurface() && segment.type().isDrop();
-                if (surfaceDrop) {
-                    if (!transitionActive) {
-                        assertTrue(
-                                "segments=" + course.segments(),
-                                !Double.isFinite(recovery)
-                                        || recovery >= settings.hydraulics().minimumTargetPoolLength()
-                        );
-                    }
-                    recovery = 0D;
-                    transitionActive = !segment.receivingPool();
-                    if (segment.type() == HydrologyFeatureType.WATERFALL
-                            && segment.drop() >= settings.hydraulics().waterfallMinimumDrop()) {
-                        aggregateTransition = true;
-                    }
+                if (segment.drop() < settings.hydraulics().waterfallMinimumDrop()) {
                     continue;
                 }
-                if (segment.type() == HydrologyFeatureType.UNDERGROUND_DROP
-                        && segment.drop() >= settings.hydraulics().waterfallMinimumDrop()) {
+                if (segment.type() == HydrologyFeatureType.WATERFALL
+                        || segment.type() == HydrologyFeatureType.UNDERGROUND_DROP) {
                     aggregateTransition = true;
-                }
-                if (transitionActive && segment.receivingPool()) {
-                    transitionActive = false;
-                } else if (!transitionActive && Double.isFinite(recovery)) {
-                    recovery += segmentLength(segment);
                 }
             }
         }
@@ -597,10 +576,8 @@ public class HydrologyPlannerTest {
                 new HydrologyPlannerSettings.Routing(
                         routing.tileSize(),
                         routing.sampleSpacing(),
-                        routing.refinementSpacing(),
                         routing.maximumRouteNodes(),
-                        routing.maximumRouteLength(),
-                        new HydrologyPlannerSettings.Branching(96, 0),
+                        routing.maximumRouteLength(), 96, 0,
                         routing.valleyPreference(),
                         routing.uphillPenalty(),
                         routing.slopePenalty(),
@@ -792,7 +769,7 @@ public class HydrologyPlannerTest {
                 333L,
                 settings,
                 coast,
-                HydrologyGeometrySampler.deterministic(333L, coast),
+                HydrologyGeometrySampler.deterministic(coast),
                 -4096,
                 footprint -> solidCaveView()
         ).plan(TILE);
@@ -1134,16 +1111,8 @@ public class HydrologyPlannerTest {
                 base.surface().maximumWidth(),
                 base.surface().minimumDepth(),
                 8,
-                base.surface().minimumSurfaceInset(),
-                base.surface().maximumSurfaceInset(),
                 128,
                 base.surface().shoreWidth(),
-                base.surface().minimumTerrainBlendWidth(),
-                base.surface().maximumTerrainBlendWidth(),
-                base.surface().ridgeTunnelsEnabled(),
-                base.surface().maximumRidgeTunnelLength(),
-                base.surface().ridgeTunnelHeadroom()
-        ,
                 HydrologyPlannerSettings.Banks.defaults());
         HydrologyPlannerSettings shaped = new HydrologyPlannerSettings(
                 base.seaLevel(),
@@ -1432,16 +1401,8 @@ public class HydrologyPlannerTest {
                         surface.maximumWidth(),
                         surface.minimumDepth(),
                         surface.maximumDepth(),
-                        surface.minimumSurfaceInset(),
-                        surface.maximumSurfaceInset(),
                         surface.maximumIncision(),
                         surface.shoreWidth(),
-                        surface.minimumTerrainBlendWidth(),
-                        surface.maximumTerrainBlendWidth(),
-                        surface.ridgeTunnelsEnabled(),
-                        32,
-                        surface.ridgeTunnelHeadroom()
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
                 base.hydraulics(),
                 base.underground(),
@@ -1772,8 +1733,7 @@ public class HydrologyPlannerTest {
         );
         return new HydrologyPlannerSettings(
                 63,
-                new HydrologyPlannerSettings.Routing(128, 16, 4, 512, 256,
-                        new HydrologyPlannerSettings.Branching(0, 0), 0.5D, 12D, 0.5D, 0.1D),
+                new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 0, 0, 0.5D, 12D, 0.5D, 0.1D),
                 new HydrologyPlannerSettings.Surface(
                         surfaceDensity > 0D || surfaceSources.maximumPerTile() > 0,
                         surfaceSources,
@@ -1781,18 +1741,10 @@ public class HydrologyPlannerTest {
                         18,
                         2,
                         4,
-                        4,
-                        8,
                         10,
                         1.5D,
-                        4,
-                        8,
-                        true,
-                        64,
-                        8
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
-                new HydrologyPlannerSettings.Hydraulics(12, 28, 1, 3, 8, 4),
+                new HydrologyPlannerSettings.Hydraulics(4),
                 new HydrologyPlannerSettings.Underground(
                         undergroundDensity > 0D,
                         undergroundSources,
@@ -1842,10 +1794,8 @@ public class HydrologyPlannerTest {
                 new HydrologyPlannerSettings.Routing(
                         512,
                         64,
-                        4,
                         1024,
-                        2048,
-                        new HydrologyPlannerSettings.Branching(64, 32),
+                        2048, 64, 32,
                         1.5D,
                         24D,
                         2D,
@@ -1858,18 +1808,10 @@ public class HydrologyPlannerTest {
                         surface.maximumWidth(),
                         surface.minimumDepth(),
                         surface.maximumDepth(),
-                        surface.minimumSurfaceInset(),
-                        surface.maximumSurfaceInset(),
                         96,
                         surface.shoreWidth(),
-                        surface.minimumTerrainBlendWidth(),
-                        surface.maximumTerrainBlendWidth(),
-                        surface.ridgeTunnelsEnabled(),
-                        192,
-                        surface.ridgeTunnelHeadroom()
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
-                new HydrologyPlannerSettings.Hydraulics(12, 28, 1, 4, 12, 5),
+                new HydrologyPlannerSettings.Hydraulics(5),
                 base.underground(),
                 new HydrologyPlannerSettings.Outlets(
                         true,
@@ -2172,16 +2114,8 @@ public class HydrologyPlannerTest {
                         surface.maximumWidth(),
                         surface.minimumDepth(),
                         surface.maximumDepth(),
-                        surface.minimumSurfaceInset(),
-                        surface.maximumSurfaceInset(),
                         surface.maximumIncision(),
                         surface.shoreWidth(),
-                        surface.minimumTerrainBlendWidth(),
-                        surface.maximumTerrainBlendWidth(),
-                        surface.ridgeTunnelsEnabled(),
-                        surface.maximumRidgeTunnelLength(),
-                        surface.ridgeTunnelHeadroom()
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
                 settings.hydraulics(),
                 settings.underground(),

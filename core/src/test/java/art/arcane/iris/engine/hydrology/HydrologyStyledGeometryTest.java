@@ -192,8 +192,7 @@ public class HydrologyStyledGeometryTest {
         );
         return new HydrologyPlannerSettings(
                 63,
-                new HydrologyPlannerSettings.Routing(128, 16, 4, 512, 256,
-                        new HydrologyPlannerSettings.Branching(16, 8), 0.5D, 12D, 0.5D, 0.1D),
+                new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 16, 8, 0.5D, 12D, 0.5D, 0.1D),
                 new HydrologyPlannerSettings.Surface(
                         surfaceDensity > 0D,
                         surfaceSources,
@@ -201,18 +200,10 @@ public class HydrologyStyledGeometryTest {
                         18,
                         2,
                         4,
-                        4,
-                        8,
                         10,
                         1.5D,
-                        4,
-                        8,
-                        true,
-                        96,
-                        8
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
-                new HydrologyPlannerSettings.Hydraulics(12, 28, 1, 3, 8, 4),
+                new HydrologyPlannerSettings.Hydraulics(4),
                 new HydrologyPlannerSettings.Underground(
                         undergroundDensity > 0D,
                         undergroundSources,

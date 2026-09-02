@@ -746,10 +746,10 @@ public class MantleHydrologyComponentTest {
     }
 
     @Test
-    public void sameCourseSurfaceFluidOwnsAChangedRidgeBoundary() {
+    public void sameCourseSurfaceFluidOwnsAChangedCaveBoundary() {
         long courseId = 33L;
         HydrologyColumnLayer ridge = layerForCourse(
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 34L,
                 courseId,
                 10L,
@@ -1115,7 +1115,7 @@ public class MantleHydrologyComponentTest {
                 "river"
         );
         HydrologyColumnLayer cave = layer(
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 72L,
                 15L,
                 20,
@@ -1158,7 +1158,7 @@ public class MantleHydrologyComponentTest {
                 "river"
         );
         HydrologyColumnLayer cave = layer(
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 72L,
                 15L,
                 20,
@@ -1192,7 +1192,7 @@ public class MantleHydrologyComponentTest {
                 "river"
         );
         HydrologyColumnLayer cave = layer(
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 74L,
                 17L,
                 20,
@@ -1245,7 +1245,7 @@ public class MantleHydrologyComponentTest {
                 "lava"
         );
         HydrologyColumnLayer cave = layer(
-                HydrologyFeatureType.RIDGE_BORE,
+                HydrologyFeatureType.UNDERGROUND_POOL,
                 76L,
                 19L,
                 17,
@@ -1530,8 +1530,7 @@ public class MantleHydrologyComponentTest {
         );
         return new HydrologyPlannerSettings(
                 63,
-                new HydrologyPlannerSettings.Routing(128, 16, 8, 512, 256,
-                        new HydrologyPlannerSettings.Branching(16, 8), 0.5D, 12D, 0.5D, 0.1D),
+                new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 16, 8, 0.5D, 12D, 0.5D, 0.1D),
                 new HydrologyPlannerSettings.Surface(
                         true,
                         surfaceSources,
@@ -1539,18 +1538,10 @@ public class MantleHydrologyComponentTest {
                         2,
                         2,
                         2,
-                        4,
-                        8,
                         128,
                         0D,
-                        0,
-                        0,
-                        false,
-                        0,
-                        0
-                ,
                         HydrologyPlannerSettings.Banks.defaults()),
-                new HydrologyPlannerSettings.Hydraulics(8, 16, 1, 3, 8, 4),
+                new HydrologyPlannerSettings.Hydraulics(4),
                 new HydrologyPlannerSettings.Underground(
                         false,
                         disabledSources,
