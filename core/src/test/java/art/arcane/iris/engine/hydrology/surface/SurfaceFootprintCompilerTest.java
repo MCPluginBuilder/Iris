@@ -114,6 +114,58 @@ public class SurfaceFootprintCompilerTest {
         assertNull(column(footprint, 111, 0));
     }
 
+    @Test
+    public void inletColumnsPublishSeaLevelFluidOverALoweredBed() {
+        HydrologyTerrainSampler sampler = (int x, int z) -> x >= 100
+                ? HydrologyTerrainSample.ocean(50, "ocean")
+                : HydrologyTerrainSample.openLand(70, 0D, "land");
+        HydrologyPlannerSettings.Inlet inlet = HydrologyPlannerSettings.defaults().surface().banks().inlet();
+        ArrayList<HydrologyPoint> ramp = new ArrayList<>();
+        for (int x = 30; x <= 39; x++) {
+            ramp.add(new HydrologyPoint(x, 69 - (x - 30), 0));
+        }
+        RiverCourse course = course(List.of(
+                segment(1L, HydrologyFeatureType.SURFACE_POOL, 69, 69, points(0, 30, 69)),
+                segment(2L, HydrologyFeatureType.CASCADE, 69, SEA_LEVEL, List.copyOf(ramp)),
+                segment(3L, HydrologyFeatureType.SURFACE_POOL, SEA_LEVEL, SEA_LEVEL, points(39, 99, SEA_LEVEL)),
+                segment(4L, HydrologyFeatureType.MOUTH, SEA_LEVEL, SEA_LEVEL, points(99, 101, SEA_LEVEL))
+        ));
+        SurfaceFootprint footprint = compiler(sampler).compile(course);
+
+        assertEquals(0, footprint.uncontainedWetCells());
+        assertEquals(3, inlet.depth());
+        for (int x = 40; x < 100; x++) {
+            SurfaceLayerColumn center = column(footprint, x, 0);
+            assertNotNull("x=" + x, center);
+            HydrologyColumnLayer layer = center.layer();
+            assertTrue(layer.channel());
+            assertTrue(layer.fluidOwned());
+            assertEquals(SEA_LEVEL, layer.fluidHeadY());
+            assertTrue("x=" + x + " bed " + layer.bedY(), layer.bedY() <= SEA_LEVEL - inlet.depth());
+            assertEquals(sampler.sample(x, 0).mouthBiomeKey(), layer.mouthBiomeKey());
+        }
+        int shoreZ = -1;
+        for (int z = 1; z < 16; z++) {
+            SurfaceLayerColumn column = column(footprint, 90, z);
+            assertNotNull(column);
+            if (!column.layer().channel()) {
+                shoreZ = z;
+                break;
+            }
+        }
+        assertTrue(shoreZ > 3);
+        SurfaceLayerColumn shore = column(footprint, 90, shoreZ);
+        assertTrue(shore.layer().shore());
+        assertEquals(SEA_LEVEL, shore.layer().bedY());
+        assertEquals(SEA_LEVEL, shore.layer().fluidHeadY());
+        for (SurfaceLayerColumn column : footprint.columns()) {
+            if (column.terrain().ocean()) {
+                assertTrue(column.layer().oceanApron());
+                assertFalse(column.layer().terrainOwned());
+            }
+        }
+    }
+
     private static SurfaceLayerColumn column(SurfaceFootprint footprint, int x, int z) {
         for (SurfaceLayerColumn column : footprint.columns()) {
             if (column.x() == x && column.z() == z) {

@@ -74,7 +74,8 @@ public final class SurfaceFootprintCompiler {
                 channel,
                 valley,
                 terminal,
-                settings.outlets().maximumOceanApron()
+                settings.outlets().maximumOceanApron(),
+                pool ? HydrologyPlannerSettings.Ponds.none() : settings.surface().banks().ponds()
         );
         ArrayList<SurfaceColumn> ordered = new ArrayList<>(field.columns().values());
         ordered.sort(Comparator

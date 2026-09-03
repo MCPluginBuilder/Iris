@@ -28,6 +28,7 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -179,6 +180,18 @@ public final class RiverTransectProbe {
             System.out.println(String.format(Locale.ROOT,
                     "%s tile=%d,%d seed=%d courses=%d planMs=%.1f",
                     PREFIX, key.tileX(), key.tileZ(), configuration.seed(), tile.courses().size(), planMillis));
+            for (RiverCourse course : tile.courses()) {
+                if (course.type() != RiverCourseType.SEA_CAVE) {
+                    continue;
+                }
+                HydraulicSegment chamber = course.segments().getFirst();
+                System.out.println(String.format(Locale.ROOT,
+                        "%s seaCave id=%016x inner=%d,%d,%d mouth=%d,%d,%d cavePlan=%s",
+                        PREFIX, course.id(),
+                        chamber.start().x(), chamber.start().y(), chamber.start().z(),
+                        chamber.end().x(), chamber.end().y(), chamber.end().z(),
+                        tile.cavePlan(course.id()).map((plan) -> plan.accepted() ? "accepted" : "rejected").orElse("none")));
+            }
 
             for (String line : rejectionLines(tile)) {
                 System.out.println(PREFIX + " " + line);
@@ -457,8 +470,28 @@ public final class RiverTransectProbe {
             line(image, (from.naturalPoint().x() - minimumX) / scale, (from.naturalPoint().z() - minimumZ) / scale,
                     (to.naturalPoint().x() - minimumX) / scale, (to.naturalPoint().z() - minimumZ) / scale, 0x20C020);
         }
+        // Sea-cave chambers: every column the chamber owns in dark blue, so the cave shows on the coast with
+        // its open side to the sea; the centerline on top in white like a surface course.
+        HashSet<Long> seaCaveIds = new HashSet<>();
         for (RiverCourse course : tile.courses()) {
-            int rgb = course.type() == RiverCourseType.SURFACE ? 0xFFFFFF : 0xFF00FF;
+            if (course.type() == RiverCourseType.SEA_CAVE) {
+                seaCaveIds.add(course.id());
+            }
+        }
+        if (!seaCaveIds.isEmpty()) {
+            for (HydrologyColumnSample column : tile.footprint().columns().values()) {
+                for (HydrologyColumnLayer layer : column.layers()) {
+                    if (seaCaveIds.contains(layer.feature().courseId()) && layer.terrainOwned() && layer.channel()) {
+                        plot(image, (column.x() - minimumX) / scale, (column.z() - minimumZ) / scale, 0x000080, 0);
+                        break;
+                    }
+                }
+            }
+        }
+        for (RiverCourse course : tile.courses()) {
+            int rgb = course.type() == RiverCourseType.SURFACE || course.type() == RiverCourseType.SEA_CAVE
+                    ? 0xFFFFFF
+                    : 0xFF00FF;
             for (HydraulicSegment segment : course.segments()) {
                 for (HydrologyPoint point : segment.centerline()) {
                     plot(image, (point.x() - minimumX) / scale, (point.z() - minimumZ) / scale, rgb, 1);

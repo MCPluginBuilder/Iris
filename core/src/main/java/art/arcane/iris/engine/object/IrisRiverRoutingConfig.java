@@ -41,8 +41,13 @@ public class IrisRiverRoutingConfig {
 
     @MinNumber(1)
     @MaxNumber(256)
-    @Desc("Maximum drainage roots selected per planning tile.")
+    @Desc("Maximum inland drainage roots (sinkhole grottos) selected per planning tile. Unused when no inland outlet kind is enabled.")
     private int maximumOutletsPerTile = 4;
+
+    @MinNumber(0)
+    @MaxNumber(64)
+    @Desc("Maximum sea outlets (river mouths and coastal grottos) selected per planning tile, chosen by type in turn: the best mouth, the best coastal grotto, the next mouth, and so on, each at least two sample spacings from the others. Budgeted separately from maximumOutletsPerTile.")
+    private int maximumCoastalOutletsPerTile = 2;
 
     @Desc("Allow rivers to terminate at an ocean reservoir.")
     private boolean oceanOutlets = true;

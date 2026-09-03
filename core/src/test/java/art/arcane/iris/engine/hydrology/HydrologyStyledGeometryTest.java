@@ -89,7 +89,7 @@ public class HydrologyStyledGeometryTest {
                         + terrain(surfaceSource.naturalPoint().x(), surfaceSource.naturalPoint().z()).naturalHeight(),
                 surfaceStart.upstreamHeadY() <=
                         terrain(surfaceSource.naturalPoint().x(), surfaceSource.naturalPoint().z()).naturalHeight()
-                                - surfaceSettings.surface().banks().inset()
+                                - surfaceSettings.surface().banks().sink()
         );
         int widestSurfaceWidth = 0;
         for (HydraulicSegment segment : surface.segments()) {
@@ -218,7 +218,8 @@ public class HydrologyStyledGeometryTest {
                         4,
                         5,
                         9,
-                        true
+                        true,
+                        0
                 ),
                 new HydrologyPlannerSettings.Outlets(
                         true,
@@ -228,10 +229,13 @@ public class HydrologyStyledGeometryTest {
                         12,
                         32,
                         2,
+                        4,
                         4
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                deepFluids, List.of()
+                deepFluids, List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -264,7 +268,9 @@ public class HydrologyStyledGeometryTest {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("water"), List.of()
+                    List.of("water"), List.of(),
+                    Double.NaN,
+                    null
             );
         }
         int height = 118 - Math.floorDiv(x, 12) + (int) StrictMath.round(StrictMath.sin(z / 18D) * 2D);
@@ -296,7 +302,9 @@ public class HydrologyStyledGeometryTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("water"), List.of()
+                List.of("water"), List.of(),
+                Double.NaN,
+                null
         );
     }
 

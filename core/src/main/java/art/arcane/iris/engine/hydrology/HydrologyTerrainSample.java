@@ -30,8 +30,16 @@ public record HydrologyTerrainSample(
         String bankBiomeKey,
         String floodedCaveBiomeKey,
         List<String> preferredProfileKeys,
-        List<String> surfacePoolKeys
+        List<String> surfacePoolKeys,
+        double shoreBiomeWidth,
+        String confinesKey
 ) {
+    /**
+     * {@code shoreBiomeWidth} is the width in blocks of the shore biome band beside a surface river at this
+     * column; {@code NaN} means the column has no policy value and the geometric shore width applies.
+     * {@code confinesKey} names the region or biome a river passing this column must stay inside, or is
+     * null where rivers may flow anywhere.
+     */
     public HydrologyTerrainSample {
         requireFiniteNonNegative(slope, "slope");
         requireFiniteNonNegative(routingCost, "routingCost");
@@ -53,6 +61,20 @@ public record HydrologyTerrainSample(
         floodedCaveBiomeKey = normalizeKey(floodedCaveBiomeKey, surfaceBiomeKey);
         preferredProfileKeys = normalizeProfiles(preferredProfileKeys);
         surfacePoolKeys = surfacePoolKeys == null ? List.of() : List.copyOf(surfacePoolKeys);
+        if (!Double.isNaN(shoreBiomeWidth) && (!Double.isFinite(shoreBiomeWidth) || shoreBiomeWidth < 0D)) {
+            throw new IllegalArgumentException("shoreBiomeWidth must be NaN, or finite and non-negative.");
+        }
+        confinesKey = confinesKey == null || confinesKey.isBlank() ? null : confinesKey;
+    }
+
+    /** The shore biome band width at this column, or {@code fallback} when no policy set one. */
+    public double shoreBiomeWidth(double fallback) {
+        return Double.isNaN(shoreBiomeWidth) ? fallback : shoreBiomeWidth;
+    }
+
+    /** Whether a river at {@code upstream} may drain into this column without leaving its confines. */
+    public boolean drainsInto(HydrologyTerrainSample downstream) {
+        return confinesKey == null || confinesKey.equals(downstream.confinesKey());
     }
 
     public static HydrologyTerrainSample openLand(int naturalHeight, double slope, String parentBiomeKey) {
@@ -84,7 +106,9 @@ public record HydrologyTerrainSample(
                 parentBiomeKey,
                 parentBiomeKey,
                 List.of("default"),
-                List.of()
+                List.of(),
+                Double.NaN,
+                null
         );
     }
 
@@ -117,7 +141,9 @@ public record HydrologyTerrainSample(
                 parentBiomeKey,
                 parentBiomeKey,
                 List.of("default"),
-                List.of()
+                List.of(),
+                Double.NaN,
+                null
         );
     }
 
@@ -150,7 +176,9 @@ public record HydrologyTerrainSample(
                 bankBiomeKey,
                 floodedCaveBiomeKey,
                 preferredProfileKeys,
-                replacementPoolKeys
+                replacementPoolKeys,
+                shoreBiomeWidth,
+                confinesKey
         );
     }
 
@@ -183,7 +211,9 @@ public record HydrologyTerrainSample(
                 bankBiomeKey,
                 floodedCaveBiomeKey,
                 preferredProfileKeys,
-                surfacePoolKeys
+                surfacePoolKeys,
+                shoreBiomeWidth,
+                confinesKey
         );
     }
 

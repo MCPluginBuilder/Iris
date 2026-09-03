@@ -186,6 +186,68 @@ public class HydrologyModelTest {
     }
 
     @Test
+    public void seaCaveCoursesAreIndependent() {
+        HydraulicSegment chamber = new HydraulicSegment(
+                1L,
+                21L,
+                HydrologyFeatureType.COASTAL_GROTTO,
+                63,
+                63,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(100, 63, 0), new HydrologyPoint(112, 63, 0))
+        );
+
+        RiverCourse seaCave = new RiverCourse(
+                21L,
+                RiverCourseType.SEA_CAVE,
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                "water",
+                1,
+                List.of(),
+                List.of(chamber)
+        );
+
+        assertEquals(RiverCourseType.SEA_CAVE, seaCave.type());
+        assertTrue(seaCave.sourceNodeId().isEmpty());
+        assertTrue(seaCave.outletId().isEmpty());
+        assertFalse(seaCave.surfaceSinkholeContinuation());
+        assertThrows(IllegalArgumentException.class, () -> new RiverCourse(
+                21L,
+                RiverCourseType.SEA_CAVE,
+                OptionalLong.of(4L),
+                OptionalLong.empty(),
+                "water",
+                1,
+                List.of(),
+                List.of(chamber)
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new RiverCourse(
+                21L,
+                RiverCourseType.SEA_CAVE,
+                OptionalLong.empty(),
+                OptionalLong.of(5L),
+                "water",
+                1,
+                List.of(),
+                List.of(chamber)
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new RiverCourse(
+                21L,
+                RiverCourseType.SEA_CAVE,
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                "water",
+                1,
+                List.of(),
+                List.of()
+        ));
+    }
+
+    @Test
     public void oceanColumnsRejectOwnedOrElevatedWrites() {
         HydrologyFeatureRef feature = feature(HydrologyFeatureType.MOUTH, 7L, 63);
         HydrologyColumnLayer apron = layer(feature, 63, 63, 63, true, false, true);

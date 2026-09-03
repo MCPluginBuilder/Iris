@@ -12,6 +12,7 @@ import art.arcane.iris.engine.hydrology.surface.SurfaceCenterline;
 import art.arcane.iris.engine.hydrology.surface.SurfaceCourseBuilder;
 import art.arcane.iris.engine.hydrology.surface.SurfaceCourseResult;
 import art.arcane.iris.engine.hydrology.surface.SurfaceTerminal;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.project.noise.SimplexNoise;
@@ -34,6 +35,7 @@ import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,13 +45,24 @@ public final class HydrologyPlanner {
     private static final long NODE_SALT = 0x4e4f4445L;
     private static final double CROSS_DROP_WEIGHT = 3D;
     private static final long OUTLET_SALT = 0x4f55544c4554L;
+    /** Sea outlet types in the order the coastal budget takes them, one of each type per turn. */
+    private static final List<HydrologyFeatureType> COASTAL_OUTLET_TYPES = List.of(
+            HydrologyFeatureType.MOUTH,
+            HydrologyFeatureType.COASTAL_GROTTO
+    );
     private static final long EDGE_SALT = 0x45444745L;
     private static final long SURFACE_SOURCE_SALT = 0x53555246414345L;
     private static final long UNDERGROUND_SOURCE_SALT = 0x554e444552L;
     private static final long COURSE_SALT = 0x434f55525345L;
     private static final long SEGMENT_SALT = 0x5345474d454e54L;
+    private static final int TRIBUTARY_JUNCTION_ATTEMPTS = 4;
+    private static final int TRIBUTARY_BACKWATER_LIMIT = 3;
+    private static final int TRIBUTARY_JUNCTION_FLAT_STATIONS = 6;
+    private static final int TRIBUTARY_JUNCTION_PAIR_INDEX = 0x4a4f494e;
     private static final long DEEP_FLUID_SALT = 0x44454550464cL;
     private static final long SURFACE_POOL_SALT = 0x504f4f4cL;
+    private static final long SEA_CAVE_SALT = 0x534541434156L;
+    private static final double SEA_CAVE_JITTER_DEGREES = 25D;
     private static final long DEEP_FLUID_X_OFFSET_SALT = 0x44454550584fL;
     private static final long DEEP_FLUID_Z_OFFSET_SALT = 0x444545505a4fL;
     private static final long DEEP_CHANNEL_HEADING_SALT = 0x44454550484447L;
@@ -116,11 +129,13 @@ public final class HydrologyPlanner {
     private final Cache<RefinedEdgeKey, List<HydrologyPoint>> refinedEdgeCache;
     private final ConcurrentHashMap<HydrologyTileKey, CompletableFuture<CrossTileResolvedOwner>> resolvingOwners;
     private final ThreadLocal<PlanningSamples> planningSamples;
+    private final ThreadLocal<DraftProfile> draftProfiles;
     private final SimplexNoise routeAnchorX;
     private final SimplexNoise routeAnchorZ;
     private final SimplexNoise routeWormPrimary;
     private final SimplexNoise routeWormDetail;
     private final SurfaceCourseBuilder surfaceCourseBuilder;
+    private final SurfaceCourseBuilder tributaryCourseBuilder;
 
     public HydrologyPlanner(long worldSeed, HydrologyPlannerSettings settings, HydrologyTerrainSampler sampler) {
         this(
@@ -231,6 +246,7 @@ public final class HydrologyPlanner {
                 .build();
         this.resolvingOwners = new ConcurrentHashMap<>();
         this.planningSamples = new ThreadLocal<>();
+        this.draftProfiles = new ThreadLocal<>();
         this.routeAnchorX = new SimplexNoise(HydrologyHash.mix(worldSeed, ROUTE_ANCHOR_X_SALT));
         this.routeAnchorZ = new SimplexNoise(HydrologyHash.mix(worldSeed, ROUTE_ANCHOR_Z_SALT));
         this.routeWormPrimary = new SimplexNoise(HydrologyHash.mix(worldSeed, ROUTE_WORM_PRIMARY_SALT));
@@ -241,6 +257,14 @@ public final class HydrologyPlanner {
                 geometrySampler,
                 settings.seaLevel(),
                 settings.routing().minimumSurfaceCourseLength()
+        );
+        // A tributary only has to be a real reach before it joins its stem: half the course minimum.
+        this.tributaryCourseBuilder = new SurfaceCourseBuilder(
+                settings.surface(),
+                this::sampleBasis,
+                geometrySampler,
+                settings.seaLevel(),
+                settings.routing().minimumSurfaceCourseLength() / 2
         );
     }
 
@@ -274,7 +298,23 @@ public final class HydrologyPlanner {
     }
 
     public HydrologyTile plan(HydrologyTileKey key) {
-        return materializeAcceptedTile(resolveCrossTileOwner(key));
+        long started = System.nanoTime();
+        CrossTileResolution resolution = resolveCrossTileOwner(key);
+        long materializeStarted = System.nanoTime();
+        HydrologyTile tile = materializeAcceptedTile(resolution);
+        long finished = System.nanoTime();
+        IrisLogging.debug(
+                "Hydrology tile %d,%d planned in %dms: owners=%d resolve=%dms materialize=%dms courses=%d on %s",
+                key.tileX(),
+                key.tileZ(),
+                (finished - started) / 1_000_000L,
+                resolution.ownerCount(),
+                (materializeStarted - started) / 1_000_000L,
+                (finished - materializeStarted) / 1_000_000L,
+                tile.courses().size(),
+                Thread.currentThread().getName()
+        );
+        return tile;
     }
 
     void clearOwnerDrafts() {
@@ -289,11 +329,22 @@ public final class HydrologyPlanner {
         if (previous == null) {
             planningSamples.set(new PlanningSamples());
         }
+        DraftProfile previousProfile = draftProfiles.get();
+        DraftProfile profile = new DraftProfile();
+        draftProfiles.set(profile);
+        long started = System.nanoTime();
         try {
-            return compileScopedOwnerDraft(key, crossTileAdmission);
+            HydrologyOwnerDraft draft = compileScopedOwnerDraft(key, crossTileAdmission);
+            profile.log(key, ownerColorRank(key), System.nanoTime() - started);
+            return draft;
         } finally {
             if (previous == null) {
                 planningSamples.remove();
+            }
+            if (previousProfile == null) {
+                draftProfiles.remove();
+            } else {
+                draftProfiles.set(previousProfile);
             }
         }
     }
@@ -309,8 +360,11 @@ public final class HydrologyPlanner {
         RoutingPlan undergroundRouting = null;
         SourceSelection surfaceSelection = SourceSelection.empty(true);
         SourceSelection undergroundSelection = SourceSelection.empty(false);
+        DraftProfile profile = currentDraftProfile();
+        long phaseStarted = System.nanoTime();
         if (hasRoutedSourceSearch()) {
             SourceRoutingContext primaryContext = sourceRoutingContext(key);
+            phaseStarted = profile.record(DraftPhase.CONTEXT, phaseStarted);
             grid = primaryContext.grid();
             surfaceRouting = primaryContext.surfaceRouting();
             undergroundRouting = primaryContext.undergroundRouting();
@@ -335,6 +389,7 @@ public final class HydrologyPlanner {
                     diagnostics,
                     sourceRoutingContexts
             );
+            phaseStarted = profile.record(DraftPhase.SELECT, phaseStarted);
         }
         HydrologyFootprintCompiler footprintCompiler = new HydrologyFootprintCompiler(
                 settings,
@@ -370,6 +425,7 @@ public final class HydrologyPlanner {
                 sourceCompilations,
                 diagnostics
         );
+        phaseStarted = profile.record(DraftPhase.SETTLE, phaseStarted);
         PublicationAttempt publication = null;
         List<OutletCandidate> fallbackOutlets = grid == null || surfaceRouting == null
                 ? List.of()
@@ -495,6 +551,7 @@ public final class HydrologyPlanner {
                 break;
             }
         }
+        profile.record(DraftPhase.PUBLISH, phaseStarted);
         if (publication == null) {
             throw new IllegalStateException("Hydrology publication did not execute.");
         }
@@ -725,7 +782,9 @@ public final class HydrologyPlanner {
             }
             candidateKeys.add(candidateKey);
         }
+        long dependenciesStarted = System.nanoTime();
         List<CrossTileResolvedOwner> resolvedCandidates = resolveLowerRankOwners(candidateKeys, context);
+        currentDraftProfile().recordDependencies(candidateKeys.size(), dependenciesStarted);
         for (int index = 0; index < candidateKeys.size(); index++) {
             HydrologyTileKey candidateKey = candidateKeys.get(index);
             int candidateRank = ownerColorRank(candidateKey);
@@ -752,25 +811,23 @@ public final class HydrologyPlanner {
             List<HydrologyTileKey> candidateKeys,
             CrossTileResolutionContext context
     ) {
-        if (candidateKeys.size() < 2
-                || !IrisPlatforms.isBound()
-                || MultiBurst.burst.ownsCurrentThread()) {
+        if (candidateKeys.size() < 2 || !IrisPlatforms.isBound()) {
             ArrayList<CrossTileResolvedOwner> resolved = new ArrayList<>(candidateKeys.size());
             for (HydrologyTileKey candidateKey : candidateKeys) {
                 resolved.add(resolveCrossTileOwner(candidateKey, context));
             }
             return List.copyOf(resolved);
         }
-        ArrayList<CompletableFuture<CrossTileResolvedOwner>> futures = new ArrayList<>(candidateKeys.size());
+        // Neighbour drafts fork into the pool this thread belongs to (or the burst pool from outside
+        // any pool) and are joined with work helping, so a saturated pool never deadlocks on them.
+        ArrayList<Callable<CrossTileResolvedOwner>> tasks = new ArrayList<>(candidateKeys.size());
         for (HydrologyTileKey candidateKey : candidateKeys) {
-            futures.add(CompletableFuture.supplyAsync(
-                    () -> resolveIndependentOwner(candidateKey),
-                    MultiBurst.burst
-            ));
+            tasks.add(() -> resolveIndependentOwner(candidateKey));
         }
+        List<CrossTileResolvedOwner> owners = HydrologyForkJoin.invokeAll(tasks, MultiBurst.burst);
         ArrayList<CrossTileResolvedOwner> resolved = new ArrayList<>(candidateKeys.size());
         for (int index = 0; index < candidateKeys.size(); index++) {
-            CrossTileResolvedOwner owner = awaitResolvedOwner(futures.get(index));
+            CrossTileResolvedOwner owner = owners.get(index);
             context.remember(candidateKeys.get(index), owner);
             resolved.add(owner);
         }
@@ -1128,6 +1185,9 @@ public final class HydrologyPlanner {
             compileDeepFluidCourses(key, courses, diagnostics);
         }
         compileSurfacePools(key, courses, diagnostics);
+        if (includeDeepFluids && grid != null) {
+            compileSeaCaves(grid, courses, diagnostics);
+        }
         HydrologyFootprintCompiler.ValidationRaster validation = footprintCompiler.compileValidation(courses);
         HydrologyObservedPlannedSurface plannedSurface = new HydrologyObservedPlannedSurface(
                 validation.plannedSurface()
@@ -1339,11 +1399,10 @@ public final class HydrologyPlanner {
                     .centerline()
                     .getLast();
             if (course.type() == RiverCourseType.SURFACE) {
-                RiverCourse owner = edgeOwners.get(new CourseEdgeKey(course.type(), course.drainageEdges().get(ownedEdgeCount).id()));
-                RiverCourse tributary = surfaceTributary(course, owner, boundary, ownedEdgeCount, diagnostics);
-                if (tributary != null) {
-                    normalized.add(tributary);
-                }
+                // Surface tributaries are cut at their junction before they are built, so a surface
+                // course still sharing drainage with a longer trunk has no junction to keep it.
+                addTributaryDiagnostic(course.id(), course.segments().getFirst().start(),
+                        HydrologyCandidateRejection.NO_DRAINAGE_PATH, ownedEdgeCount, diagnostics);
                 continue;
             }
             int retainedSegmentCount = retainedSegmentCount(course.segments(), boundary);
@@ -1366,131 +1425,376 @@ public final class HydrologyPlanner {
     }
 
     /**
-     * Turns a surface course that lost its shared drainage to a longer trunk into a tributary: it is cut
-     * where its own centerline first comes within a channel width of the stem and joined to the nearest
-     * stem station with a short connector. The tributary must still be a real reach and must arrive at
-     * or above the stem's water, so it steps down into the river instead of pooling below it.
+     * Builds a later draft to the stem's outlet as a tributary. The draft's path is cut where it first
+     * comes within a stem width of the stem or first enters drainage the stem already owns, and it is
+     * shaped with the stem's water level at that station as its terminal, so it arrives at or above the
+     * stem and steps down into it. When the tributary would arrive below the stem's water there, the
+     * junction slides downstream along the stem to the first station whose water is low enough and the
+     * course is shaped again. The tributary owns only the drainage edges upstream of the junction.
      */
-    private RiverCourse surfaceTributary(
-            RiverCourse course,
-            RiverCourse owner,
-            HydrologyPoint boundary,
-            int ownedEdgeCount,
+    private RiverCourse buildSurfaceTributary(
+            SurfaceCourseDraft draft,
+            RiverCourse stem,
             List<HydrologyDiagnosticCandidate> diagnostics
     ) {
+        CoursePath path = draft.path();
+        HydrologyPoint sourcePoint = path.points().getFirst();
+        HashSet<Long> stemEdges = new HashSet<>();
+        for (DrainageEdge edge : stem.drainageEdges()) {
+            stemEdges.add(edge.id());
+        }
         ArrayList<HydrologyPoint> stemStations = new ArrayList<>();
         ArrayList<Integer> stemWidths = new ArrayList<>();
-        for (HydraulicSegment segment : owner.segments()) {
+        for (HydraulicSegment segment : stem.segments()) {
             for (HydrologyPoint point : segment.centerline()) {
                 stemStations.add(point);
                 stemWidths.add(segment.width());
             }
         }
-        ArrayList<HydraulicSegment> retained = new ArrayList<>();
-        int stations = 0;
-        HydrologyPoint joinStation = null;
-        for (HydraulicSegment segment : course.segments()) {
-            List<HydrologyPoint> centerline = segment.centerline();
-            int joinIndex = -1;
-            for (int index = 0; index < centerline.size() && joinIndex < 0; index++) {
-                HydrologyPoint point = centerline.get(index);
-                for (int stemIndex = 0; stemIndex < stemStations.size(); stemIndex++) {
-                    HydrologyPoint station = stemStations.get(stemIndex);
-                    double reach = (segment.width() + stemWidths.get(stemIndex)) / 2D + 1D;
-                    if (point.distanceSquared2D(station) <= reach * reach) {
-                        joinIndex = index;
-                        joinStation = station;
-                        break;
-                    }
+        int minimumStemIndex = 0;
+        HydrologyCandidateRejection rejection = HydrologyCandidateRejection.NO_DRAINAGE_PATH;
+        int rejectionDetail = 0;
+        for (int attempt = 0; attempt < TRIBUTARY_JUNCTION_ATTEMPTS; attempt++) {
+            int[] junction = tributaryJunction(path, stemStations, stemWidths, stemEdges, minimumStemIndex);
+            if (junction == null) {
+                break;
+            }
+            int joinIndex = junction[0];
+            int stemIndex = junction[1];
+            HydrologyPoint joinStation = stemStations.get(stemIndex);
+            if (joinIndex < 1) {
+                rejection = HydrologyCandidateRejection.COURSE_TOO_SHORT;
+                rejectionDetail = 0;
+                break;
+            }
+            TributaryBuild build = buildSurfaceTributaryAt(draft, joinIndex, stemIndex, stemStations, stemWidths, stemEdges);
+            if (build.course() != null) {
+                return build.course();
+            }
+            rejection = build.rejection();
+            rejectionDetail = build.rejectionDetail();
+            if (rejection != HydrologyCandidateRejection.SURFACE_HEAD_RANGE) {
+                break;
+            }
+            // The tributary arrives rejectionDetail blocks below the stem's water: slide the junction
+            // downstream to the first stem station whose water is that much lower.
+            int target = joinStation.y() - rejectionDetail;
+            int nextStemIndex = -1;
+            for (int index = stemIndex + 1; index < stemStations.size(); index++) {
+                if (stemStations.get(index).y() <= target) {
+                    nextStemIndex = index;
+                    break;
                 }
             }
-            if (joinIndex < 0) {
-                retained.add(segment);
-                stations += centerline.size();
-                continue;
+            if (nextStemIndex < 0) {
+                break;
             }
-            if (joinIndex > 0 || retained.isEmpty()) {
-                List<HydrologyPoint> prefix = centerline.subList(0, joinIndex + 1);
-                int downstreamHead = prefix.getLast().y();
-                int drop = segment.upstreamHeadY() - downstreamHead;
-                HydrologyFeatureType type = drop == 0 && segment.type().isDrop()
-                        ? HydrologyFeatureType.SURFACE_POOL
-                        : segment.type();
-                retained.add(new HydraulicSegment(
+            minimumStemIndex = nextStemIndex;
+        }
+        addTributaryDiagnostic(draft.courseId(), sourcePoint, rejection, rejectionDetail, diagnostics);
+        return null;
+    }
+
+    /**
+     * The first draft point, in path order, that lies within a stem width of a stem station at or past
+     * {@code minimumStemIndex} or that enters drainage the stem owns, as {draft point index, stem station
+     * index}; null when the draft never meets the stem there. Among the stations the point can reach the
+     * lowest water wins, then the flattest stretch, so the tributary's mouth sits at the river's level
+     * where the two channels touch and never above the stem's shore.
+     */
+    private static int[] tributaryJunction(
+            CoursePath path,
+            List<HydrologyPoint> stemStations,
+            List<Integer> stemWidths,
+            Set<Long> stemEdges,
+            int minimumStemIndex
+    ) {
+        for (int index = 0; index < path.points().size(); index++) {
+            HydrologyPoint point = path.points().get(index);
+            boolean sharedEdge = index > 0 && stemEdges.contains(path.pairEdges().get(index - 1).id());
+            int best = -1;
+            int bestFlatness = -1;
+            double bestDistance = Double.POSITIVE_INFINITY;
+            for (int stemIndex = minimumStemIndex; stemIndex < stemStations.size(); stemIndex++) {
+                double distance = point.distanceSquared2D(stemStations.get(stemIndex));
+                double reach = stemWidths.get(stemIndex) + 1D;
+                boolean reachable = distance <= reach * reach;
+                if (!reachable && !(sharedEdge && best < 0 && distance < bestDistance)) {
+                    continue;
+                }
+                int flatness = reachable ? stemFlatness(stemStations, stemIndex) : -1;
+                int level = stemStations.get(stemIndex).y();
+                int bestLevel = best < 0 ? Integer.MAX_VALUE : stemStations.get(best).y();
+                if (level < bestLevel
+                        || level == bestLevel && (flatness > bestFlatness || flatness == bestFlatness && distance < bestDistance)) {
+                    best = stemIndex;
+                    bestFlatness = flatness;
+                    bestDistance = distance;
+                }
+            }
+            if (best >= 0) {
+                return new int[] {index, best};
+            }
+        }
+        return null;
+    }
+
+    /** How many of the stem stations around {@code stemIndex} share its water level. */
+    private static int stemFlatness(List<HydrologyPoint> stemStations, int stemIndex) {
+        int level = stemStations.get(stemIndex).y();
+        int flat = 0;
+        for (int offset = -TRIBUTARY_JUNCTION_FLAT_STATIONS; offset <= TRIBUTARY_JUNCTION_FLAT_STATIONS; offset++) {
+            int index = stemIndex + offset;
+            if (index >= 0 && index < stemStations.size() && stemStations.get(index).y() == level) {
+                flat++;
+            }
+        }
+        return flat;
+    }
+
+    /** Raises every trailing station below {@code level} to it, so the tail is a flat pool at the stem's water. */
+    private static void backwater(List<HydraulicSegment> segments, int level) {
+        for (int index = segments.size() - 1; index >= 0; index--) {
+            HydraulicSegment segment = segments.get(index);
+            if (segment.upstreamHeadY() >= level && segment.downstreamHeadY() >= level) {
+                break;
+            }
+            ArrayList<HydrologyPoint> centerline = new ArrayList<>(segment.centerline().size());
+            for (HydrologyPoint point : segment.centerline()) {
+                centerline.add(point.y() < level ? new HydrologyPoint(point.x(), level, point.z()) : point);
+            }
+            int upstream = Math.max(segment.upstreamHeadY(), level);
+            int downstream = Math.max(segment.downstreamHeadY(), level);
+            segments.set(index, new HydraulicSegment(
+                    segment.id(),
+                    segment.courseId(),
+                    upstream == downstream ? HydrologyFeatureType.SURFACE_POOL : segment.type(),
+                    upstream,
+                    downstream,
+                    segment.width(),
+                    segment.depth(),
+                    segment.fallingFluid(),
+                    segment.receivingPool(),
+                    List.copyOf(centerline)
+            ));
+            if (segment.upstreamHeadY() >= level) {
+                break;
+            }
+        }
+    }
+
+    /**
+     * Lowers the trailing stations of a tributary towards {@code level}, one block per cascade run of
+     * centerline distance from the junction and never deeper than the channel may cut, so the reach
+     * grades down into the stem instead of hanging above it. Where the ground holds a station up, the
+     * stations upstream of it are held with it, so the graded reach still descends into the stem.
+     */
+    void levelApproach(List<HydraulicSegment> segments, int level) {
+        int run = Math.max(1, settings.surface().banks().cascadeRun());
+        int maximumIncision = settings.surface().maximumIncision();
+        double distance = 0D;
+        HydrologyPoint previous = null;
+        int downstreamHead = Integer.MIN_VALUE;
+        for (int index = segments.size() - 1; index >= 0; index--) {
+            HydraulicSegment segment = segments.get(index);
+            ArrayList<HydrologyPoint> centerline = new ArrayList<>(segment.centerline());
+            boolean changed = false;
+            boolean settled = false;
+            for (int pointIndex = centerline.size() - 1; pointIndex >= 0; pointIndex--) {
+                HydrologyPoint point = centerline.get(pointIndex);
+                if (previous != null) {
+                    distance += StrictMath.hypot(point.x() - previous.x(), point.z() - previous.z());
+                }
+                previous = point;
+                int allowed = level + (int) StrictMath.floor(distance / run);
+                if (point.y() <= allowed) {
+                    settled = true;
+                    break;
+                }
+                int floor = sampleBasis(point.x(), point.z()).naturalHeight() - maximumIncision;
+                int lowered = Math.min(point.y(), Math.max(Math.max(allowed, floor), downstreamHead));
+                if (lowered < point.y()) {
+                    centerline.set(pointIndex, new HydrologyPoint(point.x(), lowered, point.z()));
+                    changed = true;
+                }
+                downstreamHead = lowered;
+            }
+            if (changed) {
+                // A level reach may carry a bump above its heads (a pool's centerline is not graded);
+                // once its tail is cut down the reach becomes a graded transition, which must never rise
+                // downstream, so every station is held at or below the one before it.
+                int ceiling = centerline.getFirst().y();
+                for (int pointIndex = 1; pointIndex < centerline.size(); pointIndex++) {
+                    HydrologyPoint point = centerline.get(pointIndex);
+                    if (point.y() > ceiling) {
+                        centerline.set(pointIndex, new HydrologyPoint(point.x(), ceiling, point.z()));
+                    } else {
+                        ceiling = point.y();
+                    }
+                }
+                int upstream = centerline.getFirst().y();
+                int downstream = centerline.getLast().y();
+                HydrologyFeatureType type = segment.type();
+                if (upstream > downstream && !type.isDrop()) {
+                    type = upstream - downstream >= settings.hydraulics().waterfallMinimumDrop()
+                            ? HydrologyFeatureType.WATERFALL
+                            : upstream - downstream == 1 ? HydrologyFeatureType.RIFFLE : HydrologyFeatureType.CASCADE;
+                } else if (upstream == downstream && type.isDrop()) {
+                    type = HydrologyFeatureType.SURFACE_POOL;
+                }
+                segments.set(index, new HydraulicSegment(
                         segment.id(),
                         segment.courseId(),
                         type,
-                        segment.upstreamHeadY(),
-                        downstreamHead,
+                        upstream,
+                        downstream,
                         segment.width(),
                         segment.depth(),
-                        false,
-                        false,
-                        prefix
+                        segment.fallingFluid(),
+                        segment.receivingPool(),
+                        List.copyOf(centerline)
                 ));
-                stations += prefix.size();
             }
-            break;
+            if (settled) {
+                break;
+            }
         }
-        if (joinStation == null) {
-            addTributaryDiagnostic(course, HydrologyCandidateRejection.NO_DRAINAGE_PATH, 0, diagnostics);
-            return null;
+    }
+
+    private static int lastWidth(SurfaceCourseResult result) {
+        return Math.max(1, result.lastWidth());
+    }
+
+    private record TributaryBuild(RiverCourse course, HydrologyCandidateRejection rejection, int rejectionDetail) {
+        private static TributaryBuild rejected(HydrologyCandidateRejection rejection, int detail) {
+            return new TributaryBuild(null, rejection, detail);
         }
-        if (retained.isEmpty() || stations < settings.routing().minimumSurfaceCourseLength() / 2) {
-            addTributaryDiagnostic(course, HydrologyCandidateRejection.COURSE_TOO_SHORT, stations, diagnostics);
-            return null;
+    }
+
+    private TributaryBuild buildSurfaceTributaryAt(
+            SurfaceCourseDraft draft,
+            int joinIndex,
+            int stemIndex,
+            List<HydrologyPoint> stemStations,
+            List<Integer> stemWidths,
+            Set<Long> stemEdges
+    ) {
+        CoursePath path = draft.path();
+        HydrologyPoint joinStation = stemStations.get(stemIndex);
+        ArrayList<HydrologyPoint> points = new ArrayList<>(path.points().subList(0, joinIndex + 1));
+        HydrologyPoint last = points.getLast();
+        if (last.x() != joinStation.x() || last.z() != joinStation.z()) {
+            points.add(new HydrologyPoint(joinStation.x(), last.y(), joinStation.z()));
         }
-        HydraulicSegment last = retained.getLast();
-        HydrologyPoint end = last.end();
+        LinkedHashSet<DrainageEdge> ownedEdges = new LinkedHashSet<>();
+        for (DrainageEdge edge : path.pairEdges().subList(0, joinIndex)) {
+            if (!stemEdges.contains(edge.id())) {
+                ownedEdges.add(edge);
+            }
+        }
+        if (ownedEdges.isEmpty()) {
+            return TributaryBuild.rejected(HydrologyCandidateRejection.COURSE_TOO_SHORT, joinIndex);
+        }
         int stemHead = joinStation.y();
-        if (last.downstreamHeadY() < stemHead) {
-            addTributaryDiagnostic(course, HydrologyCandidateRejection.SURFACE_HEAD_RANGE,
-                    stemHead - last.downstreamHeadY(), diagnostics);
-            return null;
+        SurfaceCourseResult result = tributaryCourseBuilder.build(
+                worldSeed,
+                draft.courseId(),
+                draft.profileKey(),
+                List.copyOf(points),
+                SurfaceTerminal.TRIBUTARY,
+                stemHead
+        );
+        if (!result.accepted()) {
+            return TributaryBuild.rejected(result.rejection(), result.rejectionDetail());
         }
-        if (end.x() != joinStation.x() || end.z() != joinStation.z()) {
-            int drop = last.downstreamHeadY() - stemHead;
+        if (path.organicSurfaceRequired()) {
+            // The reach is judged without its approach into the stem: the turn a tributary makes to
+            // enter its river is junction geometry, not a bend in the river itself.
+            double approachRadius = 3D * lastWidth(result) + 8D;
+            int judged = joinIndex;
+            while (judged > 0 && path.points().get(judged).distanceSquared2D(joinStation) <= approachRadius * approachRadius) {
+                judged--;
+            }
+            int shapeRejection = judged >= 2 ? surfaceShapeRejection(path.points().subList(0, judged + 1), true) : 0;
+            if (shapeRejection != 0) {
+                return TributaryBuild.rejected(HydrologyCandidateRejection.SURFACE_SHAPE_UNSUPPORTED, shapeRejection);
+            }
+        }
+        ArrayList<HydraulicSegment> segments = new ArrayList<>(result.segments());
+        // Where the two channels touch, the tributary must sit at the lowest stem water it reaches.
+        double touch = stemWidths.get(stemIndex) + lastWidth(result) + 1D;
+        for (int index = 0; index < stemStations.size(); index++) {
+            HydrologyPoint station = stemStations.get(index);
+            if (station.distanceSquared2D(joinStation) <= touch * touch) {
+                stemHead = Math.min(stemHead, station.y());
+            }
+        }
+        if (segments.getLast().downstreamHeadY() < stemHead) {
+            int shortfall = stemHead - segments.getLast().downstreamHeadY();
+            if (shortfall > TRIBUTARY_BACKWATER_LIMIT) {
+                return TributaryBuild.rejected(HydrologyCandidateRejection.SURFACE_HEAD_RANGE, shortfall);
+            }
+            // The stem's water stands a little above the tributary's floor at the junction: the tail of
+            // the tributary backs up to the stem's level, a short still reach the bank lip contains.
+            backwater(segments, stemHead);
+        } else if (segments.getLast().downstreamHeadY() > stemHead) {
+            // The tributary hangs above its river: its last stretch is cut down to the stem's water,
+            // a block per cascade run, so the channel meets the river at its level and not above
+            // the stem's shore.
+            levelApproach(segments, stemHead);
+        }
+        HydraulicSegment lastSegment = segments.getLast();
+        HydrologyPoint end = lastSegment.end();
+        if (end.x() != joinStation.x() || end.z() != joinStation.z() || lastSegment.downstreamHeadY() != stemHead) {
+            // The hop onto the stem is graded like any in-course drop, so the water steps down block
+            // by block into the river instead of standing above the stem's shore.
+            int drop = lastSegment.downstreamHeadY() - stemHead;
             HydrologyFeatureType type = drop == 0
                     ? HydrologyFeatureType.SURFACE_POOL
                     : drop >= settings.hydraulics().waterfallMinimumDrop()
                             ? HydrologyFeatureType.WATERFALL
                             : drop == 1 ? HydrologyFeatureType.RIFFLE : HydrologyFeatureType.CASCADE;
-            retained.add(new HydraulicSegment(
-                    HydrologyHash.mix(course.id(), SEGMENT_SALT, 0x4a4f494eL),
-                    course.id(),
+            boolean graded = addHydraulicSegments(
+                    draft.courseId(),
+                    TRIBUTARY_JUNCTION_PAIR_INDEX,
                     type,
-                    last.downstreamHeadY(),
+                    lastSegment.downstreamHeadY(),
                     stemHead,
-                    last.width(),
-                    last.depth(),
-                    false,
-                    false,
-                    List.of(end, new HydrologyPoint(joinStation.x(), stemHead, joinStation.z()))
-            ));
+                    lastSegment.width(),
+                    lastSegment.depth(),
+                    List.of(end, new HydrologyPoint(joinStation.x(), stemHead, joinStation.z())),
+                    true,
+                    segments
+            );
+            if (!graded) {
+                return TributaryBuild.rejected(HydrologyCandidateRejection.SURFACE_DROP_UNSUPPORTED, drop);
+            }
         }
-        return new RiverCourse(
-                course.id(),
-                course.type(),
-                course.sourceNodeId(),
-                course.outletId(),
-                course.profileKey(),
-                course.discharge(),
-                course.drainageEdges().subList(0, ownedEdgeCount),
-                retained
-        );
+        List<DrainageEdge> edges = List.copyOf(ownedEdges);
+        return new TributaryBuild(new RiverCourse(
+                draft.courseId(),
+                RiverCourseType.SURFACE,
+                OptionalLong.of(draft.source().id()),
+                OptionalLong.of(path.outlet().id()),
+                draft.profileKey(),
+                maximumSurfaceDischarge(edges),
+                edges,
+                segments
+        ), null, 0);
     }
 
     private void addTributaryDiagnostic(
-            RiverCourse course,
+            long courseId,
+            HydrologyPoint sourcePoint,
             HydrologyCandidateRejection rejection,
             int detail,
             List<HydrologyDiagnosticCandidate> diagnostics
     ) {
         diagnostics.add(new HydrologyDiagnosticCandidate(
-                HydrologyHash.mix(course.id(), DIAGNOSTIC_SALT, rejection.ordinal(), 0x5452494255544152L),
-                HydrologyCandidateKind.SOURCE,
+                HydrologyHash.mix(courseId, DIAGNOSTIC_SALT, rejection.ordinal(), 0x5452494255544152L),
+                HydrologyCandidateKind.TRIBUTARY,
                 HydrologyFeatureType.SURFACE_POOL,
-                course.segments().getFirst().start(),
+                sourcePoint,
                 rejection,
                 detail
         ));
@@ -1627,32 +1931,28 @@ public final class HydrologyPlanner {
             List<HydrologyDiagnosticCandidate> diagnostics
     ) {
         ArrayList<OutletCandidate> oceanCandidates = oceanOutletCandidates(grid, surface);
+        if (!surface && settings.outlets().inlandGrotto().enabled()) {
+            addOutletLevelDiagnostics(oceanCandidates, diagnostics);
+        }
         sortOutletCandidates(key, grid, surface, oceanCandidates);
-        int maximum = settings.outlets().maximumPerTile();
+        // Sea outlets and inland outlets are budgeted separately: a coast never starves the
+        // sinkholes behind it and a sinkhole never displaces a mouth.
+        List<OutletCandidate> selectedOcean = limitOutletsByType(
+                oceanCandidates,
+                settings.outlets().maximumCoastalPerTile()
+        );
+        addRejectedOutlets(oceanCandidates, selectedOcean, diagnostics);
         if (!settings.outlets().inlandGrotto().enabled()) {
-            List<OutletCandidate> selected = limitOutlets(
-                    oceanCandidates,
-                    maximum
-            );
-            addRejectedOutlets(oceanCandidates, selected, diagnostics);
-            return selected;
+            return selectedOcean;
         }
         boolean[] oceanReachable = outletReachable(grid, oceanCandidates, surface);
         ArrayList<OutletCandidate> inlandCandidates = inlandOutletCandidates(grid, oceanReachable);
         sortInlandOutletCandidates(grid, inlandCandidates);
-        int inlandMaximum = oceanCandidates.isEmpty()
-                ? maximum
-                : Math.min(Math.max(1, maximum / 4), maximum - 1);
         List<OutletCandidate> selectedInland = styledInlandOutlets(
                 grid,
-                limitOutlets(inlandCandidates, inlandMaximum),
+                limitOutlets(inlandCandidates, settings.outlets().maximumPerTile()),
                 surface
         );
-        List<OutletCandidate> selectedOcean = limitOutlets(
-                oceanCandidates,
-                maximum - selectedInland.size()
-        );
-        addRejectedOutlets(oceanCandidates, selectedOcean, diagnostics);
         addRejectedOutlets(inlandCandidates, selectedInland, diagnostics);
         ArrayList<OutletCandidate> selected = new ArrayList<>(selectedOcean.size() + selectedInland.size());
         selected.addAll(selectedOcean);
@@ -1667,7 +1967,8 @@ public final class HydrologyPlanner {
                 continue;
             }
             GridNode ocean = firstOceanNeighbor(grid, land);
-            if (ocean == null) {
+            if (ocean == null || !land.terrain().drainsInto(ocean.terrain())) {
+                // A confined shore only reaches a sea that belongs to its own area.
                 continue;
             }
             HydrologyOceanBoundaryRefiner.Result boundary = refineOceanBoundary(land, ocean);
@@ -1693,30 +1994,42 @@ public final class HydrologyPlanner {
             );
             oceanCandidates.add(new OutletCandidate(land.index(), ocean.index(), outlet));
         }
-        if (!surface && settings.outlets().inlandGrotto().enabled()) {
-            oceanCandidates.removeIf((OutletCandidate candidate) ->
-                    candidate.outlet().connectionPoint().y() > settings.underground().maximumFluidY());
-        }
         return oceanCandidates;
     }
 
     private List<OutletCandidate> resolveSurfaceFallbackOutlets(SampledGrid grid) {
-        ArrayList<OutletCandidate> candidates = oceanOutletCandidates(grid, true);
+        ArrayList<OutletCandidate> oceanCandidates = oceanOutletCandidates(grid, true);
+        ArrayList<OutletCandidate> inlandCandidates = new ArrayList<>();
         if (settings.outlets().surfaceSinkholesEnabled()
                 && settings.outlets().inlandGrotto().enabled()) {
-            candidates.addAll(styledInlandOutlets(
+            inlandCandidates.addAll(styledInlandOutlets(
                     grid,
                     inlandOutletCandidates(grid, new boolean[grid.nodes().size()]),
                     true
             ));
         }
-        if (candidates.isEmpty()) {
+        if (oceanCandidates.isEmpty() && inlandCandidates.isEmpty()) {
             return List.of();
         }
-        sortSurfaceFallbackOutletCandidates(grid, candidates);
+        sortSurfaceFallbackOutletCandidates(grid, oceanCandidates);
+        sortSurfaceFallbackOutletCandidates(grid, inlandCandidates);
+        // Trials alternate sea and inland outlets, sea first: a coast with more mouths than trials
+        // still gives a sinkhole its turn, and a rejected mouth is retried at the next coast.
+        ArrayList<OutletCandidate> candidates = new ArrayList<>(oceanCandidates.size() + inlandCandidates.size());
+        for (int index = 0; index < Math.max(oceanCandidates.size(), inlandCandidates.size()); index++) {
+            if (index < oceanCandidates.size()) {
+                candidates.add(oceanCandidates.get(index));
+            }
+            if (index < inlandCandidates.size()) {
+                candidates.add(inlandCandidates.get(index));
+            }
+        }
         int maximumTrials = Math.max(
                 OPTIONAL_SOURCE_REJECTIONS_PER_TARGET,
-                Math.multiplyExact(settings.outlets().maximumPerTile(), 16)
+                Math.multiplyExact(
+                        Math.max(settings.outlets().maximumPerTile(), settings.outlets().maximumCoastalPerTile()),
+                        16
+                )
         );
         maximumTrials = Math.min(16, maximumTrials);
         return limitOutlets(candidates, maximumTrials);
@@ -1741,7 +2054,7 @@ public final class HydrologyPlanner {
                     settings.underground().maximumFluidY()
             );
             if (settings.outlets().surfaceSinkholesEnabled()
-                    && node.terrain().naturalHeight() - settings.surface().banks().inset() <= poolY) {
+                    && node.terrain().naturalHeight() - settings.surface().banks().sink() <= poolY) {
                 continue;
             }
             long outletId = HydrologyHash.mix(
@@ -1778,16 +2091,17 @@ public final class HydrologyPlanner {
 
     private void sortSurfaceFallbackOutletCandidates(
             SampledGrid grid,
-            List<OutletCandidate> inlandCandidates
+            List<OutletCandidate> candidates
     ) {
-        HashMap<Integer, Long> capacities = new HashMap<>(inlandCandidates.size());
-        for (OutletCandidate candidate : inlandCandidates) {
+        HashMap<Integer, Long> capacities = new HashMap<>(candidates.size());
+        for (OutletCandidate candidate : candidates) {
             capacities.put(candidate.landIndex(), surfaceOutletCapacity(grid, candidate.landIndex()));
         }
-        inlandCandidates.sort(Comparator
+        candidates.sort(Comparator
                 .comparing((OutletCandidate candidate) -> !isDrainageBasin(grid, candidate.landIndex()))
                 .thenComparingInt((OutletCandidate candidate) ->
                         capacities.get(candidate.landIndex()) > 0L ? 0 : 1)
+                .thenComparingInt((OutletCandidate candidate) -> ownedOutletRank(grid, candidate))
                 .thenComparing(Comparator
                         .comparingLong((OutletCandidate candidate) -> capacities.get(candidate.landIndex()))
                         .reversed())
@@ -1873,7 +2187,7 @@ public final class HydrologyPlanner {
             if (surface && settings.outlets().surfaceSinkholesEnabled()) {
                 poolY = Math.min(
                         poolY,
-                        landwardTerrain.naturalHeight() - settings.surface().banks().inset() - 1
+                        landwardTerrain.naturalHeight() - settings.surface().banks().sink() - 1
                 );
                 poolY = Math.max(
                         poolY,
@@ -1968,8 +2282,12 @@ public final class HydrologyPlanner {
             boolean surface,
             List<OutletCandidate> candidates
     ) {
+        // An owned coast outranks a neighbour's: a halo mouth only takes a slot when no owned
+        // coast can serve the tile's sources.
+        Comparator<OutletCandidate> owned = Comparator.comparingInt(
+                (OutletCandidate candidate) -> ownedOutletRank(grid, candidate));
         if (!surface) {
-            candidates.sort(outletComparator(key));
+            candidates.sort(owned.thenComparing(outletComparator(key)));
             return;
         }
         HashMap<Integer, Long> capacities = new HashMap<>(candidates.size());
@@ -1980,11 +2298,17 @@ public final class HydrologyPlanner {
         candidates.sort(Comparator
                 .comparingInt((OutletCandidate candidate) ->
                         capacities.get(candidate.landIndex()) > 0L ? 0 : 1)
+                .thenComparing(owned)
                 .thenComparingInt(this::surfaceOutletPriority)
                 .thenComparing(Comparator
                         .comparingLong((OutletCandidate candidate) -> capacities.get(candidate.landIndex()))
                         .reversed())
                 .thenComparing(stable));
+    }
+
+    private int ownedOutletRank(SampledGrid grid, OutletCandidate candidate) {
+        GridNode land = grid.node(candidate.landIndex());
+        return grid.owns(land.x(), land.z()) ? 0 : 1;
     }
 
     private int surfaceOutletPriority(OutletCandidate candidate) {
@@ -2048,18 +2372,9 @@ public final class HydrologyPlanner {
             return List.of();
         }
         ArrayList<OutletCandidate> selected = new ArrayList<>(Math.min(maximum, candidates.size()));
-        int minimumSpacing = settings.routing().sampleSpacing() * 2;
-        long minimumSpacingSquared = (long) minimumSpacing * minimumSpacing;
+        long minimumSpacingSquared = outletSpacingSquared();
         for (OutletCandidate candidate : candidates) {
-            boolean tooClose = false;
-            for (OutletCandidate existing : selected) {
-                if (candidate.outlet().landwardPoint().distanceSquared2D(existing.outlet().landwardPoint())
-                        < minimumSpacingSquared) {
-                    tooClose = true;
-                    break;
-                }
-            }
-            if (!tooClose) {
+            if (!withinOutletSpacing(candidate, selected, minimumSpacingSquared)) {
                 selected.add(candidate);
                 if (selected.size() == maximum) {
                     break;
@@ -2070,6 +2385,62 @@ public final class HydrologyPlanner {
             selected.add(candidates.getFirst());
         }
         return List.copyOf(selected);
+    }
+
+    /**
+     * Takes sea outlets in turns by type (the best mouth, the best coastal grotto, the next mouth, ...)
+     * from a sorted candidate list until the budget is spent or no type has a candidate left that
+     * keeps the outlet spacing. A coast with both cliffs and beaches gets both kinds of opening.
+     */
+    private List<OutletCandidate> limitOutletsByType(List<OutletCandidate> candidates, int maximum) {
+        if (maximum <= 0 || candidates.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<OutletCandidate> selected = new ArrayList<>(Math.min(maximum, candidates.size()));
+        long minimumSpacingSquared = outletSpacingSquared();
+        boolean[] consumed = new boolean[candidates.size()];
+        boolean progressed = true;
+        while (selected.size() < maximum && progressed) {
+            progressed = false;
+            for (HydrologyFeatureType type : COASTAL_OUTLET_TYPES) {
+                for (int index = 0; index < candidates.size(); index++) {
+                    OutletCandidate candidate = candidates.get(index);
+                    if (consumed[index] || candidate.outlet().type() != type) {
+                        continue;
+                    }
+                    consumed[index] = true;
+                    if (withinOutletSpacing(candidate, selected, minimumSpacingSquared)) {
+                        continue;
+                    }
+                    selected.add(candidate);
+                    progressed = true;
+                    break;
+                }
+                if (selected.size() == maximum) {
+                    break;
+                }
+            }
+        }
+        return List.copyOf(selected);
+    }
+
+    private long outletSpacingSquared() {
+        int minimumSpacing = settings.routing().sampleSpacing() * 2;
+        return (long) minimumSpacing * minimumSpacing;
+    }
+
+    private boolean withinOutletSpacing(
+            OutletCandidate candidate,
+            List<OutletCandidate> selected,
+            long minimumSpacingSquared
+    ) {
+        for (OutletCandidate existing : selected) {
+            if (candidate.outlet().landwardPoint().distanceSquared2D(existing.outlet().landwardPoint())
+                    < minimumSpacingSquared) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void addRejectedOutlets(
@@ -2095,6 +2466,39 @@ public final class HydrologyPlanner {
                 ));
             }
         }
+    }
+
+    /**
+     * Drops the sea outlets an underground river cannot reach because the sea sits above the
+     * underground fluid ceiling, reporting each as OUTLET_LEVEL with the shortfall as the detail.
+     */
+    private void addOutletLevelDiagnostics(
+            List<OutletCandidate> candidates,
+            List<HydrologyDiagnosticCandidate> diagnostics
+    ) {
+        int maximumFluidY = settings.underground().maximumFluidY();
+        ArrayList<OutletCandidate> retained = new ArrayList<>(candidates.size());
+        for (OutletCandidate candidate : candidates) {
+            int seaY = candidate.outlet().connectionPoint().y();
+            if (seaY <= maximumFluidY) {
+                retained.add(candidate);
+                continue;
+            }
+            diagnostics.add(new HydrologyDiagnosticCandidate(
+                    HydrologyHash.mix(
+                            candidate.outlet().id(),
+                            DIAGNOSTIC_SALT,
+                            HydrologyCandidateRejection.OUTLET_LEVEL.ordinal()
+                    ),
+                    HydrologyCandidateKind.OUTLET,
+                    candidate.outlet().type(),
+                    candidate.outlet().landwardPoint(),
+                    HydrologyCandidateRejection.OUTLET_LEVEL,
+                    seaY - maximumFluidY
+            ));
+        }
+        candidates.clear();
+        candidates.addAll(retained);
     }
 
     private RoutingPlan buildRouting(
@@ -2132,7 +2536,10 @@ public final class HydrologyPlanner {
             GridNode downstream = grid.node(currentEntry.nodeIndex());
             for (GridOffset offset : ROUTING_OFFSETS) {
                 GridNode upstream = grid.nodeAt(downstream.gridX() + offset.x(), downstream.gridZ() + offset.z());
-                if (upstream == null || upstream.terrain().ocean() || !upstream.terrain().transitAllowed()) {
+                if (upstream == null || upstream.terrain().ocean() || !upstream.terrain().transitAllowed()
+                        || !upstream.terrain().drainsInto(downstream.terrain())) {
+                    // Confined ground only drains into its own area, so every course that starts or
+                    // arrives there keeps to that area up to and including its outlet.
                     continue;
                 }
                 if (downstream.terrain().naturalHeight() - upstream.terrain().naturalHeight() > maximumRise) {
@@ -2178,7 +2585,7 @@ public final class HydrologyPlanner {
      * of at least that rise; the lattice may climb no more than the cut the valley solver still accepts.
      */
     private int maximumSurfaceEdgeRise() {
-        int permitted = settings.surface().maximumIncision() - settings.surface().banks().inset() - settings.surface().minimumDepth();
+        int permitted = settings.surface().maximumIncision() - settings.surface().banks().sink() - settings.surface().minimumDepth();
         return Math.max(1, permitted);
     }
 
@@ -2278,7 +2685,9 @@ public final class HydrologyPlanner {
                 continue;
             }
             if (!Double.isFinite(routing.potential()[node.index()]) || routing.parent()[node.index()] < 0) {
-                addSourceDiagnostic(node, surface, stable, HydrologyCandidateRejection.NO_DRAINAGE_PATH, diagnostics);
+                addSourceDiagnostic(node, surface, stable, terrain.confinesKey() != null
+                        ? HydrologyCandidateRejection.CONFINED_NO_OUTLET
+                        : HydrologyCandidateRejection.NO_DRAINAGE_PATH, diagnostics);
                 continue;
             }
             if (!sourceOutletAllowed(node, routing, surface)) {
@@ -2321,7 +2730,12 @@ public final class HydrologyPlanner {
                 ? Math.max(1, sourceSettings.maximumPerTile())
                 : sourceSettings.maximumPerTile();
         target = Math.min(maximum, target);
-        int coursesPerOutlet = surface ? 1 + settings.routing().tributaries() : Integer.MAX_VALUE;
+        int tributaries = surface ? settings.routing().tributaries() : settings.underground().tributaries();
+        int coursesPerOutlet = 1 + tributaries;
+        // Tributaries are budgeted on top of the source density: every outlet may draw its extra courses
+        // beyond the tile's expected count, or no junction would ever fit inside a one-source budget.
+        int tributaryBudget = Math.multiplyExact(routing.outlets().size(), tributaries);
+        target = Math.min(Math.addExact(maximum, tributaryBudget), Math.addExact(target, tributaryBudget));
         target = effectiveSourceTarget(surface && !enforceGlobalSpacing, target, routing.outlets().size(), coursesPerOutlet);
         Comparator<SourceCandidate> candidateOrder = Comparator
                 .comparing(SourceCandidate::required)
@@ -3033,7 +3447,7 @@ public final class HydrologyPlanner {
             double maximumOffsetRatio
     ) {
         HydrologyTerrainSample terrain = sampleLandBasis(x, z);
-        if (terrain == null || !terrain.transitAllowed()) {
+        if (terrain == null || !terrain.transitAllowed() || !withinConfines(terrain, node.terrain().confinesKey())) {
             return Double.POSITIVE_INFINITY;
         }
         double distanceFromDesired = StrictMath.hypot(x - desiredX, z - desiredZ);
@@ -3113,7 +3527,8 @@ public final class HydrologyPlanner {
                     nominal,
                     progress,
                     refinement,
-                    elevationTransition ? 0 : effectiveTransverseCandidates
+                    elevationTransition ? 0 : effectiveTransverseCandidates,
+                    upstreamTerrain == null ? null : upstreamTerrain.confinesKey()
             );
             if (candidates.isEmpty()) {
                 return List.of();
@@ -3325,13 +3740,22 @@ public final class HydrologyPlanner {
         );
     }
 
+    /**
+     * {@code confines} is the area the edge's upstream end is confined to, or null: candidates outside it
+     * are not offered, so a refined route between two confined lattice nodes stays inside their area.
+     */
+    private static boolean withinConfines(HydrologyTerrainSample terrain, String confines) {
+        return confines == null || confines.equals(terrain.confinesKey());
+    }
+
     private List<RouteCandidate> routeCandidates(
             long upstreamId,
             long downstreamId,
             RoutePosition nominal,
             double progress,
             int refinement,
-            int transverseCandidates
+            int transverseCandidates,
+            String confines
     ) {
         double searchEnvelope = StrictMath.sin(StrictMath.PI * progress);
         LinkedHashMap<Long, RouteCandidate> candidates = new LinkedHashMap<>();
@@ -3342,7 +3766,7 @@ public final class HydrologyPlanner {
             int x = (int) StrictMath.round(nominal.x() - nominal.tangent().z() * offset);
             int z = (int) StrictMath.round(nominal.z() + nominal.tangent().x() * offset);
             HydrologyTerrainSample terrain = sampleLandBasis(x, z);
-            if (terrain == null || !terrain.transitAllowed()) {
+            if (terrain == null || !terrain.transitAllowed() || !withinConfines(terrain, confines)) {
                 continue;
             }
             long packed = RiverFootprint.pack(x, z);
@@ -3367,7 +3791,8 @@ public final class HydrologyPlanner {
         HydrologyTerrainSample fallbackTerrain = sampleLandBasis(fallbackX, fallbackZ);
         if (candidates.isEmpty()
                 && fallbackTerrain != null
-                && fallbackTerrain.transitAllowed()) {
+                && fallbackTerrain.transitAllowed()
+                && withinConfines(fallbackTerrain, confines)) {
             long packed = RiverFootprint.pack(fallbackX, fallbackZ);
             double fallbackOffset = (nominal.baseX() - nominal.x()) * -nominal.tangent().z()
                     + (nominal.baseZ() - nominal.z()) * nominal.tangent().x();
@@ -3946,7 +4371,7 @@ public final class HydrologyPlanner {
             }
             int head = Math.subtractExact(
                     terrain.naturalHeight(),
-                    settings.surface().banks().inset()
+                    settings.surface().banks().sink()
             );
             penalty += surfaceRouteBankPenalty(
                     point,
@@ -3972,7 +4397,7 @@ public final class HydrologyPlanner {
             if (terrain.slope() < settings.hydraulics().waterfallMinimumDrop()) {
                 int head = Math.subtractExact(
                         terrain.naturalHeight(),
-                        settings.surface().banks().inset()
+                        settings.surface().banks().sink()
                 );
                 penalty += surfaceRouteBankPenalty(
                         point,
@@ -4315,26 +4740,26 @@ public final class HydrologyPlanner {
                 if (mainCourse != null && tributaries >= settings.routing().tributaries()) {
                     break;
                 }
-                SurfaceCourseBuild candidate = buildSurfaceCourse(
-                        draft.courseId(),
-                        draft.profileKey(),
-                        draft.source(),
-                        draft.path()
-                );
-                if (candidate.course() == null) {
-                    if (mainCourse == null) {
+                if (mainCourse == null) {
+                    SurfaceCourseBuild candidate = buildSurfaceCourse(
+                            draft.courseId(),
+                            draft.profileKey(),
+                            draft.source(),
+                            draft.path()
+                    );
+                    if (candidate.course() == null) {
                         mainRejections.put(draft.courseId(), candidate);
+                        continue;
                     }
+                    mainCourse = candidate.course();
+                    courses.add(mainCourse);
                     continue;
                 }
-                if (mainCourse == null) {
-                    mainCourse = candidate.course();
-                } else {
-                    // A later draft to the same outlet shares the stem's tail; shared-trunk
-                    // normalisation cuts it at the confluence into a tributary.
+                RiverCourse tributary = buildSurfaceTributary(draft, mainCourse, diagnostics);
+                if (tributary != null) {
+                    courses.add(tributary);
                     tributaries++;
                 }
-                courses.add(candidate.course());
             }
             if (mainCourse == null) {
                 for (SurfaceCourseDraft draft : outletDrafts) {
@@ -4401,7 +4826,8 @@ public final class HydrologyPlanner {
                     path.edges(),
                     outlet,
                     true,
-                    path.organicSurfaceRequired()
+                    path.organicSurfaceRequired(),
+                    null
             );
             appendOutletSegments(
                     RiverCourseType.SURFACE,
@@ -4434,6 +4860,14 @@ public final class HydrologyPlanner {
 
     /** 0 when the shape is organic; otherwise 1 too short, 2 too sinuous, 3 grid-locked, 4 sharp turns. */
     private int surfaceShapeRejection(List<HydrologyPoint> routedCenterline) {
+        return surfaceShapeRejection(routedCenterline, false);
+    }
+
+    /**
+     * As above; a tributary reach keeps the hard turn cap and the overall turn budget but may bend
+     * once where it leaves its own valley for the stem's, which a main river is not allowed to do.
+     */
+    private int surfaceShapeRejection(List<HydrologyPoint> routedCenterline, boolean tributary) {
         List<HydrologyPoint> centerline = withoutDuplicateRoutePoints(routedCenterline);
         if (centerline.size() < 3) {
             return 1;
@@ -4496,7 +4930,7 @@ public final class HydrologyPlanner {
         if (turnAngles.isEmpty()) {
             return 1;
         }
-        for (int turnIndex = 0; turnIndex < turnAngles.size(); turnIndex++) {
+        for (int turnIndex = 0; turnIndex < turnAngles.size() && !tributary; turnIndex++) {
             double turn = turnAngles.get(turnIndex);
             double previous = turnIndex == 0 ? 0D : turnAngles.get(turnIndex - 1);
             double next = turnIndex + 1 == turnAngles.size() ? 0D : turnAngles.get(turnIndex + 1);
@@ -4511,7 +4945,7 @@ public final class HydrologyPlanner {
         double percentile = turnAngles.get(
                 Math.max(0, Math.min(percentileIndex, turnAngles.size() - 1))
         );
-        if (percentile > SURFACE_MAXIMUM_P95_TURN_DEGREES) {
+        if (percentile > (tributary ? SURFACE_MAXIMUM_RENDERED_TURN_DEGREES : SURFACE_MAXIMUM_P95_TURN_DEGREES)) {
             return 4;
         }
         return 0;
@@ -4587,6 +5021,7 @@ public final class HydrologyPlanner {
             List<RiverCourse> courses,
             List<HydrologyDiagnosticCandidate> diagnostics
     ) {
+        LinkedHashMap<Long, ArrayList<UndergroundCourseDraft>> draftsByOutlet = new LinkedHashMap<>();
         for (int sourceIndex : sources) {
             GridNode source = grid.node(sourceIndex);
             long courseId = HydrologyHash.mix(worldSeed, COURSE_SALT, UNDERGROUND_SOURCE_SALT, source.id());
@@ -4601,47 +5036,154 @@ public final class HydrologyPlanner {
                 );
                 continue;
             }
-            HydrologyPoint sourcePoint = path.points().getFirst();
-            HydrologyPoint trunkPoint = path.points().getLast();
-            HydrologyTerrainSample trunkTerrain = Objects.requireNonNull(
-                    sampleDetailed(trunkPoint.x(), trunkPoint.z()),
-                    "Hydrology underground trunk left sampled terrain"
-            );
-            String profileKey = chooseProfile(trunkTerrain, path.outlet().id());
-            int styledHead = sampleGeometry(
-                    HydrologyGeometrySampler.Field.UNDERGROUND_FLUID_LEVEL,
-                    profileKey,
-                    sourcePoint.x(),
-                    sourcePoint.z(),
-                    0L,
-                    settings.underground().minimumFluidY(),
-                    settings.underground().maximumFluidY()
-            );
-            int outletHead = outletHead(path.outlet());
-            if (outletHead > settings.underground().maximumFluidY()) {
-                addCompiledSourceDiagnostic(
-                        source,
-                        false,
-                        courseId,
-                        HydrologyCandidateRejection.OUTLET_LEVEL,
-                        diagnostics
-                );
-                continue;
-            }
-            int initialHead = Math.max(styledHead, outletHead);
-            RiverCourse course = buildUndergroundCourse(courseId, profileKey, source, path, initialHead, outletHead);
-            if (course == null) {
-                addCompiledSourceDiagnostic(
-                        source,
-                        false,
-                        courseId,
-                        HydrologyCandidateRejection.CAVE_CONTAINMENT,
-                        diagnostics
-                );
-                continue;
-            }
-            courses.add(course);
+            draftsByOutlet.computeIfAbsent(path.outlet().id(), (Long ignored) -> new ArrayList<>())
+                    .add(new UndergroundCourseDraft(source, courseId, path));
         }
+        for (ArrayList<UndergroundCourseDraft> outletDrafts : draftsByOutlet.values()) {
+            outletDrafts.sort(Comparator
+                    .comparingDouble((UndergroundCourseDraft draft) -> edgeLength(
+                            draft.path().edges(),
+                            draft.path().edges().size()
+                    ))
+                    .reversed()
+                    .thenComparingLong(UndergroundCourseDraft::courseId));
+            RiverCourse mainCourse = null;
+            int tributaries = 0;
+            for (UndergroundCourseDraft draft : outletDrafts) {
+                if (mainCourse != null && tributaries >= settings.underground().tributaries()) {
+                    break;
+                }
+                if (mainCourse == null) {
+                    RiverCourse course = buildUndergroundCourse(draft, draft.path(), outletHead(draft.path().outlet()), diagnostics);
+                    if (course != null) {
+                        mainCourse = course;
+                        courses.add(course);
+                    }
+                    continue;
+                }
+                RiverCourse tributary = buildUndergroundTributary(draft, mainCourse, diagnostics);
+                if (tributary != null) {
+                    courses.add(tributary);
+                    tributaries++;
+                }
+            }
+        }
+    }
+
+    private record UndergroundCourseDraft(GridNode source, long courseId, CoursePath path) {
+    }
+
+    /**
+     * Builds a later underground draft to the stem's outlet as a tributary: the path is cut at the first
+     * point the stem's passage already runs through, and the passage is solved with the stem's fluid
+     * level there as its outlet level, so it joins the stem at or above its water.
+     */
+    private RiverCourse buildUndergroundTributary(
+            UndergroundCourseDraft draft,
+            RiverCourse stem,
+            List<HydrologyDiagnosticCandidate> diagnostics
+    ) {
+        CoursePath path = draft.path();
+        HashSet<Long> stemEdges = new HashSet<>();
+        for (DrainageEdge edge : stem.drainageEdges()) {
+            stemEdges.add(edge.id());
+        }
+        HashMap<Long, Integer> stemHeads = new HashMap<>();
+        for (HydraulicSegment segment : stem.segments()) {
+            for (HydrologyPoint point : segment.centerline()) {
+                stemHeads.putIfAbsent(RiverFootprint.pack(point.x(), point.z()), point.y());
+            }
+        }
+        int joinIndex = -1;
+        for (int index = 0; index < path.points().size(); index++) {
+            HydrologyPoint point = path.points().get(index);
+            boolean sharedEdge = index > 0 && stemEdges.contains(path.pairEdges().get(index - 1).id());
+            if (sharedEdge || stemHeads.containsKey(RiverFootprint.pack(point.x(), point.z()))) {
+                joinIndex = index;
+                break;
+            }
+        }
+        if (joinIndex < 1 || !stemHeads.containsKey(RiverFootprint.pack(
+                path.points().get(joinIndex).x(), path.points().get(joinIndex).z()))) {
+            addCompiledSourceDiagnostic(draft.source(), false, draft.courseId(),
+                    joinIndex < 0 ? HydrologyCandidateRejection.NO_DRAINAGE_PATH : HydrologyCandidateRejection.COURSE_TOO_SHORT,
+                    diagnostics);
+            return null;
+        }
+        List<HydrologyPoint> points = path.points().subList(0, joinIndex + 1);
+        List<DrainageEdge> pairEdges = path.pairEdges().subList(0, joinIndex);
+        LinkedHashSet<DrainageEdge> ownedEdges = new LinkedHashSet<>();
+        for (DrainageEdge edge : pairEdges) {
+            if (!stemEdges.contains(edge.id())) {
+                ownedEdges.add(edge);
+            }
+        }
+        if (ownedEdges.isEmpty()
+                || centerlineLength(points) < settings.routing().minimumUndergroundCourseLength() / 2D) {
+            addCompiledSourceDiagnostic(draft.source(), false, draft.courseId(),
+                    HydrologyCandidateRejection.COURSE_TOO_SHORT, joinIndex, diagnostics);
+            return null;
+        }
+        HydrologyPoint junction = points.getLast();
+        CoursePath junctionPath = new CoursePath(
+                List.copyOf(points),
+                List.copyOf(pairEdges),
+                List.copyOf(ownedEdges),
+                path.outlet(),
+                false,
+                false,
+                junction
+        );
+        int junctionHead = stemHeads.get(RiverFootprint.pack(junction.x(), junction.z()));
+        return buildUndergroundCourse(draft, junctionPath, junctionHead, diagnostics);
+    }
+
+    private RiverCourse buildUndergroundCourse(
+            UndergroundCourseDraft draft,
+            CoursePath path,
+            int outletHead,
+            List<HydrologyDiagnosticCandidate> diagnostics
+    ) {
+        GridNode source = draft.source();
+        long courseId = draft.courseId();
+        HydrologyPoint sourcePoint = path.points().getFirst();
+        HydrologyPoint trunkPoint = path.points().getLast();
+        HydrologyTerrainSample trunkTerrain = Objects.requireNonNull(
+                sampleDetailed(trunkPoint.x(), trunkPoint.z()),
+                "Hydrology underground trunk left sampled terrain"
+        );
+        String profileKey = chooseProfile(trunkTerrain, path.outlet().id());
+        int styledHead = sampleGeometry(
+                HydrologyGeometrySampler.Field.UNDERGROUND_FLUID_LEVEL,
+                profileKey,
+                sourcePoint.x(),
+                sourcePoint.z(),
+                0L,
+                settings.underground().minimumFluidY(),
+                settings.underground().maximumFluidY()
+        );
+        if (outletHead > settings.underground().maximumFluidY()) {
+            addCompiledSourceDiagnostic(
+                    source,
+                    false,
+                    courseId,
+                    HydrologyCandidateRejection.OUTLET_LEVEL,
+                    diagnostics
+            );
+            return null;
+        }
+        int initialHead = Math.max(styledHead, outletHead);
+        RiverCourse course = buildUndergroundCourse(courseId, profileKey, source, path, initialHead, outletHead);
+        if (course == null) {
+            addCompiledSourceDiagnostic(
+                    source,
+                    false,
+                    courseId,
+                    HydrologyCandidateRejection.CAVE_CONTAINMENT,
+                    diagnostics
+            );
+        }
+        return course;
     }
 
     private void addCompiledSourceDiagnostic(
@@ -5507,7 +6049,8 @@ public final class HydrologyPlanner {
                 List.copyOf(edges),
                 outlet,
                 true,
-                routing.organicSurfaceRequired()
+                routing.organicSurfaceRequired(),
+                null
         );
     }
 
@@ -5713,7 +6256,7 @@ public final class HydrologyPlanner {
         }
         int head = Math.subtractExact(
                 terrain.naturalHeight(),
-                settings.surface().banks().inset()
+                settings.surface().banks().sink()
         );
         return surfaceRouteBankPenalty(
                 point,
@@ -5912,7 +6455,8 @@ public final class HydrologyPlanner {
                 List.copyOf(edges),
                 outlet,
                 true,
-                false
+                false,
+                null
         )
                 : null;
     }
@@ -6425,7 +6969,7 @@ public final class HydrologyPlanner {
         int head = valley.head()[center];
         // A pool belongs in a hollow or on level ground: the whole rim must sit within a few blocks of the
         // water, or the bowl becomes a scar dug into a slope.
-        int rimAllowance = pool.depth() + settings.surface().banks().inset() + 2;
+        int rimAllowance = pool.depth() + settings.surface().banks().sink() + 2;
         for (int station = 0; station < valley.exposedStations(); station++) {
             if (valley.crossMax()[station] - valley.head()[station] > rimAllowance) {
                 return null;
@@ -6474,6 +7018,251 @@ public final class HydrologyPlanner {
                 rejection,
                 0
         ));
+    }
+
+    /**
+     * Sea caves: coastal grottos the sea opens into without a river. Every owned land node with a proven
+     * ocean boundary is a site, ranked by how high the coast stands over the sea; each accepted site is an
+     * independent course whose chamber is swept inland from the shoreline and opens only through its ocean
+     * face. Rivers keep their outlets: sea caves stay clear of every mouth and grotto already planned.
+     */
+    private void compileSeaCaves(
+            SampledGrid grid,
+            List<RiverCourse> courses,
+            List<HydrologyDiagnosticCandidate> diagnostics
+    ) {
+        HydrologyPlannerSettings.SeaCaves seaCaves = settings.seaCaves();
+        if (!seaCaves.enabled() || seaCaves.maximumPerTile() == 0) {
+            return;
+        }
+        HydrologyPlannerSettings.Grotto grotto = settings.outlets().coastalGrotto();
+        boolean fits = sweptGrottoVolume(grotto, seaCaves.depth()) <= grotto.maximumVolume();
+        ArrayList<SeaCaveSite> accepted = new ArrayList<>();
+        for (SeaCaveSite site : seaCaveSites(grid)) {
+            if (accepted.size() >= seaCaves.maximumPerTile()) {
+                addSeaCaveDiagnostic(site, HydrologyCandidateRejection.SOURCE_QUOTA, diagnostics);
+                continue;
+            }
+            if (!fits) {
+                addSeaCaveDiagnostic(site, HydrologyCandidateRejection.VOLUME_LIMIT, diagnostics);
+                continue;
+            }
+            HydrologyCandidateRejection rejection = seaCaveAdmission(site, accepted, courses);
+            if (rejection != null) {
+                addSeaCaveDiagnostic(site, rejection, diagnostics);
+                continue;
+            }
+            courses.add(buildSeaCaveCourse(site));
+            accepted.add(site);
+        }
+    }
+
+    private ArrayList<SeaCaveSite> seaCaveSites(SampledGrid grid) {
+        int depth = settings.seaCaves().depth();
+        ArrayList<SeaCaveSite> sites = new ArrayList<>();
+        for (GridNode land : grid.nodes()) {
+            HydrologyTerrainSample terrain = land.terrain();
+            if (!grid.owns(land.x(), land.z())
+                    || terrain.ocean()
+                    || !terrain.transitAllowed()
+                    || !terrain.outletAllowed()) {
+                continue;
+            }
+            GridNode ocean = firstOceanNeighbor(grid, land);
+            if (ocean == null) {
+                continue;
+            }
+            HydrologyOceanBoundaryRefiner.Result boundary = refineOceanBoundary(land, ocean);
+            if (boundary == null
+                    || !boundary.landwardTerrain().transitAllowed()
+                    || !boundary.landwardTerrain().outletAllowed()) {
+                continue;
+            }
+            long stableId = HydrologyHash.mix(worldSeed, SEA_CAVE_SALT, land.id(), ocean.id());
+            HydrologyPoint inner = seaCaveInnerPoint(land, ocean, boundary.landwardPoint(), stableId, depth);
+            int seaLevel = settingsSeaLevel(ocean.terrain());
+            int coastHeight = seaCaveCoastHeight(boundary, inner, seaLevel);
+            sites.add(new SeaCaveSite(land, ocean, boundary, inner, coastHeight, stableId));
+        }
+        sites.sort(Comparator.comparingInt(SeaCaveSite::coastHeight).reversed()
+                .thenComparingLong(SeaCaveSite::stableId));
+        return sites;
+    }
+
+    /**
+     * How high the coast stands over the sea across the chamber: the lowest land at the shoreline, at the
+     * back of the chamber and at both flanks of each. Flanks in the sea are ignored (the chamber opens
+     * there like its face); a back in the sea leaves no coast at all.
+     */
+    private int seaCaveCoastHeight(HydrologyOceanBoundaryRefiner.Result boundary, HydrologyPoint inner, int seaLevel) {
+        HydrologyTerrainSample innerTerrain = sampleLandBasis(inner.x(), inner.z());
+        if (innerTerrain == null) {
+            return 0;
+        }
+        HydrologyPoint landward = boundary.landwardPoint();
+        int lowest = Math.min(boundary.landwardTerrain().naturalHeight(), innerTerrain.naturalHeight());
+        int radius = settings.outlets().coastalGrotto().horizontalRadius();
+        // Flanks lie along the shore, across the crossing from the landward point to the sea.
+        int spanX = boundary.oceanPoint().x() - landward.x();
+        int spanZ = boundary.oceanPoint().z() - landward.z();
+        double length = StrictMath.hypot(spanX, spanZ);
+        int flankX = (int) StrictMath.round(-spanZ / length * radius);
+        int flankZ = (int) StrictMath.round(spanX / length * radius);
+        int[][] flanks = {
+                {landward.x() + flankX, landward.z() + flankZ},
+                {landward.x() - flankX, landward.z() - flankZ},
+                {inner.x() + flankX, inner.z() + flankZ},
+                {inner.x() - flankX, inner.z() - flankZ}
+        };
+        for (int[] flank : flanks) {
+            HydrologyTerrainSample terrain = sampleLandBasis(flank[0], flank[1]);
+            if (terrain != null) {
+                lowest = Math.min(lowest, terrain.naturalHeight());
+            }
+        }
+        return lowest - seaLevel;
+    }
+
+    // The chamber runs inland along the coast normal, turned by a stable jitter so caves do not all
+    // face the same way along a straight shore.
+    private static HydrologyPoint seaCaveInnerPoint(
+            GridNode land,
+            GridNode ocean,
+            HydrologyPoint landward,
+            long stableId,
+            int depth
+    ) {
+        double normalX = land.x() - ocean.x();
+        double normalZ = land.z() - ocean.z();
+        double length = StrictMath.hypot(normalX, normalZ);
+        double jitter = StrictMath.toRadians(
+                (HydrologyHash.unit(HydrologyHash.mix(stableId, 7)) * 2D - 1D) * SEA_CAVE_JITTER_DEGREES
+        );
+        double cos = StrictMath.cos(jitter);
+        double sin = StrictMath.sin(jitter);
+        double unitX = normalX / length;
+        double unitZ = normalZ / length;
+        double inlandX = unitX * cos - unitZ * sin;
+        double inlandZ = unitX * sin + unitZ * cos;
+        return new HydrologyPoint(
+                (int) StrictMath.round(landward.x() + inlandX * depth),
+                landward.y(),
+                (int) StrictMath.round(landward.z() + inlandZ * depth)
+        );
+    }
+
+    private HydrologyCandidateRejection seaCaveAdmission(
+            SeaCaveSite site,
+            List<SeaCaveSite> accepted,
+            List<RiverCourse> courses
+    ) {
+        HydrologyPlannerSettings.SeaCaves seaCaves = settings.seaCaves();
+        if (site.coastHeight() < seaCaves.minimumCoastHeight()) {
+            return HydrologyCandidateRejection.SURFACE_HEAD_RANGE;
+        }
+        HydrologyPoint landward = site.boundary().landwardPoint();
+        long spacingSquared = (long) seaCaves.minimumSpacing() * seaCaves.minimumSpacing();
+        for (SeaCaveSite other : accepted) {
+            if (landward.distanceSquared2D(other.boundary().landwardPoint()) < spacingSquared) {
+                return HydrologyCandidateRejection.SOURCE_SPACING;
+            }
+        }
+        long clearance = 2L * settings.outlets().coastalGrotto().horizontalRadius() + seaCaves.depth();
+        long clearanceSquared = clearance * clearance;
+        for (RiverCourse course : courses) {
+            if (course.type() == RiverCourseType.SEA_CAVE) {
+                continue;
+            }
+            for (HydraulicSegment segment : course.segments()) {
+                if (segment.type() != HydrologyFeatureType.MOUTH
+                        && segment.type() != HydrologyFeatureType.COASTAL_GROTTO
+                        && segment.type() != HydrologyFeatureType.INLAND_GROTTO) {
+                    continue;
+                }
+                for (HydrologyPoint point : segment.centerline()) {
+                    if (landward.distanceSquared2D(point) < clearanceSquared) {
+                        return HydrologyCandidateRejection.SOURCE_SPACING;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private RiverCourse buildSeaCaveCourse(SeaCaveSite site) {
+        HydrologyPlannerSettings.Grotto grotto = settings.outlets().coastalGrotto();
+        long courseId = HydrologyHash.mix(worldSeed, COURSE_SALT, SEA_CAVE_SALT, site.stableId());
+        String profileKey = chooseProfile(site.boundary().landwardTerrain(), courseId);
+        int seaLevel = settingsSeaLevel(site.ocean().terrain());
+        // The last point is the ocean connection: the footprint opens the chamber there and nowhere else.
+        List<HydrologyPoint> centerline = line(
+                withY(site.inner(), seaLevel),
+                withY(site.boundary().oceanPoint(), seaLevel),
+                settings.routing().refinementSpacing()
+        );
+        ArrayList<HydraulicSegment> segments = new ArrayList<>(1);
+        addFlatSegment(
+                courseId,
+                HydrologyFeatureType.COASTAL_GROTTO,
+                seaLevel,
+                grotto.horizontalRadius() * 2,
+                grotto.verticalRadius(),
+                centerline,
+                segments
+        );
+        return new RiverCourse(
+                courseId,
+                RiverCourseType.SEA_CAVE,
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                profileKey,
+                1,
+                List.of(),
+                segments
+        );
+    }
+
+    private void addSeaCaveDiagnostic(
+            SeaCaveSite site,
+            HydrologyCandidateRejection rejection,
+            List<HydrologyDiagnosticCandidate> diagnostics
+    ) {
+        diagnostics.add(new HydrologyDiagnosticCandidate(
+                HydrologyHash.mix(site.stableId(), DIAGNOSTIC_SALT, rejection.ordinal()),
+                HydrologyCandidateKind.OUTLET,
+                HydrologyFeatureType.COASTAL_GROTTO,
+                site.boundary().landwardPoint(),
+                rejection,
+                0
+        ));
+    }
+
+    /**
+     * The raster a swept grotto occupies: one ellipsoid plus its central cross-section extruded over the
+     * sweep. The containment filter measures the real carve; this only refuses chambers that cannot fit.
+     */
+    static long sweptGrottoVolume(HydrologyPlannerSettings.Grotto grotto, int depth) {
+        int radius = grotto.horizontalRadius();
+        long section = 0L;
+        for (int deltaX = -radius; deltaX <= radius; deltaX++) {
+            double normalized = Math.min(1D, Math.abs(deltaX) / Math.max(1D, radius));
+            double scale = StrictMath.sqrt(Math.max(0D, 1D - normalized * normalized));
+            section += (long) StrictMath.ceil(grotto.verticalRadius() * scale)
+                    + (long) StrictMath.floor(grotto.headroom() * scale)
+                    + 1L;
+        }
+        return HydrologyPlannerSettings.ellipsoidVolume(radius, grotto.verticalRadius(), grotto.headroom())
+                + section * depth;
+    }
+
+    private record SeaCaveSite(
+            GridNode land,
+            GridNode ocean,
+            HydrologyOceanBoundaryRefiner.Result boundary,
+            HydrologyPoint inner,
+            int coastHeight,
+            long stableId
+    ) {
     }
 
     private void compileDeepFluidCourses(
@@ -7644,6 +8433,59 @@ public final class HydrologyPlanner {
         );
     }
 
+    private enum DraftPhase {
+        CONTEXT,
+        SELECT,
+        SETTLE,
+        PUBLISH
+    }
+
+    /**
+     * Wall-clock breakdown of one owner draft for the debug log: sampling and routing context, source
+     * selection, settling, publication passes, and the time spent waiting on lower-rank neighbour drafts.
+     */
+    private static final class DraftProfile {
+        private final long[] phaseNanos = new long[DraftPhase.values().length];
+        private long dependencyNanos;
+        private int dependencies;
+        private int admissions;
+
+        private long record(DraftPhase phase, long started) {
+            long now = System.nanoTime();
+            phaseNanos[phase.ordinal()] += now - started;
+            return now;
+        }
+
+        private void recordDependencies(int count, long started) {
+            dependencyNanos += System.nanoTime() - started;
+            dependencies += count;
+            admissions++;
+        }
+
+        private void log(HydrologyTileKey key, int rank, long totalNanos) {
+            IrisLogging.debug(
+                    "Hydrology owner %d,%d rank=%d drafted in %dms: context=%dms select=%dms settle=%dms publish=%dms deps=%d wait=%dms admissions=%d on %s",
+                    key.tileX(),
+                    key.tileZ(),
+                    rank,
+                    totalNanos / 1_000_000L,
+                    phaseNanos[DraftPhase.CONTEXT.ordinal()] / 1_000_000L,
+                    phaseNanos[DraftPhase.SELECT.ordinal()] / 1_000_000L,
+                    phaseNanos[DraftPhase.SETTLE.ordinal()] / 1_000_000L,
+                    phaseNanos[DraftPhase.PUBLISH.ordinal()] / 1_000_000L,
+                    dependencies,
+                    dependencyNanos / 1_000_000L,
+                    admissions,
+                    Thread.currentThread().getName()
+            );
+        }
+    }
+
+    private DraftProfile currentDraftProfile() {
+        DraftProfile profile = draftProfiles.get();
+        return profile == null ? new DraftProfile() : profile;
+    }
+
     private static final class CrossTileResolutionContext {
         private final Map<HydrologyTileKey, CrossTileResolvedOwner> resolved;
         private final Set<HydrologyTileKey> resolving;
@@ -7746,13 +8588,18 @@ public final class HydrologyPlanner {
         }
     }
 
+    /**
+     * A routed source-to-outlet path, or, when {@code junction} is set, the cut prefix of one that ends
+     * on the stem it joins: the path then owns only the drainage edges upstream of the junction.
+     */
     private record CoursePath(
             List<HydrologyPoint> points,
             List<DrainageEdge> pairEdges,
             List<DrainageEdge> edges,
             RiverOutlet outlet,
             boolean reachesOutlet,
-            boolean organicSurfaceRequired
+            boolean organicSurfaceRequired,
+            HydrologyPoint junction
     ) {
     }
 

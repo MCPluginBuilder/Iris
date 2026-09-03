@@ -4,6 +4,7 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.hydrology.HydrologyNaturalTerrainSampler;
 import art.arcane.iris.engine.hydrology.HydrologyRoutingTerrainSampler;
 import art.arcane.iris.engine.hydrology.HydrologyTerrainSample;
+import art.arcane.iris.engine.hydrology.HydrologyForkJoin;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import it.unimi.dsi.fastutil.longs.Long2DoubleLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
@@ -11,8 +12,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
+import java.util.concurrent.Callable;
 import java.util.concurrent.Executor;
 
 final class IrisHydrologyRoutingTerrainSampler implements HydrologyNaturalTerrainSampler, AutoCloseable {
@@ -214,27 +214,19 @@ final class IrisHydrologyRoutingTerrainSampler implements HydrologyNaturalTerrai
             return;
         }
         int rowsPerWorker = Math.ceilDiv(planeWidth, workerCount);
-        ArrayList<CompletableFuture<Void>> futures = new ArrayList<>(workerCount);
+        ArrayList<Callable<Void>> rows = new ArrayList<>(workerCount);
         for (int workerIndex = 0; workerIndex < workerCount; workerIndex++) {
             int minimumRow = workerIndex * rowsPerWorker;
             if (minimumRow >= planeWidth) {
                 break;
             }
             int maximumRow = Math.min(planeWidth, minimumRow + rowsPerWorker);
-            futures.add(CompletableFuture.runAsync(
-                    () -> fillBasisRows(
-                            plane,
-                            planeWidth,
-                            minimumX,
-                            minimumZ,
-                            spacing,
-                            minimumRow,
-                            maximumRow
-                    ),
-                    samplingOptions.executor()
-            ));
+            rows.add(() -> {
+                fillBasisRows(plane, planeWidth, minimumX, minimumZ, spacing, minimumRow, maximumRow);
+                return null;
+            });
         }
-        await(futures);
+        HydrologyForkJoin.invokeAll(rows, samplingOptions.executor());
     }
 
     private void fillBasisRows(
@@ -264,21 +256,6 @@ final class IrisHydrologyRoutingTerrainSampler implements HydrologyNaturalTerrai
         return Math.min(planeWidth, samplingOptions.maximumWorkers());
     }
 
-    private static void await(List<CompletableFuture<Void>> futures) {
-        CompletableFuture<?>[] completions = futures.toArray(new CompletableFuture<?>[futures.size()]);
-        try {
-            CompletableFuture.allOf(completions).join();
-        } catch (CompletionException failure) {
-            Throwable cause = failure.getCause();
-            if (cause instanceof RuntimeException runtimeException) {
-                throw runtimeException;
-            }
-            if (cause instanceof Error error) {
-                throw error;
-            }
-            throw new IllegalStateException("Hydrology routing terrain sampling failed.", cause);
-        }
-    }
 
     private void evictOldest(Long2ObjectLinkedOpenHashMap<?> cache) {
         if (cache.size() <= maximumEntries) {

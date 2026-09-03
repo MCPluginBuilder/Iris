@@ -9,7 +9,7 @@ import lombok.experimental.Accessors;
 
 @Accessors(chain = true)
 @NoArgsConstructor
-@Desc("Controls direct, contained river-to-ocean grotto outlets.")
+@Desc("Controls coastal grottos: sea-level chambers whose only opening is their ocean face, admitted either as a river outlet or as a standalone sea cave.")
 @Data
 public class IrisCoastalRiverGrottoConfig {
     @Desc("Allow a coastal grotto to serve as an explicit accepted outlet.")
@@ -37,4 +37,7 @@ public class IrisCoastalRiverGrottoConfig {
     @MaxNumber(1048576)
     @Desc("Maximum accepted coastal grotto volume in blocks.")
     private int maximumVolume = 8192;
+
+    @Desc("Standalone sea caves: coastal grottos opening from the ocean into the coast without a river.")
+    private IrisSeaCaveConfig seaCaves = new IrisSeaCaveConfig();
 }

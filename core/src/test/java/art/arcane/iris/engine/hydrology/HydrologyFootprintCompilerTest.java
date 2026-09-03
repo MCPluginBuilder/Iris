@@ -20,10 +20,10 @@ public class HydrologyFootprintCompilerTest {
 
     /**
      * Published dry cells cardinally adjacent to owned water whose final terrain sits below the
-     * water head plus the configured freeboard.
+     * water head plus the configured sink.
      */
     private static int unsupportedBankCells(RiverFootprint footprint, long courseId) {
-        int freeboard = HydrologyPlannerSettings.defaults().surface().banks().freeboard();
+        int sink = HydrologyPlannerSettings.defaults().surface().banks().sink();
         int unsupported = 0;
         for (HydrologyColumnSample sample : footprint.columns().values()) {
             HydrologyColumnLayer fluid = sample.primarySurfaceFluidLayer().orElse(null);
@@ -40,7 +40,7 @@ public class HydrologyFootprintCompilerTest {
                 if (neighbor == null || neighbor.primarySurfaceFluidLayer().isPresent()) {
                     continue;
                 }
-                if (neighbor.terrainHeight() < fluid.fluidHeadY() + freeboard) {
+                if (neighbor.terrainHeight() < fluid.fluidHeadY() + sink) {
                     unsupported++;
                 }
             }
@@ -213,7 +213,7 @@ public class HydrologyFootprintCompilerTest {
     }
 
     @Test
-    public void surfaceChannelAtTerrainLevelHasNoContainingBank() {
+    public void surfaceChannelAtTerrainLevelIsHeldByTheGroundBesideIt() {
         HydraulicSegment segment = new HydraulicSegment(
                 15L,
                 14L,
@@ -231,7 +231,7 @@ public class HydrologyFootprintCompilerTest {
         HydrologyFootprintCompiler compiler = compiler(terrain);
         RiverFootprint footprint = compiler.compile(List.of(course));
 
-        assertTrue(unsupportedBankCells(footprint, 14L) > 0);
+        assertEquals(0, unsupportedBankCells(footprint, 14L));
         for (HydrologyColumnSample sample : footprint.columns().values()) {
             assertTrue(sample.terrainHeight() <= sample.naturalHeight());
         }
@@ -268,7 +268,9 @@ public class HydrologyFootprintCompilerTest {
                 base.underground(),
                 base.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of(deepFluid), List.of()
+                List.of(deepFluid), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
         HydraulicSegment segment = new HydraulicSegment(
                 15L,
@@ -717,7 +719,7 @@ public class HydrologyFootprintCompilerTest {
                         2,
                         false,
                         false,
-                        List.of(new HydrologyPoint(32, 40, 0))
+                        List.of(new HydrologyPoint(96, 40, 0))
                 )
         );
         HydrologyPlannerSettings settings = HydrologyPlannerSettings.defaults();
@@ -1434,13 +1436,13 @@ public class HydrologyFootprintCompilerTest {
                 if (neighbor.primarySurfaceFluidLayer().isPresent()) {
                     continue;
                 }
-                assertTrue(neighbor.terrainHeight() > fluid.fluidHeadY());
+                assertTrue(neighbor.terrainHeight() >= fluid.fluidHeadY());
             }
         }
     }
 
     @Test
-    public void unsupportedWetEdgeIsReportedWithoutRaisingItsNaturalBank() {
+    public void aOneBlockLowBankIsLippedAndADeeperOneIsReportedWithoutRaising() {
         HydraulicSegment channel = new HydraulicSegment(
                 529L,
                 528L,
@@ -1464,21 +1466,33 @@ public class HydrologyFootprintCompilerTest {
         }
         int lowBankZ = bankZ;
         HydrologyTerrainSampler lowBankTerrain = (int x, int z) -> HydrologyTerrainSample.openLand(
-                x == 12 && z == lowBankZ ? 70 : 82,
+                x == 12 && z == lowBankZ ? 69 : 82,
                 0D,
                 "parent"
         );
         HydrologyFootprintCompiler lowBankCompiler = compiler(lowBankTerrain);
         RiverFootprint lowBankFootprint = lowBankCompiler.compile(List.of(course));
         HydrologyColumnSample lowBank = lowBankFootprint.sample(12, lowBankZ).orElseThrow();
+        HydrologyTerrainSampler deepBankTerrain = (int x, int z) -> HydrologyTerrainSample.openLand(
+                x == 12 && z == lowBankZ ? 68 : 82,
+                0D,
+                "parent"
+        );
+        RiverFootprint deepBankFootprint = compiler(deepBankTerrain).compile(List.of(course));
+        HydrologyColumnSample deepBank = deepBankFootprint.sample(12, lowBankZ).orElseThrow();
 
         assertEquals(0, unsupportedBankCells(highFootprint, 528L));
-        assertEquals(70, lowBank.naturalHeight());
+        // One block short of the water: a one-block lip holds it and nothing is reported.
+        assertEquals(69, lowBank.naturalHeight());
         assertEquals(70, lowBank.terrainHeight());
-        assertTrue(unsupportedBankCells(lowBankFootprint, 528L) > 0);
+        assertEquals(0, unsupportedBankCells(lowBankFootprint, 528L));
         for (HydrologyColumnSample sample : lowBankFootprint.columns().values()) {
-            assertTrue(sample.terrainHeight() <= sample.naturalHeight());
+            assertTrue(sample.terrainHeight() <= sample.naturalHeight() + 1);
         }
+        // Two blocks short: the bank keeps its natural height and the edge is reported.
+        assertEquals(68, deepBank.naturalHeight());
+        assertEquals(68, deepBank.terrainHeight());
+        assertTrue(unsupportedBankCells(deepBankFootprint, 528L) > 0);
     }
 
     @Test
@@ -1730,6 +1744,250 @@ public class HydrologyFootprintCompilerTest {
 
 
 
+
+    @Test
+    public void coastalGrottoApronReachesTheChamberRadius() {
+        HydrologyTerrainSampler coast = (int x, int z) -> x >= 112
+                ? HydrologyTerrainSample.ocean(48, "ocean")
+                : HydrologyTerrainSample.openLand(80, 0D, "parent");
+        RiverCourse seaCave = seaCaveCourse(900L);
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                seaCaveSettings(8, 12),
+                coast,
+                request -> request.minimum()
+        ).compile(List.of(seaCave));
+        RiverFootprint wideApron = new HydrologyFootprintCompiler(
+                seaCaveSettings(12, 12),
+                coast,
+                request -> request.minimum()
+        ).compile(List.of(seaCave));
+
+        int chamberColumns = 0;
+        int apronColumns = 0;
+        double farthestApron = 0D;
+        for (HydrologyColumnSample sample : footprint.columns().values()) {
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (layer.oceanApron()) {
+                    apronColumns++;
+                    assertTrue(sample.ocean());
+                    farthestApron = Math.max(farthestApron, StrictMath.hypot(sample.x() - 112, sample.z()));
+                    assertTrue(
+                            "apron beyond the chamber at " + sample.x() + "," + sample.z(),
+                            nearestCenterlineDistance(seaCave, sample.x(), sample.z()) <= 12.25D
+                                    || touchesChamber(footprint, sample.x(), sample.z())
+                    );
+                    continue;
+                }
+                if (!chamberLayer(layer)) {
+                    continue;
+                }
+                chamberColumns++;
+                assertFalse(sample.ocean());
+                for (int[] cardinal : CARDINALS) {
+                    int neighborX = sample.x() + cardinal[0];
+                    int neighborZ = sample.z() + cardinal[1];
+                    if (!coast.sample(neighborX, neighborZ).ocean()) {
+                        continue;
+                    }
+                    assertTrue(
+                            "sea column " + neighborX + "," + neighborZ + " beside the chamber has no apron",
+                            apronAt(footprint, neighborX, neighborZ)
+                    );
+                }
+            }
+        }
+        assertTrue(chamberColumns > 0);
+        assertTrue(apronColumns > 0);
+        assertTrue("farthest apron " + farthestApron, farthestApron > 8.25D);
+        assertEquals(wideApron, footprint);
+
+        HydraulicSegment mouth = new HydraulicSegment(
+                902L,
+                901L,
+                HydrologyFeatureType.MOUTH,
+                63,
+                63,
+                8,
+                3,
+                false,
+                false,
+                List.of(new HydrologyPoint(96, 63, 0), new HydrologyPoint(112, 63, 0))
+        );
+        RiverFootprint mouthFootprint = new HydrologyFootprintCompiler(
+                seaCaveSettings(8, 12),
+                coast,
+                request -> request.minimum()
+        ).compile(List.of(course(901L, RiverCourseType.SURFACE, mouth)));
+        assertTrue(mouthFootprint.sample(112, 0).isPresent());
+        assertTrue(mouthFootprint.sample(112 + 8, 0).isEmpty());
+        for (HydrologyColumnSample sample : mouthFootprint.columns().values()) {
+            if (sample.ocean()) {
+                assertTrue(sample.x() - 112 < 8);
+            }
+        }
+    }
+
+    @Test
+    public void seaCaveChamberStaysUnderTheNaturalSurface() {
+        HydrologyTerrainSampler coast = this::cliffCoast;
+        RiverCourse seaCave = seaCaveCourse(910L);
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                seaCaveSettings(8, 12),
+                coast,
+                request -> request.minimum()
+        ).compile(List.of(seaCave));
+
+        int chamberColumns = 0;
+        for (HydrologyColumnSample sample : footprint.columns().values()) {
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (!chamberLayer(layer)) {
+                    continue;
+                }
+                chamberColumns++;
+                String where = "chamber at " + sample.x() + "," + sample.z() + " " + layer;
+                assertFalse(where, sample.ocean());
+                assertTrue(where, sample.naturalHeight() != 64);
+                assertEquals(where, 63, layer.fluidHeadY());
+                assertTrue(where, layer.bedY() < 63);
+                assertTrue(where, layer.ceilingY() >= 64);
+                assertTrue(where, layer.ceilingY() <= sample.naturalHeight() - 1);
+                for (int[] cardinal : CARDINALS) {
+                    HydrologyTerrainSample neighbor = coast.sample(sample.x() + cardinal[0], sample.z() + cardinal[1]);
+                    if (neighbor.ocean()) {
+                        continue;
+                    }
+                    assertTrue(where, layer.ceilingY() <= neighbor.naturalHeight() - 1);
+                }
+            }
+        }
+        assertTrue(chamberColumns > 0);
+        HydrologyColumnLayer deepRoof = chamberLayerAt(footprint, 100, 0);
+        assertTrue(deepRoof != null);
+        assertEquals(73, deepRoof.ceilingY());
+        HydrologyColumnLayer lowRoof = chamberLayerAt(footprint, 108, 0);
+        assertTrue(lowRoof != null);
+        assertEquals(65, lowRoof.ceilingY());
+        HydrologyColumnLayer face = chamberLayerAt(footprint, 111, 0);
+        assertTrue(face != null);
+        assertTrue(face.ceilingY() >= 64 && face.ceilingY() <= 73);
+        assertTrue(chamberLayerAt(footprint, 111, 9) == null);
+        assertTrue(chamberLayerAt(footprint, 100, 9) == null);
+    }
+
+    private HydrologyTerrainSample cliffCoast(int x, int z) {
+        if (x >= 112) {
+            return HydrologyTerrainSample.ocean(48, "ocean");
+        }
+        if (z >= 9) {
+            return HydrologyTerrainSample.openLand(64, 0D, "beach");
+        }
+        if (x >= 110) {
+            return HydrologyTerrainSample.openLand(74, 0D, "face");
+        }
+        if (x >= 104) {
+            return HydrologyTerrainSample.openLand(66, 0D, "low");
+        }
+        return HydrologyTerrainSample.openLand(92, 0D, "cliff");
+    }
+
+    private RiverCourse seaCaveCourse(long id) {
+        HydraulicSegment chamber = new HydraulicSegment(
+                id + 1L,
+                id,
+                HydrologyFeatureType.COASTAL_GROTTO,
+                63,
+                63,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(100, 63, 0), new HydrologyPoint(112, 63, 0))
+        );
+        return new RiverCourse(
+                id,
+                RiverCourseType.SEA_CAVE,
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                "water",
+                1,
+                List.of(),
+                List.of(chamber)
+        );
+    }
+
+    private static HydrologyPlannerSettings seaCaveSettings(int maximumOceanApron, int chamberRadius) {
+        HydrologyPlannerSettings base = HydrologyPlannerSettings.defaults();
+        HydrologyPlannerSettings.Outlets outlets = new HydrologyPlannerSettings.Outlets(
+                true,
+                new HydrologyPlannerSettings.Grotto(true, chamberRadius, 7, 10, 32768),
+                base.outlets().inlandGrotto(),
+                base.outlets().surfaceSinkholesEnabled(),
+                base.outlets().coastalCliffMinimumHeight(),
+                base.outlets().mouthLevelingDistance(),
+                maximumOceanApron,
+                base.outlets().maximumPerTile(),
+                base.outlets().maximumPerTile()
+        );
+        HydrologyPlannerSettings.Geometry geometry = new HydrologyPlannerSettings.Geometry(
+                base.geometry().meanders(),
+                base.geometry().surface(),
+                base.geometry().underground(),
+                new HydrologyPlannerSettings.ChannelShape(2.4D, 0D, 0D, 11),
+                base.geometry().drops()
+        );
+        return new HydrologyPlannerSettings(
+                base.seaLevel(),
+                base.routing(),
+                base.surface(),
+                base.hydraulics(),
+                base.underground(),
+                outlets,
+                geometry,
+                base.deepFluids(),
+                base.surfacePools(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
+        );
+    }
+
+    private static boolean chamberLayer(HydrologyColumnLayer layer) {
+        return layer.feature().type() == HydrologyFeatureType.COASTAL_GROTTO
+                && layer.terrainOwned()
+                && !layer.oceanApron();
+    }
+
+    private HydrologyColumnLayer chamberLayerAt(RiverFootprint footprint, int x, int z) {
+        return footprint.sample(x, z)
+                .flatMap((HydrologyColumnSample sample) -> sample.layers().stream()
+                        .filter(HydrologyFootprintCompilerTest::chamberLayer)
+                        .findFirst())
+                .orElse(null);
+    }
+
+    private boolean apronAt(RiverFootprint footprint, int x, int z) {
+        return footprint.sample(x, z)
+                .map((HydrologyColumnSample sample) -> sample.layers().stream().anyMatch(HydrologyColumnLayer::oceanApron))
+                .orElse(false);
+    }
+
+    private boolean touchesChamber(RiverFootprint footprint, int x, int z) {
+        for (int[] cardinal : CARDINALS) {
+            if (chamberLayerAt(footprint, x + cardinal[0], z + cardinal[1]) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private double nearestCenterlineDistance(RiverCourse course, int x, int z) {
+        double nearest = Double.MAX_VALUE;
+        for (HydraulicSegment segment : course.segments()) {
+            for (HydrologyPoint point : segment.centerline()) {
+                nearest = Math.min(nearest, StrictMath.hypot(x - point.x(), z - point.z()));
+            }
+        }
+        return nearest;
+    }
 
     private RiverCourse course(long id, RiverCourseType type, HydraulicSegment segment) {
         return new RiverCourse(

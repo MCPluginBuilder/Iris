@@ -667,8 +667,10 @@ public class HydrologyPlannerGlobalInvariantTest {
                         0.5D,
                         12D,
                         0.5D,
-                        0.1D
-                , 1D, 0),
+                        0.1D,
+                        1D,
+                        0
+                ),
                 new HydrologyPlannerSettings.Surface(
                         surfaceEnabled,
                         surfaceSources,
@@ -691,7 +693,8 @@ public class HydrologyPlannerGlobalInvariantTest {
                         2,
                         2,
                         4,
-                        false
+                        false,
+                        0
                 ),
                 new HydrologyPlannerSettings.Outlets(
                         true,
@@ -701,10 +704,13 @@ public class HydrologyPlannerGlobalInvariantTest {
                         32,
                         16,
                         1,
+                        8,
                         8
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                deepFluids, List.of()
+                deepFluids, List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -748,11 +754,14 @@ public class HydrologyPlannerGlobalInvariantTest {
                         underground.maximumDepth(),
                         underground.minimumHeadroom(),
                         underground.maximumHeadroom(),
-                        underground.connectToExistingCaves()
+                        underground.connectToExistingCaves(),
+                        0
                 ),
                 base.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                base.deepFluids(), List.of()
+                base.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -945,7 +954,9 @@ public class HydrologyPlannerGlobalInvariantTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("default"), List.of()
+                List.of("default"), List.of(),
+                Double.NaN,
+                null
         );
     }
 
@@ -996,7 +1007,9 @@ public class HydrologyPlannerGlobalInvariantTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("default"), List.of()
+                List.of("default"), List.of(),
+                Double.NaN,
+                null
         );
     }
 
@@ -1045,7 +1058,9 @@ public class HydrologyPlannerGlobalInvariantTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("default"), List.of()
+                List.of("default"), List.of(),
+                Double.NaN,
+                null
         );
     }
 

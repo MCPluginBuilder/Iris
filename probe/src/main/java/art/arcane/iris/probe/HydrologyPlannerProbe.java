@@ -228,8 +228,10 @@ public final class HydrologyPlannerProbe {
                         0.5D,
                         12D,
                         0.5D,
-                        0.1D
-                , 1D, 0),
+                        0.1D,
+                        1D,
+                        0
+                ),
                 new HydrologyPlannerSettings.Surface(
                         true,
                         surfaceSources,
@@ -253,7 +255,8 @@ public final class HydrologyPlannerProbe {
                         4,
                         5,
                         9,
-                        true
+                        true,
+                        0
                 ),
                 new HydrologyPlannerSettings.Outlets(
                         false,
@@ -263,10 +266,13 @@ public final class HydrologyPlannerProbe {
                         12,
                         32,
                         2,
+                        4,
                         4
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of(), List.of()
+                List.of(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -306,7 +312,9 @@ public final class HydrologyPlannerProbe {
                     "dry",
                     "flooded",
                     List.of("water"), List.of()
-            );
+            ,
+                Double.NaN,
+                null);
         };
     }
 
@@ -357,7 +365,9 @@ public final class HydrologyPlannerProbe {
                     "bank",
                     "flooded",
                     List.of("water"), List.of()
-            );
+            ,
+                Double.NaN,
+                null);
         };
     }
 
@@ -439,8 +449,10 @@ public final class HydrologyPlannerProbe {
                         0.5D,
                         12D,
                         0.5D,
-                        0.2D
-                , 1D, 0),
+                        0.2D,
+                        1D,
+                        0
+                ),
                 new HydrologyPlannerSettings.Surface(
                         true,
                         surfaceSources,
@@ -464,7 +476,8 @@ public final class HydrologyPlannerProbe {
                         5,
                         6,
                         12,
-                        true
+                        true,
+                        0
                 ),
                 new HydrologyPlannerSettings.Outlets(
                         true,
@@ -474,10 +487,13 @@ public final class HydrologyPlannerProbe {
                         12,
                         48,
                         2,
+                        8,
                         8
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of(deepFluid), List.of()
+                List.of(deepFluid), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -522,7 +538,9 @@ public final class HydrologyPlannerProbe {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("water"), List.of()
+                    List.of("water"), List.of(),
+                    Double.NaN,
+                    null
             );
         };
     }
@@ -556,7 +574,9 @@ public final class HydrologyPlannerProbe {
                 "dry",
                 "flooded",
                 List.of("water"), List.of()
-        );
+        ,
+                Double.NaN,
+                null);
     }
 
     private static long[] parseSeeds(String[] arguments) {

@@ -20,8 +20,8 @@ public class IrisSurfaceRiverChannelConfig {
 
     @MinNumber(0)
     @MaxNumber(3)
-    @Desc("Blocks the water surface sits below the lowest natural bank beside the channel.")
-    private int inset = 1;
+    @Desc("Blocks the water surface sinks below the lowest natural ground beside the channel; 0 keeps the water flush with the bank, and the bank always meets the water at its own height.")
+    private int sink = 0;
 
     @MinNumber(1)
     @MaxNumber(32)

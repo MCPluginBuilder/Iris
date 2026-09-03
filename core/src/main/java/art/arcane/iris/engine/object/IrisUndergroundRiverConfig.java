@@ -38,6 +38,11 @@ public class IrisUndergroundRiverConfig {
     @Desc("Distance in blocks over which an ocean-bound underground river levels to sea level before its mouth.")
     private int mouthLevelingDistance = 64;
 
+    @MinNumber(0)
+    @MaxNumber(4)
+    @Desc("Extra underground courses an outlet may accept as tributaries joining its main passage; they are budgeted on top of the source density, and 0 keeps one passage per outlet.")
+    private int tributaries = 1;
+
     private static IrisStyledRange range(double min, double max, double zoom) {
         return new IrisStyledRange(min, max, new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(zoom));
     }

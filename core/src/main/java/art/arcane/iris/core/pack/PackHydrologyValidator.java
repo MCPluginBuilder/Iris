@@ -183,9 +183,10 @@ final class PackHydrologyValidator {
         if (geometry != null) {
             validateGeometry(path + ".geometry", geometry, errors);
         }
+        int minimumSurfaceCourseLength = routing == null ? 384 : integerValue(routing, "minimumSurfaceCourseLength", 384);
         SourceBudget surfaceBudget = surface == null
                 ? SourceBudget.defaults()
-                : validateSurface(path + ".surface", surface, dimension, errors, warnings);
+                : validateSurface(path + ".surface", surface, dimension, minimumSurfaceCourseLength, errors, warnings);
         SourceBudget undergroundBudget = underground == null
                 ? SourceBudget.defaults()
                 : validateUnderground(path + ".underground", underground, dimension, errors, warnings);
@@ -276,6 +277,7 @@ final class PackHydrologyValidator {
                 errors
         );
         PackJsonFieldChecks.validateOptionalIntegerRange(path, routing, "maximumOutletsPerTile", 1, 256, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, routing, "maximumCoastalOutletsPerTile", 0, 64, errors);
         PackJsonFieldChecks.validateOptionalBoolean(path, routing, "oceanOutlets", errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, routing, "valleyPreference", 0D, 8D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, routing, "uphillPenalty", 0D, 128D, errors);
@@ -320,6 +322,7 @@ final class PackHydrologyValidator {
             String path,
             JSONObject surface,
             JSONObject dimension,
+            int minimumSurfaceCourseLength,
             List<String> errors,
             List<String> warnings
     ) {
@@ -330,6 +333,8 @@ final class PackHydrologyValidator {
         JSONObject flow = nestedObject(surface, "flow", path, errors);
         JSONObject mouths = nestedObject(surface, "mouths", path, errors);
         JSONObject bed = nestedObject(surface, "bed", path, errors);
+        JSONObject erosion = nestedObject(surface, "erosion", path, errors);
+        JSONObject ponds = nestedObject(surface, "ponds", path, errors);
 
         SourceBudget budget = sources == null
                 ? SourceBudget.defaults()
@@ -344,10 +349,16 @@ final class PackHydrologyValidator {
             validateSurfaceFlow(path + ".flow", flow, errors);
         }
         if (mouths != null) {
-            validateMouths(path + ".mouths", mouths, errors);
+            validateMouths(path + ".mouths", mouths, minimumSurfaceCourseLength, errors);
         }
         if (bed != null) {
             validateSurfaceBed(path + ".bed", bed, errors);
+        }
+        if (erosion != null) {
+            validateSurfaceErosion(path + ".erosion", erosion, errors);
+        }
+        if (ponds != null) {
+            validateSurfacePonds(path + ".ponds", ponds, errors);
         }
 
         boolean surfaceEnabled = booleanValue(surface, "enabled", true);
@@ -368,7 +379,7 @@ final class PackHydrologyValidator {
     private static void validateSurfaceChannel(String path, JSONObject channel, List<String> errors) {
         validateRange(path, channel, "width", 1D, 128D, 4D, 8D, errors);
         validateRange(path, channel, "depth", 1D, 64D, 2D, 4D, errors);
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "inset", 0, 3, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "sink", 0, 3, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "maximumIncision", 1, 32, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, channel, "springWidthRatio", 1D, 4D, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "springLength", 4, 96, errors);
@@ -376,8 +387,33 @@ final class PackHydrologyValidator {
         PackJsonFieldChecks.validateOptionalIntegerRange(path, channel, "roughnessWavelength", 4, 64, errors);
     }
 
+    private static void validateSurfaceErosion(String path, JSONObject erosion, List<String> errors) {
+        PackJsonFieldChecks.validateOptionalBoolean(path, erosion, "enabled", errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, erosion, "smoothingRadius", 0, 64, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, erosion, "thalwegFraction", 0D, 0.95D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, erosion, "blendCurve", 0.25D, 4D, errors);
+        PackJsonFieldChecks.validateOptionalDoubleRange(path, erosion, "bedNoise", 0D, 2D, errors);
+    }
+
+    private static void validateSurfacePonds(String path, JSONObject ponds, List<String> errors) {
+        for (String end : new String[] {"source", "terminal"}) {
+            JSONObject pond = nestedObject(ponds, end, path, errors);
+            if (pond == null) {
+                continue;
+            }
+            String pondPath = path + "." + end;
+            PackJsonFieldChecks.validateOptionalBoolean(pondPath, pond, "enabled", errors);
+            PackJsonFieldChecks.validateOptionalIntegerRange(pondPath, pond, "minimumRadius", 1, 32, errors);
+            PackJsonFieldChecks.validateOptionalIntegerRange(pondPath, pond, "maximumRadius", 1, 32, errors);
+            PackJsonFieldChecks.validateOptionalIntegerRange(pondPath, pond, "depth", 1, 8, errors);
+            if (pond.has("minimumRadius") && pond.has("maximumRadius")
+                    && pond.optInt("minimumRadius") > pond.optInt("maximumRadius")) {
+                errors.add(pondPath + ".minimumRadius must not exceed maximumRadius");
+            }
+        }
+    }
+
     private static void validateSurfaceBanks(String path, JSONObject banks, List<String> errors) {
-        PackJsonFieldChecks.validateOptionalIntegerRange(path, banks, "freeboard", 0, 4, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, banks, "shoreWidth", 0.5D, 6D, errors);
         PackJsonFieldChecks.validateOptionalDoubleRange(path, banks, "blendSlope", 0.5D, 12D, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, banks, "minimumBlendWidth", 1, 64, errors);
@@ -426,9 +462,16 @@ final class PackHydrologyValidator {
         }
     }
 
-    private static void validateMouths(String path, JSONObject mouths, List<String> errors) {
+    private static void validateMouths(String path, JSONObject mouths, int minimumSurfaceCourseLength, List<String> errors) {
         PackJsonFieldChecks.validateOptionalDoubleRange(path, mouths, "flareRatio", 1D, 4D, errors);
         PackJsonFieldChecks.validateOptionalIntegerRange(path, mouths, "maximumOceanApron", 0, 32, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, mouths, "inletLength", 0, 256, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, mouths, "inletDepth", 0, 16, errors);
+        PackJsonFieldChecks.validateOptionalIntegerRange(path, mouths, "maximumIncision", 0, 128, errors);
+        // The drowned reach is the end of a river, never the whole of one.
+        if (mouths.has("inletLength") && integerValue(mouths, "inletLength", 64) > minimumSurfaceCourseLength) {
+            errors.add(path + ".inletLength must not exceed routing.minimumSurfaceCourseLength.");
+        }
     }
 
     private static SourceBudget validateUnderground(
@@ -552,6 +595,22 @@ final class PackHydrologyValidator {
             Object rawPoolLevel = grotto.opt("poolLevel");
             if (!(rawPoolLevel instanceof String poolLevel) || !"SEA_LEVEL".equals(poolLevel)) {
                 errors.add(path + ".poolLevel must be SEA_LEVEL.");
+            }
+        }
+        if (coastal) {
+            JSONObject seaCaves = nestedObject(grotto, "seaCaves", path, errors);
+            if (seaCaves != null) {
+                String seaCavePath = path + ".seaCaves";
+                PackJsonFieldChecks.validateOptionalBoolean(seaCavePath, seaCaves, "enabled", errors);
+                PackJsonFieldChecks.validateOptionalIntegerRange(seaCavePath, seaCaves, "maximumPerTile", 0, 64, errors);
+                PackJsonFieldChecks.validateOptionalIntegerRange(seaCavePath, seaCaves, "minimumSpacing", 16, 8192, errors);
+                PackJsonFieldChecks.validateOptionalIntegerRange(seaCavePath, seaCaves, "minimumCoastHeight", 1, 128, errors);
+                PackJsonFieldChecks.validateOptionalIntegerRange(seaCavePath, seaCaves, "depth", 0, 128, errors);
+                int horizontalRadius = integerValue(grotto, "horizontalRadius", DEFAULT_COASTAL_GROTTO.getHorizontalRadius());
+                int minimumSpacing = integerValue(seaCaves, "minimumSpacing", DEFAULT_COASTAL_GROTTO.getSeaCaves().getMinimumSpacing());
+                if (minimumSpacing < horizontalRadius * 2) {
+                    errors.add(seaCavePath + ".minimumSpacing must be at least twice " + path + ".horizontalRadius.");
+                }
             }
         }
 
@@ -902,6 +961,8 @@ final class PackHydrologyValidator {
         validateNullableDouble(path, policy, "incisionMultiplier", 0D, 16D, errors);
         validateNullableDouble(path, policy, "routingMultiplier", 0D, 64D, errors);
         validateNullableDouble(path, policy, "bankMultiplier", 0D, 4D, errors);
+        validateNullableDouble(path, policy, "shoreBiomeWidth", 0D, 32D, errors);
+        validateNullableBoolean(path, policy, "confined", errors);
         return policy;
     }
 

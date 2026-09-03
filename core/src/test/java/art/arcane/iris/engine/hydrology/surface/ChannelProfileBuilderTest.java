@@ -40,11 +40,47 @@ public class ChannelProfileBuilderTest {
     }
 
     @Test
-    public void directOceanCoursesFlareAtTheMouth() {
+    public void theInletWidensAndDeepensTowardTheCoastOverItsLength() {
         SurfaceCenterline centerline = straight(400);
+        HydrologyPlannerSettings.Surface defaults = HydrologyPlannerSettings.defaults().surface();
+        HydrologyPlannerSettings.Inlet inlet = defaults.banks().inlet();
         ChannelProfile profile = builder(1D, 1D).build(centerline, "water", true);
+        ChannelProfile plain = builder(defaults.banks().withInlet(HydrologyPlannerSettings.Inlet.none()))
+                .build(centerline, "water", true);
 
-        assertEquals(3D * 1.6D, profile.halfWidth()[399], 0.05D);
+        assertEquals(64, inlet.length());
+        int flareStart = 400 - inlet.length();
+        assertEquals(3D * defaults.banks().mouthFlareRatio(), profile.halfWidth()[399], 1.0E-9D);
+        assertEquals(3D + inlet.depth(), profile.depth()[399], 1.0E-9D);
+        assertEquals(3D, profile.halfWidth()[flareStart], 1.0E-9D);
+        assertEquals(3D, profile.depth()[flareStart], 1.0E-9D);
+        assertTrue(profile.halfWidth()[flareStart + 1] > 3D);
+        assertTrue(profile.depth()[flareStart + 1] > 3D);
+        assertEquals(3D, profile.halfWidth()[300], 1.0E-9D);
+        for (int station = flareStart + 1; station < 400; station++) {
+            assertTrue(profile.halfWidth()[station] >= profile.halfWidth()[station - 1]);
+            assertTrue(profile.depth()[station] >= profile.depth()[station - 1]);
+        }
+        assertEquals(3D, plain.halfWidth()[399], 1.0E-9D);
+        assertEquals(3D, plain.depth()[399], 1.0E-9D);
+    }
+
+    @Test
+    public void theFlareCompletesAtTheShorelineWhenTheCenterlineRunsIntoTheSea() {
+        SurfaceCenterline centerline = straight(400);
+        HydrologyPlannerSettings.Surface defaults = HydrologyPlannerSettings.defaults().surface();
+        HydrologyPlannerSettings.Inlet inlet = defaults.banks().inlet();
+        HydrologyTerrainSampler coast = (int x, int z) -> x >= 380
+                ? HydrologyTerrainSample.ocean(50, "ocean")
+                : HydrologyTerrainSample.openLand(80, 0D, "land");
+        ChannelProfile profile = new ChannelProfileBuilder(defaults, coast, CONSTANT_GEOMETRY).build(centerline, "water", true);
+
+        int flareStart = 380 - inlet.length();
+        assertEquals(3D, profile.halfWidth()[flareStart], 1.0E-9D);
+        assertTrue(profile.halfWidth()[flareStart + 1] > 3D);
+        assertEquals(3D * defaults.banks().mouthFlareRatio(), profile.halfWidth()[379], 1.0E-9D);
+        assertEquals(3D + inlet.depth(), profile.depth()[379], 1.0E-9D);
+        assertEquals(3D * defaults.banks().mouthFlareRatio(), profile.halfWidth()[399], 1.0E-9D);
         assertEquals(3D, profile.halfWidth()[300], 1.0E-9D);
     }
 
@@ -76,6 +112,14 @@ public class ChannelProfileBuilderTest {
         return builder(widthMultiplier, depthMultiplier, (int x, int z) -> 80);
     }
 
+    private static ChannelProfileBuilder builder(HydrologyPlannerSettings.Banks banks) {
+        HydrologyPlannerSettings.Surface defaults = HydrologyPlannerSettings.defaults().surface();
+        HydrologyPlannerSettings.Surface surface = new HydrologyPlannerSettings.Surface(
+                defaults.enabled(), defaults.sources(), defaults.minimumWidth(), defaults.maximumWidth(),
+                defaults.minimumDepth(), defaults.maximumDepth(), defaults.maximumIncision(), defaults.shoreWidth(), banks);
+        return new ChannelProfileBuilder(surface, (int x, int z) -> HydrologyTerrainSample.openLand(80, 0D, "land"), CONSTANT_GEOMETRY);
+    }
+
     private static ChannelProfileBuilder builder(double widthMultiplier, double depthMultiplier, IntBinaryOperator height) {
         HydrologyTerrainSampler sampler = (int x, int z) -> new HydrologyTerrainSample(
                 height.applyAsInt(x, z),
@@ -104,7 +148,9 @@ public class ChannelProfileBuilderTest {
                 "parent",
                 "parent",
                 "parent",
-                List.of("water"), List.of()
+                List.of("water"), List.of(),
+                Double.NaN,
+                null
         );
         return new ChannelProfileBuilder(HydrologyPlannerSettings.defaults().surface(), sampler, CONSTANT_GEOMETRY);
     }

@@ -27,9 +27,9 @@ public final class RiverPolicyResolver {
             IrisRiverPolicy biomePolicy
     ) {
         State state = new State();
-        state.apply(dimensionPolicy);
-        state.apply(regionPolicy);
-        state.apply(biomePolicy);
+        state.apply(dimensionPolicy, RiverConfinement.REGION);
+        state.apply(regionPolicy, RiverConfinement.REGION);
+        state.apply(biomePolicy, RiverConfinement.BIOME);
         return state.build();
     }
 
@@ -49,10 +49,19 @@ public final class RiverPolicyResolver {
         private double incisionMultiplier = 1D;
         private double routingMultiplier = 1D;
         private double bankMultiplier = 1D;
+        private Double shoreBiomeWidth = null;
+        private RiverConfinement confinement = RiverConfinement.NONE;
 
-        private void apply(IrisRiverPolicy policy) {
+        /** {@code scope} is the confinement a {@code confined: true} at this level binds courses to. */
+        private void apply(IrisRiverPolicy policy, RiverConfinement scope) {
             if (policy == null) {
                 return;
+            }
+            if (policy.getShoreBiomeWidth() != null) {
+                shoreBiomeWidth = policy.getShoreBiomeWidth();
+            }
+            if (policy.getConfined() != null) {
+                confinement = policy.getConfined() ? scope : RiverConfinement.NONE;
             }
             if (policy.getPlacement() != null) {
                 placement = policy.getPlacement();
@@ -117,7 +126,9 @@ public final class RiverPolicyResolver {
                     depthMultiplier,
                     incisionMultiplier,
                     routingMultiplier,
-                    bankMultiplier
+                    bankMultiplier,
+                    shoreBiomeWidth,
+                    confinement
             );
         }
     }

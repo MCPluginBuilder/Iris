@@ -18,37 +18,43 @@ import art.arcane.iris.engine.hydrology.HydrologyTileKey;
 import art.arcane.iris.engine.hydrology.cave.CavePosition;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCavePlan;
 import art.arcane.iris.engine.hydrology.policy.EffectiveRiverPolicy;
+import art.arcane.iris.engine.hydrology.policy.RiverConfinement;
 import art.arcane.iris.engine.hydrology.policy.RiverPolicyResolver;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisCoastalRiverGrottoConfig;
 import art.arcane.iris.engine.object.IrisDeepFluidConfig;
-import art.arcane.iris.engine.object.IrisSurfacePoolConfig;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisHydrology;
 import art.arcane.iris.engine.object.IrisInlandRiverGrottoConfig;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.engine.object.IrisRiverGrottoConfig;
 import art.arcane.iris.engine.object.IrisRiverChannelShapeConfig;
 import art.arcane.iris.engine.object.IrisRiverDropShapeConfig;
 import art.arcane.iris.engine.object.IrisRiverGeometryConfig;
+import art.arcane.iris.engine.object.IrisRiverGrottoConfig;
 import art.arcane.iris.engine.object.IrisRiverHydrology;
 import art.arcane.iris.engine.object.IrisRiverInlandOutlet;
 import art.arcane.iris.engine.object.IrisRiverMeanderConfig;
+import art.arcane.iris.engine.object.IrisRiverPolicy;
 import art.arcane.iris.engine.object.IrisRiverProfile;
 import art.arcane.iris.engine.object.IrisRiverRoutingConfig;
 import art.arcane.iris.engine.object.IrisRiverRoutingMode;
+import art.arcane.iris.engine.object.IrisSeaCaveConfig;
 import art.arcane.iris.engine.object.IrisStyledRange;
+import art.arcane.iris.engine.object.IrisSurfacePoolConfig;
 import art.arcane.iris.engine.object.IrisSurfaceRiverBankConfig;
 import art.arcane.iris.engine.object.IrisSurfaceRiverChannelConfig;
-import art.arcane.iris.engine.object.IrisSurfaceRiverFlowConfig;
 import art.arcane.iris.engine.object.IrisSurfaceRiverConfig;
+import art.arcane.iris.engine.object.IrisSurfaceRiverFlowConfig;
+import art.arcane.iris.engine.object.IrisSurfaceRiverPondConfig;
 import art.arcane.iris.engine.object.IrisSurfaceRiverSourceConfig;
 import art.arcane.iris.engine.object.IrisUndergroundRiverConfig;
 import art.arcane.iris.engine.object.IrisUndergroundRiverSourceConfig;
+import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.util.common.data.DataProvider;
+import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.math.RNG;
-import art.arcane.iris.spi.IrisPlatforms;
-import art.arcane.iris.util.common.parallel.MultiBurst;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -60,6 +66,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntConsumer;
 
 public final class IrisHydrologyRuntime implements AutoCloseable {
@@ -84,6 +91,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
     private final Set<String> profileKeys;
     private final String defaultProfileKey;
     private final Object terrainSampleLock;
+    private final Set<HydrologyTileKey> unplannedQueries = ConcurrentHashMap.newKeySet();
     private final LinkedHashMap<Long, HydrologyTerrainSample> terrainSamples;
 
     public IrisHydrologyRuntime(IrisHydrologyRuntimeContext context) {
@@ -94,7 +102,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         this.defaultProfileKey = profileKeys.isEmpty() ? "default" : profileKeys.iterator().next();
         this.terrainSampleLock = new Object();
         this.terrainSamples = new LinkedHashMap<>(MAXIMUM_TERRAIN_SAMPLES, 0.75F, true);
-        this.settings = createSettings(context.dimension(), hydrology);
+        this.settings = createSettings(context.dimension(), hydrology, context::data);
         HydrologyGeometrySampler geometrySampler = geometrySampler(context, hydrology);
         IrisHydrologyRoutingTerrainSampler.Sources terrainSources = new IrisHydrologyRoutingTerrainSampler.Sources(
                 this::createTerrainBasis,
@@ -115,6 +123,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 context.caveViewFactory()
         );
         this.cache = new HydrologyTileCache(planner, MAXIMUM_CACHE_TILES, IrisPlatforms.isBound() ? MultiBurst.hydrology : null);
+        IrisLogging.debug("Hydrology runtime: tileSize=%d publicationRadius=%d planningThreads=%d",
+                settings.routing().tileSize(), settings.publicationRadius(), MultiBurst.hydrology.parallelism());
     }
 
     public HydrologyPlannerSettings settings() {
@@ -123,6 +133,25 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
 
     public HydrologyTile tile(HydrologyTileKey key) {
         return cache.get(key);
+    }
+
+    /**
+     * Whether the column can be sampled without planning: true when its tiles are cached. Otherwise the
+     * planning pool is asked for them and the caller should answer from natural terrain for now.
+     */
+    public boolean isPlanned(double x, double z) {
+        int blockX = (int) StrictMath.floor(x);
+        int blockZ = (int) StrictMath.floor(z);
+        boolean planned = cache.isPlanned(blockX, blockZ);
+        if (!planned) {
+            int tileSize = settings.routing().tileSize();
+            HydrologyTileKey key = new HydrologyTileKey(Math.floorDiv(blockX, tileSize), Math.floorDiv(blockZ, tileSize));
+            if (unplannedQueries.add(key)) {
+                IrisLogging.debug("Hydrology tile %d,%d queried before it was planned; natural terrain answers until the plan lands",
+                        key.tileX(), key.tileZ());
+            }
+        }
+        return planned;
     }
 
     public Optional<HydrologyColumnSample> sample(double x, double z) {
@@ -300,8 +329,9 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
     }
 
     /**
-     * Walks tiles outward from the origin, planning each on demand, and stops as soon as no unvisited
-     * ring can hold a nearer feature. {@code progress} receives the running tile count after every ring.
+     * Walks tiles outward from the origin, planning each ring's tiles together on the hydrology pool, and
+     * stops as soon as no unvisited ring can hold a nearer feature. {@code progress} receives the running
+     * tile count after every ring.
      */
     public Optional<HydrologyFeatureRef> nearestFeature(
             Set<HydrologyFeatureType> types,
@@ -334,8 +364,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
             if (nearest != null && lowerBound * lowerBound > nearestDistanceSquared) {
                 break;
             }
-            for (HydrologyTileKey key : HydrologyFeatureSearch.ring(originTileX, originTileZ, ring)) {
-                HydrologyTile tile = cache.get(key);
+            for (HydrologyTile tile : cache.tiles(HydrologyFeatureSearch.ring(originTileX, originTileZ, ring))) {
                 visited++;
                 HydrologyFeatureRef feature = tile.nearestFeature(
                         types, profileKey, x, z, maximumDistance).orElse(null);
@@ -455,6 +484,12 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 ? sampledNaturalHeight
                 : rawNaturalHeight;
         if (!Double.isFinite(resolvedNaturalHeight)) {
+            // A non-finite height is a transient fault in a shared sampling cache, not a fact about
+            // the terrain: sample the column once more before giving the tile up.
+            double resampledNaturalHeight = context.naturalHeightProvider().sample(x, z);
+            if (Double.isFinite(resampledNaturalHeight)) {
+                return createTerrainBasis(x, z, resampledNaturalHeight);
+            }
             throw new IllegalStateException(nonFiniteHeightMessage(
                     x,
                     z,
@@ -527,9 +562,20 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 selectKey(policy.bankBiomes(), parentBiomeKey, biomePatchNoise, 4),
                 selectKey(policy.floodedCaveBiomes(), parentBiomeKey, biomePatchNoise, 5),
                 profiles,
-                policy.surfacePools()
+                policy.surfacePools(),
+                policy.shoreBiomeWidth() == null ? Double.NaN : policy.shoreBiomeWidth(),
+                confinesKey(policy.confinement(), region, biome)
         );
         return new IrisHydrologyRoutingTerrainSampler.TerrainBasis(resolvedNaturalHeight, terrain);
+    }
+
+    /** The area a river at this column must stay inside, named so that neighbouring areas never match. */
+    static String confinesKey(RiverConfinement confinement, IrisRegion region, IrisBiome biome) {
+        return switch (confinement) {
+            case NONE -> null;
+            case REGION -> region == null ? null : "region:" + region.getLoadKey();
+            case BIOME -> biome == null ? null : "biome:" + biome.getLoadKey();
+        };
     }
 
     private List<String> validProfiles(List<String> requested) {
@@ -685,7 +731,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
 
     static HydrologyPlannerSettings createSettings(
             IrisDimension dimension,
-            IrisHydrology hydrology
+            IrisHydrology hydrology,
+            DataProvider data
     ) {
         IrisRiverHydrology rivers = hydrology.getRivers();
         IrisRiverRoutingConfig routing = rivers.getRouting();
@@ -733,8 +780,7 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 channel.getMaximumIncision(),
                 banks.getShoreWidth(),
                 new HydrologyPlannerSettings.Banks(
-                        channel.getInset(),
-                        banks.getFreeboard(),
+                        channel.getSink(),
                         banks.getBlendSlope(),
                         banks.getMinimumBlendWidth(),
                         banks.getMaximumBlendWidth(),
@@ -743,9 +789,25 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                         flow.getCascadeRun(),
                         flow.getWaterfallMinimumDrop(),
                         surface.getMouths().getFlareRatio(),
+                        new HydrologyPlannerSettings.Inlet(
+                                surface.getMouths().getInletLength(),
+                                surface.getMouths().getInletDepth(),
+                                surface.getMouths().getMaximumIncision()
+                        ),
                         channel.getSpringWidthRatio(),
                         channel.getSpringLength(),
-                        banks.isExposeCutStrata()
+                        banks.isExposeCutStrata(),
+                        new HydrologyPlannerSettings.Erosion(
+                                surface.getErosion().isEnabled(),
+                                surface.getErosion().getSmoothingRadius(),
+                                surface.getErosion().getThalwegFraction(),
+                                surface.getErosion().getBlendCurve(),
+                                surface.getErosion().getBedNoise()
+                        ),
+                        new HydrologyPlannerSettings.Ponds(
+                                pond(surface.getPonds().getSource()),
+                                pond(surface.getPonds().getTerminal())
+                        )
                 )
         );
         HydrologyPlannerSettings.Hydraulics plannerHydraulics =
@@ -769,7 +831,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 maximumInt(underground.getDepth()),
                 minimumInt(underground.getHeadroom()),
                 maximumInt(underground.getHeadroom()),
-                underground.isConnectToExistingCaves()
+                underground.isConnectToExistingCaves(),
+                underground.getTributaries()
         );
         IrisRiverGrottoConfig grottos = rivers.getGrottos();
         IrisCoastalRiverGrottoConfig coastal = grottos.getCoastal();
@@ -786,7 +849,8 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 Math.max(4, coastal.getVerticalRadius()),
                 underground.getMouthLevelingDistance(),
                 surface.getMouths().getMaximumOceanApron(),
-                routing.getMaximumOutletsPerTile()
+                routing.getMaximumOutletsPerTile(),
+                routing.getMaximumCoastalOutletsPerTile()
         );
         HydrologyPlannerSettings.Geometry plannerGeometry = geometry(
                 rivers.getGeometry(),
@@ -806,8 +870,30 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 plannerOutlets,
                 plannerGeometry,
                 deepFluids(hydrology.getDeepFluids(), minimumWorldY, routing, plannerRouting.refinementSpacing()),
-                surfacePools(hydrology.getSurfacePools())
+                surfacePools(hydrology.getSurfacePools()),
+                widestShoreBiomeWidth(dimension, data, banks.getShoreWidth()),
+                seaCaves(coastal)
         );
+    }
+
+    /**
+     * The widest shore biome band any policy of the dimension asks for, never below the geometric shore
+     * width, so the publication envelope reaches every column a river can give shore content to.
+     */
+    static double widestShoreBiomeWidth(IrisDimension dimension, DataProvider data, double shoreWidth) {
+        double widest = Math.max(0D, shoreWidth);
+        widest = Math.max(widest, policyShoreBiomeWidth(dimension.getRiverPolicy()));
+        for (IrisRegion region : dimension.getAllRegions(data)) {
+            widest = Math.max(widest, policyShoreBiomeWidth(region.getRiverPolicy()));
+        }
+        for (IrisBiome biome : dimension.getAllBiomes(data)) {
+            widest = Math.max(widest, policyShoreBiomeWidth(biome.getRiverPolicy()));
+        }
+        return widest;
+    }
+
+    private static double policyShoreBiomeWidth(IrisRiverPolicy policy) {
+        return policy == null || policy.getShoreBiomeWidth() == null ? 0D : policy.getShoreBiomeWidth();
     }
 
     private static List<HydrologyPlannerSettings.SurfacePool> surfacePools(List<IrisSurfacePoolConfig> configurations) {
@@ -881,6 +967,18 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 verticalRadius,
                 headroom,
                 maximumVolume
+        );
+    }
+
+    // A sea cave is a coastal grotto without a river, so it needs the coastal grotto itself enabled.
+    private static HydrologyPlannerSettings.SeaCaves seaCaves(IrisCoastalRiverGrottoConfig coastal) {
+        IrisSeaCaveConfig seaCaves = coastal.getSeaCaves();
+        return new HydrologyPlannerSettings.SeaCaves(
+                coastal.isEnabled() && seaCaves.isEnabled(),
+                seaCaves.getMaximumPerTile(),
+                seaCaves.getMinimumSpacing(),
+                seaCaves.getMinimumCoastHeight(),
+                seaCaves.getDepth()
         );
     }
 
@@ -964,6 +1062,15 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         long diameter = radius * 2L + 1L;
         long volume = diameter * diameter * (verticalRadius + headroom + 1L);
         return (int) Math.min(1_048_576L, Math.max(64L, volume));
+    }
+
+    private static HydrologyPlannerSettings.Pond pond(IrisSurfaceRiverPondConfig config) {
+        return new HydrologyPlannerSettings.Pond(
+                config.isEnabled(),
+                config.getMinimumRadius(),
+                config.getMaximumRadius(),
+                config.getDepth()
+        );
     }
 
     private static int minimumInt(IrisStyledRange range) {

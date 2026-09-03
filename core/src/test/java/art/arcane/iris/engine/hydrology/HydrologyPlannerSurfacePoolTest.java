@@ -31,7 +31,7 @@ public class HydrologyPlannerSurfacePoolTest {
             assertEquals(HydrologyFeatureType.STANDING_POOL, segment.type());
             assertTrue(segment.width() >= 8 && segment.width() <= 12);
             assertTrue(segment.start().x() < 512);
-            assertEquals(79, segment.upstreamHeadY());
+            assertEquals(80, segment.upstreamHeadY());
             assertEquals(segment.upstreamHeadY(), segment.downstreamHeadY());
         }
     }
@@ -58,7 +58,7 @@ public class HydrologyPlannerSurfacePoolTest {
             if (layer.channel()) {
                 wet++;
                 assertEquals("lava_pool", layer.profileKey());
-                assertEquals(79, layer.fluidHeadY());
+                assertEquals(80, layer.fluidHeadY());
                 assertTrue(layer.bedY() < layer.fluidHeadY());
                 assertTrue(center.distanceSquared2D(new HydrologyPoint(column.x(), 0, column.z())) <= 8 * 8);
             } else if (layer.shore()) {
@@ -113,7 +113,9 @@ public class HydrologyPlannerSurfacePoolTest {
                 base.geometry(),
                 List.of(),
                 List.of(new HydrologyPlannerSettings.SurfacePool(
-                        "lava_pool", true, density, spacing, minimumRadius, maximumRadius, depth, 64, null))
+                        "lava_pool", true, density, spacing, minimumRadius, maximumRadius, depth, 64, null)),
+                        0D,
+                        HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 }

@@ -50,11 +50,10 @@ public class IrisRiverConfigurationTest {
         assertEquals(8D, surface.getChannel().getWidth().getMax(), 0D);
         assertEquals(2D, surface.getChannel().getDepth().getMin(), 0D);
         assertEquals(4D, surface.getChannel().getDepth().getMax(), 0D);
-        assertEquals(1, surface.getChannel().getInset());
+        assertEquals(0, surface.getChannel().getSink());
         assertEquals(10, surface.getChannel().getMaximumIncision());
         assertEquals(0.25D, surface.getChannel().getRoughness(), 0D);
         assertEquals(16, surface.getChannel().getRoughnessWavelength());
-        assertEquals(1, surface.getBanks().getFreeboard());
         assertEquals(1.5D, surface.getBanks().getShoreWidth(), 0D);
         assertEquals(3D, surface.getBanks().getBlendSlope(), 0D);
         assertEquals(4, surface.getBanks().getMinimumBlendWidth());
@@ -154,13 +153,12 @@ public class IrisRiverConfigurationTest {
                         "channel": {
                           "width": {"min": 5, "max": 24},
                           "depth": {"min": 2, "max": 6},
-                          "inset": 2,
+                          "sink": 2,
                           "maximumIncision": 14,
                           "roughness": 0.4,
                           "roughnessWavelength": 24
                         },
                         "banks": {
-                          "freeboard": 2,
                           "shoreWidth": 2.5,
                           "blendSlope": 4,
                           "minimumBlendWidth": 6,
@@ -262,11 +260,10 @@ public class IrisRiverConfigurationTest {
         assertEquals(0.4D, rivers.getRouting().getConfluenceAttraction(), 0D);
         assertEquals(new KList<>(IrisRiverInlandOutlet.SINKHOLE_GROTTO), rivers.getRouting().getInlandOutlets());
         assertEquals(24D, rivers.getSurface().getChannel().getWidth().getMax(), 0D);
-        assertEquals(2, rivers.getSurface().getChannel().getInset());
+        assertEquals(2, rivers.getSurface().getChannel().getSink());
         assertEquals(14, rivers.getSurface().getChannel().getMaximumIncision());
         assertEquals(0.4D, rivers.getSurface().getChannel().getRoughness(), 0D);
         assertEquals(24, rivers.getSurface().getChannel().getRoughnessWavelength());
-        assertEquals(2, rivers.getSurface().getBanks().getFreeboard());
         assertEquals(2.5D, rivers.getSurface().getBanks().getShoreWidth(), 0D);
         assertEquals(4D, rivers.getSurface().getBanks().getBlendSlope(), 0D);
         assertEquals(6, rivers.getSurface().getBanks().getMinimumBlendWidth());

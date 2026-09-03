@@ -6,6 +6,7 @@ import art.arcane.iris.engine.hydrology.cave.CaveVoxelPrecondition;
 import art.arcane.iris.engine.hydrology.cave.CaveVoxelView;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCandidate;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCavePlan;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCavePlannerSettings;
 import org.junit.Test;
 
@@ -1065,6 +1066,158 @@ public class HydrologyCaveCourseFilterTest {
         assertTrue(filtered.courses().isEmpty());
         assertTrue(filtered.cavePlans().isEmpty());
         assertEquals(1, diagnostics.size());
+    }
+
+    @Test
+    public void seaCaveIsContainedWithItsSeaFaceAsTheOnlyOpening() {
+        HydrologyTerrainSampler coast = (int x, int z) -> {
+            if (x >= 112) {
+                return HydrologyTerrainSample.ocean(48, "ocean");
+            }
+            if (z >= 9) {
+                return HydrologyTerrainSample.openLand(64, 0D, "beach");
+            }
+            if (x >= 110) {
+                return HydrologyTerrainSample.openLand(74, 0D, "face");
+            }
+            if (x >= 104) {
+                return HydrologyTerrainSample.openLand(66, 0D, "low");
+            }
+            return HydrologyTerrainSample.openLand(92, 0D, "cliff");
+        };
+        HydraulicSegment chamber = new HydraulicSegment(
+                921L,
+                920L,
+                HydrologyFeatureType.COASTAL_GROTTO,
+                63,
+                63,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(100, 63, 0), new HydrologyPoint(112, 63, 0))
+        );
+        RiverCourse seaCave = new RiverCourse(
+                920L,
+                RiverCourseType.SEA_CAVE,
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                "water",
+                1,
+                List.of(),
+                List.of(chamber)
+        );
+        RiverFootprint footprint = new HydrologyFootprintCompiler(
+                seaCaveSettings(),
+                coast,
+                request -> request.minimum()
+        ).compile(List.of(seaCave));
+        HydrologyTerrainCaveVoxelView view = new HydrologyTerrainCaveVoxelView(coast, 63, -64, 320);
+        ArrayList<HydrologyDiagnosticCandidate> diagnostics = new ArrayList<>();
+
+        HydrologyCaveCourseFilter terrainFilter = new HydrologyCaveCourseFilter(
+                view,
+                new HydrologyCaveCourseFilter.Options(true, 32768, 32768)
+        );
+        HydrologyCaveCourseFilter.Result result = terrainFilter.filter(
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(seaCave),
+                footprint.columns().values(),
+                diagnostics
+        );
+
+        assertEquals("diagnostics=" + diagnostics, List.of(seaCave), result.courses());
+        assertTrue(diagnostics.isEmpty());
+        assertEquals(1, result.cavePlans().size());
+        HydrologyCavePlan plan = result.cavePlans().getFirst();
+        assertTrue(plan.accepted());
+        assertEquals(920L, plan.source().sourceId());
+        AtomicInteger seaOpenings = new AtomicInteger();
+        plan.forEachPrecondition((CavePosition position, CaveVoxelPrecondition precondition) -> {
+            if (position.x() >= 112
+                    && position.y() > 48
+                    && position.y() <= 63
+                    && precondition.voxel() == CaveVoxel.COMPATIBLE_FLUID) {
+                seaOpenings.incrementAndGet();
+            }
+        });
+        assertTrue(seaOpenings.get() > 0);
+        plan.forEachAction((CavePosition position, HydrologyCaveAction action) -> {
+            int naturalHeight = coast.sample(position.x(), position.z()).naturalHeight();
+            assertTrue(
+                    "carve above the surface at " + position + " " + action,
+                    action == HydrologyCaveAction.SEAL_GUARD ? position.y() <= naturalHeight : position.y() < naturalHeight
+            );
+        });
+
+        ArrayList<HydrologyColumnSample> sealed = new ArrayList<>();
+        for (HydrologyColumnSample sample : footprint.columns().values()) {
+            List<HydrologyColumnLayer> kept = sample.layers().stream()
+                    .filter((HydrologyColumnLayer layer) -> !layer.oceanApron())
+                    .toList();
+            if (!kept.isEmpty()) {
+                sealed.add(new HydrologyColumnSample(
+                        sample.x(),
+                        sample.z(),
+                        sample.naturalHeight(),
+                        sample.seaLevel(),
+                        sample.ocean(),
+                        sample.parentBiomeKey(),
+                        kept
+                ));
+            }
+        }
+        ArrayList<HydrologyDiagnosticCandidate> sealedDiagnostics = new ArrayList<>();
+        HydrologyCaveCourseFilter.Result control = terrainFilter.filter(
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(seaCave),
+                sealed,
+                sealedDiagnostics
+        );
+
+        assertTrue(control.courses().isEmpty());
+        assertTrue(control.cavePlans().isEmpty());
+        assertEquals(1, sealedDiagnostics.size());
+        assertEquals(HydrologyCandidateRejection.CAVE_CONTAINMENT, sealedDiagnostics.getFirst().rejection());
+    }
+
+    private static HydrologyPlannerSettings seaCaveSettings() {
+        HydrologyPlannerSettings base = HydrologyPlannerSettings.defaults();
+        HydrologyPlannerSettings.Outlets outlets = new HydrologyPlannerSettings.Outlets(
+                true,
+                new HydrologyPlannerSettings.Grotto(true, 12, 7, 10, 32768),
+                base.outlets().inlandGrotto(),
+                base.outlets().surfaceSinkholesEnabled(),
+                base.outlets().coastalCliffMinimumHeight(),
+                base.outlets().mouthLevelingDistance(),
+                8,
+                base.outlets().maximumPerTile(),
+                base.outlets().maximumPerTile()
+        );
+        HydrologyPlannerSettings.Geometry geometry = new HydrologyPlannerSettings.Geometry(
+                base.geometry().meanders(),
+                base.geometry().surface(),
+                base.geometry().underground(),
+                new HydrologyPlannerSettings.ChannelShape(2.4D, 0D, 0D, 11),
+                base.geometry().drops()
+        );
+        return new HydrologyPlannerSettings(
+                base.seaLevel(),
+                base.routing(),
+                base.surface(),
+                base.hydraulics(),
+                base.underground(),
+                outlets,
+                geometry,
+                base.deepFluids(),
+                base.surfacePools(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
+        );
     }
 
     private RiverCourse course(HydraulicSegment segment) {

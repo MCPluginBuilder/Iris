@@ -79,7 +79,7 @@ public class SurfaceCourseBuilderTest {
         assertNull(result.rejection());
         assertEquals(1, result.segments().size());
         assertEquals(HydrologyFeatureType.SURFACE_POOL, result.segments().getFirst().type());
-        assertEquals(79, result.lastHead());
+        assertEquals(80, result.lastHead());
         assertEquals(201, result.segments().getFirst().centerline().size());
     }
 
@@ -135,7 +135,42 @@ public class SurfaceCourseBuilderTest {
         assertTrue(result.segments().isEmpty());
     }
 
+    @Test
+    public void aCourseWithAnInletEndsAtSeaLevelWithoutACoastalDropStation() {
+        HydrologyTerrainSampler sampler = (int x, int z) -> x >= 240
+                ? HydrologyTerrainSample.ocean(50, "ocean")
+                : HydrologyTerrainSample.openLand(100 - x / 6, 0D, "land");
+        List<HydrologyPoint> path = List.of(new HydrologyPoint(0, 0, 0), new HydrologyPoint(241, 0, 0));
+        HydrologyPlannerSettings.Surface defaults = HydrologyPlannerSettings.defaults().surface();
+        HydrologyPlannerSettings.Inlet inlet = defaults.banks().inlet();
+        SurfaceCourseResult result = builder(sampler).build(7L, COURSE_ID, "water", path, SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
+        SurfaceCourseResult plain = builder(defaults.banks().withInlet(HydrologyPlannerSettings.Inlet.none()), sampler)
+                .build(7L, COURSE_ID, "water", path, SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
+
+        assertNull(result.rejection());
+        assertEquals(SEA_LEVEL, result.lastHead());
+        assertEquals(239, result.pathEnd().x());
+        HydraulicSegment last = result.segments().getLast();
+        assertEquals(HydrologyFeatureType.SURFACE_POOL, last.type());
+        assertEquals(SEA_LEVEL, last.upstreamHeadY());
+        assertEquals(SEA_LEVEL, last.downstreamHeadY());
+        assertEquals(inlet.length(), last.centerline().size());
+        assertEquals(240 - inlet.length(), last.start().x());
+        assertNull(plain.rejection());
+        assertEquals(SEA_LEVEL, plain.lastHead());
+        assertEquals(240, plain.pathEnd().x());
+        assertTrue(plain.segments().getLast().upstreamHeadY() > SEA_LEVEL);
+    }
+
     private static SurfaceCourseBuilder builder(HydrologyTerrainSampler sampler) {
         return new SurfaceCourseBuilder(HydrologyPlannerSettings.defaults().surface(), sampler, CONSTANT_GEOMETRY, SEA_LEVEL, 64);
+    }
+
+    private static SurfaceCourseBuilder builder(HydrologyPlannerSettings.Banks banks, HydrologyTerrainSampler sampler) {
+        HydrologyPlannerSettings.Surface defaults = HydrologyPlannerSettings.defaults().surface();
+        HydrologyPlannerSettings.Surface surface = new HydrologyPlannerSettings.Surface(
+                defaults.enabled(), defaults.sources(), defaults.minimumWidth(), defaults.maximumWidth(),
+                defaults.minimumDepth(), defaults.maximumDepth(), defaults.maximumIncision(), defaults.shoreWidth(), banks);
+        return new SurfaceCourseBuilder(surface, sampler, CONSTANT_GEOMETRY, SEA_LEVEL, 64);
     }
 }

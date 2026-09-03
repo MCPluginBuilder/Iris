@@ -9,14 +9,9 @@ import lombok.experimental.Accessors;
 
 @Accessors(chain = true)
 @NoArgsConstructor
-@Desc("Controls the lip, shore band and eroded valley around a surface river.")
+@Desc("Controls the shore band and the eroded valley around a surface river.")
 @Data
 public class IrisSurfaceRiverBankConfig {
-    @MinNumber(0)
-    @MaxNumber(4)
-    @Desc("Blocks the bank top sits above the water surface at the channel edge.")
-    private int freeboard = 1;
-
     @MinNumber(0.5)
     @MaxNumber(6)
     @Desc("Width in blocks of the shore band that receives shore biome content.")

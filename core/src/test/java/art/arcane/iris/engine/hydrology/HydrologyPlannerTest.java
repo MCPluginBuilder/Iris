@@ -125,8 +125,9 @@ public class HydrologyPlannerTest {
                 configured.coastalCliffMinimumHeight(),
                 0,
                 configured.maximumOceanApron(),
-                configured.maximumPerTile()
-        ));
+                configured.maximumPerTile(),
+                configured.maximumPerTile())
+        );
 
         HydrologyTile tile = planner(78L, settings, rollingCoast(112)).plan(TILE);
 
@@ -438,10 +439,10 @@ public class HydrologyPlannerTest {
             for (HydrologyPoint point : segment.centerline()) {
                 assertTrue(point.y() <= previousHead);
                 assertTrue(previousHead - point.y() <= 1);
-                assertTrue(rollingTerrain.sample(point.x() - 1, point.z()).naturalHeight() > point.y());
-                assertTrue(rollingTerrain.sample(point.x() + 1, point.z()).naturalHeight() > point.y());
-                assertTrue(rollingTerrain.sample(point.x(), point.z() - 1).naturalHeight() > point.y());
-                assertTrue(rollingTerrain.sample(point.x(), point.z() + 1).naturalHeight() > point.y());
+                assertTrue(rollingTerrain.sample(point.x() - 1, point.z()).naturalHeight() >= point.y());
+                assertTrue(rollingTerrain.sample(point.x() + 1, point.z()).naturalHeight() >= point.y());
+                assertTrue(rollingTerrain.sample(point.x(), point.z() - 1).naturalHeight() >= point.y());
+                assertTrue(rollingTerrain.sample(point.x(), point.z() + 1).naturalHeight() >= point.y());
                 previousHead = point.y();
             }
             assertEquals(segment.downstreamHeadY(), previousHead);
@@ -514,7 +515,9 @@ public class HydrologyPlannerTest {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("alpha"), List.of()
+                    List.of("alpha"), List.of(),
+                    Double.NaN,
+                    null
             );
         };
         HydrologyTile tile = new HydrologyPlanner(812L, settings, terrain, solidCaveView()).plan(TILE);
@@ -588,7 +591,9 @@ public class HydrologyPlannerTest {
                 base.underground(),
                 base.outlets(),
                 base.geometry(),
-                base.deepFluids(), List.of()
+                base.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
         HydrologyTerrainSampler repeatedRidges = (int x, int z) -> {
             if (x >= 112) {
@@ -756,8 +761,9 @@ public class HydrologyPlannerTest {
                 configured.coastalCliffMinimumHeight(),
                 configured.mouthLevelingDistance(),
                 configured.maximumOceanApron(),
-                1
-        ));
+                1,
+                1)
+        );
         HydrologyTerrainSampler coast = (int x, int z) -> {
             if (x >= 112) {
                 return oceanTerrain();
@@ -1122,7 +1128,9 @@ public class HydrologyPlannerTest {
                 base.underground(),
                 base.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                base.deepFluids(), List.of()
+                base.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
         HydrologyPlannerSettings settings = withOutlets(shaped, new HydrologyPlannerSettings.Outlets(
                 true,
@@ -1132,8 +1140,9 @@ public class HydrologyPlannerTest {
                 base.outlets().coastalCliffMinimumHeight(),
                 base.outlets().mouthLevelingDistance(),
                 base.outlets().maximumOceanApron(),
-                1
-        ));
+                1,
+                1)
+        );
         HydrologyTile tile = new HydrologyPlanner(642L, settings, optionalRollingCoast(112)).plan(TILE);
 
         List<RiverCourse> courses = surfaceCourses(tile);
@@ -1236,8 +1245,9 @@ public class HydrologyPlannerTest {
                 12,
                 base.outlets().mouthLevelingDistance(),
                 base.outlets().maximumOceanApron(),
-                base.outlets().maximumPerTile()
-        ));
+                base.outlets().maximumPerTile(),
+                base.outlets().maximumPerTile())
+        );
         HydrologyTerrainSampler cliffCoast = (int x, int z) -> {
             if (x >= 112) {
                 return oceanTerrain();
@@ -1283,6 +1293,192 @@ public class HydrologyPlannerTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void coastalAndInlandOutletsAreBudgetedSeparately() {
+        HydrologyPlannerSettings base = standardSettings(2D, 0D, true, true, List.of());
+        HydrologyPlannerSettings settings = withOutlets(base, new HydrologyPlannerSettings.Outlets(
+                true,
+                base.outlets().coastalGrotto(),
+                base.outlets().inlandGrotto(),
+                base.outlets().surfaceSinkholesEnabled(),
+                base.outlets().coastalCliffMinimumHeight(),
+                base.outlets().mouthLevelingDistance(),
+                base.outlets().maximumOceanApron(),
+                1,
+                1
+        ));
+        HydrologyTerrainSampler terrain = (int x, int z) -> {
+            if (x >= 112) {
+                return oceanTerrain();
+            }
+            if (x == 48) {
+                return blockedTerrain();
+            }
+            boolean source = (x == 0 || x == 80) && z == 0;
+            return terrain(90 - Math.floorDiv(x, 16), 1D, false, true, source, source, false, false);
+        };
+
+        HydrologyTile tile = new HydrologyPlanner(70143L, settings, terrain, solidCaveView()).plan(TILE);
+
+        assertEquals(
+                "outlets=" + tile.outlets() + " diagnostics=" + tile.diagnosticCandidates(),
+                1,
+                tile.outlets().stream().filter(RiverOutlet::directOcean).count()
+        );
+        assertEquals(
+                "outlets=" + tile.outlets() + " diagnostics=" + tile.diagnosticCandidates(),
+                1,
+                tile.outlets().stream().filter((RiverOutlet outlet) -> !outlet.directOcean()).count()
+        );
+    }
+
+    @Test
+    public void aCliffAndABeachOnTheSameCoastSelectAMouthAndACoastalGrotto() {
+        HydrologyTerrainSampler coast = (int x, int z) -> {
+            if (x >= 112) {
+                return oceanTerrain();
+            }
+            if (z < 64) {
+                return terrain(92, 2D, false, true, x <= 16, true, false, false);
+            }
+            return terrain(66 + Math.floorDiv((96 - x) * 3, 16), 1D, false, false, x <= 16, true, false, false);
+        };
+
+        HydrologyTile mixed = new HydrologyPlanner(995L, mixedCoastSettings(2), coast).plan(TILE);
+        HydrologyTile single = new HydrologyPlanner(995L, mixedCoastSettings(1), coast).plan(TILE);
+
+        assertTrue("outlets=" + mixed.outlets(), mixed.outlets().stream().allMatch(RiverOutlet::directOcean));
+        assertTrue("outlets=" + mixed.outlets(), mixed.outlets().stream()
+                .anyMatch((RiverOutlet outlet) -> outlet.type() == HydrologyFeatureType.MOUTH));
+        assertTrue("outlets=" + mixed.outlets(), mixed.outlets().stream()
+                .anyMatch((RiverOutlet outlet) -> outlet.type() == HydrologyFeatureType.COASTAL_GROTTO));
+        assertEquals("outlets=" + single.outlets(), 1, single.outlets().size());
+        assertEquals(HydrologyFeatureType.MOUTH, single.outlets().getFirst().type());
+    }
+
+    @Test
+    public void ownedCoastOutranksHaloCoast() {
+        HydrologyPlannerSettings settings = standardSettings(2D, 0D, true, false, List.of());
+        HydrologyTerrainSampler twoCoasts = (int x, int z) -> {
+            if (x >= 112 || x <= -32) {
+                return oceanTerrain();
+            }
+            boolean source = x >= 48 && x <= 96;
+            return terrain(88 - Math.floorDiv(x, 16), 1D, false, true, source, source, false, false);
+        };
+
+        HydrologyTile tile = new HydrologyPlanner(883L, settings, twoCoasts).plan(TILE);
+
+        assertFalse("diagnostics=" + tile.diagnosticCandidates(), tile.outlets().isEmpty());
+        assertFalse(surfaceCourses(tile).isEmpty());
+        for (RiverOutlet outlet : tile.outlets()) {
+            assertTrue(
+                    "outlet=" + outlet,
+                    TILE.contains(outlet.landwardPoint().x(), outlet.landwardPoint().z(), tile.tileSize())
+            );
+        }
+    }
+
+    @Test
+    public void undergroundSeaLevelOutletsAreReportedAsOutletLevel() {
+        HydrologyPlannerSettings base = standardSettings(2D, 1D, true, true, List.of());
+        HydrologyPlannerSettings settings = new HydrologyPlannerSettings(
+                base.seaLevel(),
+                base.routing(),
+                base.surface(),
+                base.hydraulics(),
+                new HydrologyPlannerSettings.Underground(
+                        true,
+                        base.underground().sources(),
+                        40,
+                        50,
+                        4,
+                        12,
+                        2,
+                        4,
+                        5,
+                        9,
+                        true,
+                        0
+                ),
+                base.outlets(),
+                base.geometry(),
+                base.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
+        );
+        HydrologyTerrainSampler coast = (int x, int z) -> {
+            if (x >= 112) {
+                return oceanTerrain();
+            }
+            boolean source = x <= 16;
+            return terrain(88 - Math.floorDiv(x, 16), 1D, false, true, source, source, source, false);
+        };
+
+        HydrologyTile tile = new HydrologyPlanner(884L, settings, coast, solidCaveView()).plan(TILE);
+
+        List<HydrologyDiagnosticCandidate> level = tile.diagnosticCandidates().stream()
+                .filter((HydrologyDiagnosticCandidate candidate) ->
+                        candidate.kind() == HydrologyCandidateKind.OUTLET
+                                && candidate.rejection() == HydrologyCandidateRejection.OUTLET_LEVEL)
+                .toList();
+        assertFalse("diagnostics=" + tile.diagnosticCandidates(), level.isEmpty());
+        for (HydrologyDiagnosticCandidate candidate : level) {
+            assertTrue(
+                    candidate.toString(),
+                    candidate.projectedType() == HydrologyFeatureType.MOUTH
+                            || candidate.projectedType() == HydrologyFeatureType.COASTAL_GROTTO
+            );
+            assertEquals(settings.seaLevel(), candidate.point().y());
+            assertFalse(coast.sample(candidate.point().x(), candidate.point().z()).ocean());
+        }
+        assertEquals(level.size(), level.stream().map(HydrologyDiagnosticCandidate::id).distinct().count());
+    }
+
+    @Test
+    public void fallbackAlternatesCoastalAndInlandTrials() {
+        // An island whose coast is walled by a berm between the lattice columns: every mouth course
+        // needs a cut deeper than the channel may make, so the surface routing falls back. The coast
+        // offers more fallback mouths than the trial budget, so a sinkhole only gets its trial when
+        // the fallback alternates coastal and inland candidates.
+        HydrologyPlannerSettings settings = standardSettings(1D, 0D, true, true, List.of());
+        HydrologyTerrainSampler island = (int x, int z) -> {
+            if (x < -16 || x > 144 || z < -16 || z > 144) {
+                return oceanTerrain();
+            }
+            boolean berm = (x > -13 && x < -3) || (x > 131 && x < 141)
+                    || (z > -13 && z < -3) || (z > 131 && z < 141);
+            boolean source = x >= 32 && x <= 96 && z >= 32 && z <= 96;
+            return terrain(berm ? 170 : 90, 1D, false, true, source, source, false, false);
+        };
+
+        HydrologyTile tile = new HydrologyPlanner(885L, settings, island, solidCaveView()).plan(TILE);
+
+        assertFalse("diagnostics=" + tile.diagnosticCandidates(), surfaceCourses(tile).isEmpty());
+        assertTrue(tile.diagnosticCandidates().stream().anyMatch((HydrologyDiagnosticCandidate candidate) ->
+                candidate.rejection() == HydrologyCandidateRejection.SURFACE_CORRIDOR_UNSUPPORTED));
+        for (RiverCourse course : surfaceCourses(tile)) {
+            RiverOutlet outlet = tile.outlet(course.outletId().orElseThrow()).orElseThrow();
+            assertFalse("outlet=" + outlet, outlet.directOcean());
+            assertTrue(course.surfaceSinkholeContinuation());
+        }
+    }
+
+    private HydrologyPlannerSettings mixedCoastSettings(int maximumCoastalPerTile) {
+        HydrologyPlannerSettings base = standardSettings(2D, 0D, true, false, List.of());
+        return withOutlets(base, new HydrologyPlannerSettings.Outlets(
+                true,
+                new HydrologyPlannerSettings.Grotto(true, 4, 3, 3, 4096),
+                base.outlets().inlandGrotto(),
+                base.outlets().surfaceSinkholesEnabled(),
+                12,
+                base.outlets().mouthLevelingDistance(),
+                base.outlets().maximumOceanApron(),
+                base.outlets().maximumPerTile(),
+                maximumCoastalPerTile
+        ));
     }
 
     @Test
@@ -1355,8 +1551,9 @@ public class HydrologyPlannerTest {
                 configured.coastalCliffMinimumHeight(),
                 configured.mouthLevelingDistance(),
                 configured.maximumOceanApron(),
-                configured.maximumPerTile()
-        ));
+                configured.maximumPerTile(),
+                configured.maximumPerTile())
+        );
 
         HydrologyTile tile = new HydrologyPlanner(
                 7013L,
@@ -1408,7 +1605,9 @@ public class HydrologyPlannerTest {
                 base.underground(),
                 base.outlets(),
                 base.geometry(),
-                base.deepFluids(), List.of()
+                base.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
         HydrologyTerrainSampler terrain = (int x, int z) -> {
             if (x >= 112) {
@@ -1756,7 +1955,8 @@ public class HydrologyPlannerTest {
                         4,
                         5,
                         9,
-                        true
+                        true,
+                        0
                 ),
                 new HydrologyPlannerSettings.Outlets(
                         oceanEnabled,
@@ -1766,10 +1966,13 @@ public class HydrologyPlannerTest {
                         12,
                         32,
                         2,
+                        4,
                         4
                 ),
                 stableGeometry(),
-                deepFluids, List.of()
+                deepFluids, List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -1799,8 +2002,10 @@ public class HydrologyPlannerTest {
                         1.5D,
                         24D,
                         2D,
-                        0.2D
-                , 1D, 0),
+                        0.2D,
+                        1D,
+                        0
+                ),
                 new HydrologyPlannerSettings.Surface(
                         true,
                         new HydrologyPlannerSettings.Source(true, 8D, 80, 0, 8, 128),
@@ -1821,10 +2026,13 @@ public class HydrologyPlannerTest {
                         outlets.coastalCliffMinimumHeight(),
                         48,
                         outlets.maximumOceanApron(),
+                        1,
                         1
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of(), List.of()
+                List.of(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -1893,7 +2101,9 @@ public class HydrologyPlannerTest {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("alpha"), List.of()
+                    List.of("alpha"), List.of(),
+                    Double.NaN,
+                    null
             );
         };
     }
@@ -1958,7 +2168,9 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("alpha", "beta"), List.of()
+                List.of("alpha", "beta"), List.of(),
+                Double.NaN,
+                null
         );
     }
 
@@ -1990,7 +2202,9 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("alpha"), List.of()
+                List.of("alpha"), List.of(),
+                Double.NaN,
+                null
         );
     }
 
@@ -2031,7 +2245,9 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("beta", "alpha"), List.of()
+                List.of("beta", "alpha"), List.of(),
+                Double.NaN,
+                null
         );
     }
 
@@ -2063,7 +2279,9 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("alpha"), List.of()
+                List.of("alpha"), List.of(),
+                Double.NaN,
+                null
         );
     }
 
@@ -2095,7 +2313,9 @@ public class HydrologyPlannerTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("alpha", "beta"), List.of()
+                List.of("alpha", "beta"), List.of(),
+                Double.NaN,
+                null
         );
     }
 
@@ -2121,7 +2341,9 @@ public class HydrologyPlannerTest {
                 settings.underground(),
                 settings.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids(), List.of()
+                settings.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -2146,11 +2368,14 @@ public class HydrologyPlannerTest {
                         underground.maximumDepth(),
                         underground.minimumHeadroom(),
                         underground.maximumHeadroom(),
-                        underground.connectToExistingCaves()
+                        underground.connectToExistingCaves(),
+                        0
                 ),
                 settings.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids(), List.of()
+                settings.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -2176,11 +2401,14 @@ public class HydrologyPlannerTest {
                         underground.maximumDepth(),
                         underground.minimumHeadroom(),
                         underground.maximumHeadroom(),
-                        underground.connectToExistingCaves()
+                        underground.connectToExistingCaves(),
+                        0
                 ),
                 settings.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids(), List.of()
+                settings.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -2205,11 +2433,14 @@ public class HydrologyPlannerTest {
                         underground.maximumDepth(),
                         underground.minimumHeadroom(),
                         underground.maximumHeadroom(),
-                        underground.connectToExistingCaves()
+                        underground.connectToExistingCaves(),
+                        0
                 ),
                 settings.outlets(),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids(), List.of()
+                settings.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -2269,7 +2500,9 @@ public class HydrologyPlannerTest {
                 settings.underground(),
                 outlets,
                 HydrologyPlannerSettings.Geometry.defaults(),
-                settings.deepFluids(), List.of()
+                settings.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 

@@ -3,6 +3,7 @@ package art.arcane.iris.engine.hydrology;
 public enum HydrologyCandidateRejection {
     NO_LEGAL_OUTLET,
     NO_DRAINAGE_PATH,
+    CONFINED_NO_OUTLET,
     ROUTE_LIMIT,
     COURSE_TOO_SHORT,
     SOURCE_QUOTA,

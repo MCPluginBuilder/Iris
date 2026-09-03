@@ -21,11 +21,17 @@ public record EffectiveRiverPolicy(
         double depthMultiplier,
         double incisionMultiplier,
         double routingMultiplier,
-        double bankMultiplier
+        double bankMultiplier,
+        Double shoreBiomeWidth,
+        RiverConfinement confinement
 ) {
     public EffectiveRiverPolicy {
         placement = Objects.requireNonNull(placement);
         routing = Objects.requireNonNull(routing);
+        confinement = Objects.requireNonNull(confinement);
+        if (shoreBiomeWidth != null && (!Double.isFinite(shoreBiomeWidth) || shoreBiomeWidth < 0D)) {
+            throw new IllegalArgumentException("shoreBiomeWidth must be finite and non-negative.");
+        }
         profiles = List.copyOf(profiles);
         surfaceBiomes = List.copyOf(surfaceBiomes);
         mouthBiomes = List.copyOf(mouthBiomes);

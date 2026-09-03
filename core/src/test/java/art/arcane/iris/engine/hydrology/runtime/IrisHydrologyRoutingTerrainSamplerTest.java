@@ -440,7 +440,7 @@ public class IrisHydrologyRoutingTerrainSamplerTest {
     }
 
     @Test
-    public void burstWorkerUsesAvailableParallelRows() throws Exception {
+    public void burstWorkerForksRowsIntoItsOwnPoolInsteadOfTheExecutor() throws Exception {
         AtomicInteger submissions = new AtomicInteger();
         AtomicInteger heightCalls = new AtomicInteger();
         MultiBurst burst = new MultiBurst("Iris Hydrology Test", Thread.NORM_PRIORITY, () -> 2);
@@ -471,7 +471,8 @@ public class IrisHydrologyRoutingTerrainSamplerTest {
             );
             completion.get(5L, TimeUnit.SECONDS);
 
-            assertTrue(submissions.get() > 1);
+            // Handing rows to another pool from a pool worker is how saturated pools deadlock each other.
+            assertEquals(0, submissions.get());
             assertEquals((width + 1) * (width + 1), heightCalls.get());
         } finally {
             burst.close();

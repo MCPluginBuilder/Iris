@@ -13,6 +13,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -149,5 +150,30 @@ public class RiverPolicyResolverTest {
 
     private EffectiveRiverPolicy resolvePlacement(IrisRiverPlacementMode placement) {
         return RiverPolicyResolver.resolve(new IrisRiverPolicy().setPlacement(placement), null, null);
+    }
+    @Test
+    public void shoreBiomeWidthInheritsFromDimensionThroughRegionToBiome() {
+        IrisRiverPolicy region = new IrisRiverPolicy().setShoreBiomeWidth(6D);
+        IrisRiverPolicy biome = new IrisRiverPolicy().setShoreBiomeWidth(0D);
+
+        assertNull(RiverPolicyResolver.resolve((IrisRiverPolicy) null, null, null).shoreBiomeWidth());
+        assertEquals(6D, RiverPolicyResolver.resolve(null, region, null).shoreBiomeWidth(), 0D);
+        assertEquals(6D, RiverPolicyResolver.resolve(null, region, new IrisRiverPolicy()).shoreBiomeWidth(), 0D);
+        assertEquals(0D, RiverPolicyResolver.resolve(null, region, biome).shoreBiomeWidth(), 0D);
+    }
+
+    @Test
+    public void confinementScopeIsTheLevelThatConfinedTheRiver() {
+        IrisRiverPolicy confined = new IrisRiverPolicy().setConfined(true);
+        IrisRiverPolicy released = new IrisRiverPolicy().setConfined(false);
+
+        assertEquals(RiverConfinement.NONE, RiverPolicyResolver.resolve((IrisRiverPolicy) null, null, null).confinement());
+        assertEquals(RiverConfinement.REGION, RiverPolicyResolver.resolve(confined, null, null).confinement());
+        assertEquals(RiverConfinement.REGION, RiverPolicyResolver.resolve(null, confined, null).confinement());
+        assertEquals(RiverConfinement.REGION, RiverPolicyResolver.resolve(null, confined, new IrisRiverPolicy()).confinement());
+        assertEquals(RiverConfinement.BIOME, RiverPolicyResolver.resolve(null, null, confined).confinement());
+        assertEquals(RiverConfinement.BIOME, RiverPolicyResolver.resolve(null, confined, confined).confinement());
+        assertEquals(RiverConfinement.NONE, RiverPolicyResolver.resolve(null, confined, released).confinement());
+        assertEquals(RiverConfinement.NONE, RiverPolicyResolver.resolve(confined, released, null).confinement());
     }
 }

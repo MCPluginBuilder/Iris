@@ -9,7 +9,6 @@ import java.util.Objects;
 
 public final class ChannelProfileBuilder {
     private static final int SMOOTHING_RADIUS = 16;
-    private static final int MOUTH_FLARE = 32;
 
     private final HydrologyPlannerSettings.Surface surface;
     private final HydrologyTerrainSampler sampler;
@@ -34,6 +33,7 @@ public final class ChannelProfileBuilder {
         double[] width = new double[count];
         double[] depth = new double[count];
         double[] bank = new double[count];
+        int coast = count;
         for (int station = 0; station < count; station++) {
             int stationX = centerline.x()[station];
             int stationZ = centerline.z()[station];
@@ -56,6 +56,9 @@ public final class ChannelProfileBuilder {
                     surface.maximumDepth()
             );
             HydrologyTerrainSample terrain = sampler.sample(stationX, stationZ);
+            if (coast == count && (terrain == null || terrain.ocean())) {
+                coast = station;
+            }
             double widthMultiplier = terrain == null ? 1D : terrain.widthMultiplier();
             double depthMultiplier = terrain == null ? 1D : terrain.depthMultiplier();
             bank[station] = terrain == null ? 1D : terrain.bankMultiplier();
@@ -74,12 +77,17 @@ public final class ChannelProfileBuilder {
             smoothWidth[station] *= 1D + (localRatio - 1D) * remaining;
             smoothDepth[station] += remaining;
         }
-        if (directOcean) {
-            int flare = Math.min(MOUTH_FLARE, count / 3);
-            int flareStart = count - flare;
-            for (int station = Math.max(0, flareStart); station < count; station++) {
-                double progress = SurfaceNoise.smoothStep((station - flareStart) / (double) Math.max(1, flare - 1));
+        // The inlet: over its length before the coast the channel widens toward the mouth flare and
+        // its bed deepens by the inlet depth, so the estuary is wider and deeper than the river. The
+        // flare completes at the shoreline, the first station in the sea, and the stations past it keep it.
+        HydrologyPlannerSettings.Inlet inlet = surface.banks().inlet();
+        if (directOcean && inlet.length() > 0 && coast > 1) {
+            int flare = Math.min(inlet.length(), coast - 1);
+            int flareStart = coast - flare;
+            for (int station = flareStart; station < count; station++) {
+                double progress = SurfaceNoise.smoothStep(Math.min(1D, (station - flareStart) / (double) Math.max(1, flare - 1)));
                 smoothWidth[station] *= 1D + (surface.banks().mouthFlareRatio() - 1D) * progress;
+                smoothDepth[station] += inlet.depth() * progress;
             }
         }
         double[] halfWidth = new double[count];

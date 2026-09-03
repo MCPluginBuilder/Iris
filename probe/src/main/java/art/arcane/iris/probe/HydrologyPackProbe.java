@@ -1705,7 +1705,7 @@ public final class HydrologyPackProbe {
             List<ChannelIncision> incisions = channelIncisions(
                     tile.footprint(),
                     scopedCourseIds,
-                    settings.surface().banks().inset(),
+                    settings.surface().banks().sink(),
                     settings.surface().maximumIncision()
             );
             for (ChannelIncision incision : incisions) {
@@ -2698,7 +2698,9 @@ public final class HydrologyPackProbe {
             int deepCourses,
             int features,
             int coveragePairs,
-            long engineReadyNanos
+            long engineReadyNanos,
+            int surfaceJunctions,
+            int undergroundJunctions
     ) {
     }
 
@@ -2896,7 +2898,7 @@ public final class HydrologyPackProbe {
                     Locale.ROOT,
                     "IRIS_HYDROLOGY_PACK_SEED seed=%d hydrology_seed=%d tiles=%d courses=%d "
                             + "surface_courses=%d underground_courses=%d deep_courses=%d features=%d "
-                            + "pairs=%d engine_ready_ms=%.3f%n",
+                            + "pairs=%d engine_ready_ms=%.3f surface_junctions=%d underground_junctions=%d%n",
                     summary.seed(),
                     summary.hydrologySeed(),
                     summary.tiles(),
@@ -2906,7 +2908,9 @@ public final class HydrologyPackProbe {
                     summary.deepCourses(),
                     summary.features(),
                     summary.coveragePairs(),
-                    summary.engineReadyNanos() / 1_000_000D
+                    summary.engineReadyNanos() / 1_000_000D,
+                    summary.surfaceJunctions(),
+                    summary.undergroundJunctions()
             );
         }
         shapeMetrics.requireOrganicSurfaceNetwork();
@@ -2976,6 +2980,8 @@ public final class HydrologyPackProbe {
         int undergroundCourses = 0;
         int deepCourses = 0;
         int features = 0;
+        int surfaceJunctions = 0;
+        int undergroundJunctions = 0;
         long hydrologySeed;
         long engineReadyNanos;
         Set<CoverageKey> seedCoverage = new HashSet<>();
@@ -3008,10 +3014,57 @@ public final class HydrologyPackProbe {
                     shapeMetrics.observe(tile, runtime.settings());
                     List<HydrologyColumnSample> orderedColumns = null;
                     courses += tile.courses().size();
+                    List<Junction> tileJunctions = junctions(tile);
+                    int tileSurfaceCourses = 0;
+                    int tileUndergroundCourses = 0;
+                    for (RiverCourse course : tile.courses()) {
+                        if (course.type() == RiverCourseType.SURFACE) {
+                            tileSurfaceCourses++;
+                        } else if (course.type() == RiverCourseType.UNDERGROUND) {
+                            tileUndergroundCourses++;
+                        }
+                    }
+                    System.out.printf(
+                            Locale.ROOT,
+                            "IRIS_HYDROLOGY_PACK_TILE seed=%d tile_x=%d tile_z=%d courses=%d surface_courses=%d "
+                                    + "underground_courses=%d junctions=%d%n",
+                            seed,
+                            tileKey.tileX(),
+                            tileKey.tileZ(),
+                            tile.courses().size(),
+                            tileSurfaceCourses,
+                            tileUndergroundCourses,
+                            tileJunctions.size()
+                    );
+                    for (Junction junction : tileJunctions) {
+                        if (junction.type() == RiverCourseType.SURFACE) {
+                            surfaceJunctions++;
+                        } else {
+                            undergroundJunctions++;
+                        }
+                        System.out.printf(
+                                Locale.ROOT,
+                                "IRIS_HYDROLOGY_PACK_JUNCTION seed=%d tile_x=%d tile_z=%d type=%s x=%d y=%d z=%d "
+                                        + "tributary=%016x stem=%016x tributary_stations=%d%n",
+                                seed,
+                                tileKey.tileX(),
+                                tileKey.tileZ(),
+                                junction.type().name(),
+                                junction.point().x(),
+                                junction.point().y(),
+                                junction.point().z(),
+                                junction.tributaryId(),
+                                junction.stemId(),
+                                junction.tributaryStations()
+                        );
+                    }
                     HashMap<Long, String> profilesByCourse = new HashMap<>(tile.courses().size());
                     for (RiverCourse course : tile.courses()) {
                         profilesByCourse.put(course.id(), course.profileKey());
-                        observedConfiguredCoverage.add(courseCoverage(course));
+                        ConfiguredCoverage courseCoverage = courseCoverage(course);
+                        if (courseCoverage != null) {
+                            observedConfiguredCoverage.add(courseCoverage);
+                        }
                         if (course.type() == RiverCourseType.SURFACE) {
                             surfaceCourses++;
                         } else if (course.type() == RiverCourseType.UNDERGROUND) {
@@ -3140,8 +3193,59 @@ public final class HydrologyPackProbe {
                 deepCourses,
                 features,
                 seedCoverage.size(),
-                engineReadyNanos
+                engineReadyNanos,
+                surfaceJunctions,
+                undergroundJunctions
         ));
+    }
+
+    record Junction(
+            RiverCourseType type,
+            HydrologyPoint point,
+            long tributaryId,
+            long stemId,
+            int tributaryStations
+    ) {
+    }
+
+    /**
+     * A junction is a course whose last centerline point lies on, or within a channel width of, a
+     * station of another course of the same type: the tributary ends on its stem.
+     */
+    static List<Junction> junctions(HydrologyTile tile) {
+        ArrayList<Junction> junctions = new ArrayList<>();
+        for (RiverCourse course : tile.courses()) {
+            if (course.segments().isEmpty()) {
+                continue;
+            }
+            HydrologyPoint end = course.segments().getLast().end();
+            int stations = 0;
+            for (HydraulicSegment segment : course.segments()) {
+                stations += segment.centerline().size();
+            }
+            Long stemId = null;
+            double stemDistance = Double.POSITIVE_INFINITY;
+            for (RiverCourse stem : tile.courses()) {
+                if (stem.id() == course.id() || stem.type() != course.type()) {
+                    continue;
+                }
+                for (HydraulicSegment segment : stem.segments()) {
+                    double reach = segment.width() / 2D + 1D;
+                    for (HydrologyPoint point : segment.centerline()) {
+                        double distance = point.distanceSquared2D(end);
+                        if (distance <= reach * reach && distance < stemDistance) {
+                            stemId = stem.id();
+                            stemDistance = distance;
+                        }
+                    }
+                }
+            }
+            if (stemId != null) {
+                junctions.add(new Junction(course.type(), end, course.id(), stemId, stations));
+            }
+        }
+        junctions.sort(Comparator.comparingLong(Junction::tributaryId));
+        return List.copyOf(junctions);
     }
 
     // No public production equivalent: HydrologyPlanner.routeTurnDegrees is private.
@@ -4082,8 +4186,10 @@ public final class HydrologyPackProbe {
             case UNDERGROUND -> CoverageFamily.UNDERGROUND;
             case DEEP_FLUID -> CoverageFamily.DEEP;
             case SURFACE_POOL -> CoverageFamily.POOL;
+            // A sea cave is not a source-budgeted course family; its coverage is the coastal grotto feature.
+            case SEA_CAVE -> null;
         };
-        return new ConfiguredCoverage(family, course.profileKey());
+        return family == null ? null : new ConfiguredCoverage(family, course.profileKey());
     }
 
     private static void validateTileBlockBounds(

@@ -83,6 +83,14 @@ public class IrisRiverPolicy {
     @Desc("Multiplier applied to the eroded bank width outside the shore band.")
     private Double bankMultiplier = null;
 
+    @MinNumber(0)
+    @MaxNumber(32)
+    @Desc("Width in blocks of the shore biome band beside a surface river in this area. Null inherits, and without any value the band is the surface banks shore width. Zero gives the area no shore biome band; the geometric shore and erosion are unchanged.")
+    private Double shoreBiomeWidth = null;
+
+    @Desc("Rivers that start in this area stay inside it: their whole course and their outlet lie in this region (when set on a region) or this biome (when set on a biome), and a river that flows into the area never leaves it. A source with no reachable outlet inside the area is rejected. Null inherits, false releases the area.")
+    private Boolean confined = null;
+
     public KSet<String> getAllBiomeIds() {
         KSet<String> biomeIds = new KSet<>();
         addAll(biomeIds, surfaceBiomes);

@@ -1553,7 +1553,8 @@ public class MantleHydrologyComponentTest {
                         1,
                         2,
                         2,
-                        false
+                        false,
+                        0
                 ),
                 new HydrologyPlannerSettings.Outlets(
                         true,
@@ -1563,10 +1564,13 @@ public class MantleHydrologyComponentTest {
                         32,
                         16,
                         1,
+                        8,
                         8
                 ),
                 HydrologyPlannerSettings.Geometry.defaults(),
-                List.of(), List.of()
+                List.of(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -1603,7 +1607,9 @@ public class MantleHydrologyComponentTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("default"), List.of()
+                List.of("default"), List.of(),
+                Double.NaN,
+                null
         );
     }
 

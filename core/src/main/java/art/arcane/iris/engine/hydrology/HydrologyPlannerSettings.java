@@ -11,7 +11,9 @@ public record HydrologyPlannerSettings(
         Outlets outlets,
         Geometry geometry,
         List<DeepFluid> deepFluids,
-        List<SurfacePool> surfacePools
+        List<SurfacePool> surfacePools,
+        double widestShoreBiomeWidth,
+        SeaCaves seaCaves
 ) {
     private static final long PLAN_FORMAT_REVISION = 6L;
     private static final int MAXIMUM_CROSS_TILE_COLOR_PERIOD = 4;
@@ -26,7 +28,13 @@ public record HydrologyPlannerSettings(
         }
         deepFluids = deepFluids == null ? List.of() : List.copyOf(deepFluids);
         surfacePools = surfacePools == null ? List.of() : List.copyOf(surfacePools);
-        int publicationRadius = publicationRadius(routing, surface, underground, outlets, geometry, deepFluids, surfacePools);
+        if (!Double.isFinite(widestShoreBiomeWidth) || widestShoreBiomeWidth < 0D) {
+            throw new IllegalArgumentException("widestShoreBiomeWidth must be finite and non-negative.");
+        }
+        if (seaCaves == null) {
+            throw new IllegalArgumentException("Sea cave settings are required.");
+        }
+        int publicationRadius = publicationRadius(routing, surface, underground, outlets, geometry, deepFluids, surfacePools, widestShoreBiomeWidth, seaCaves);
         if (crossTileColorPeriod(publicationRadius, routing.tileSize()) > MAXIMUM_CROSS_TILE_COLOR_PERIOD) {
             throw new IllegalArgumentException("Hydrology publication envelope exceeds the bounded cross-tile admission period.");
         }
@@ -40,7 +48,7 @@ public record HydrologyPlannerSettings(
                 new Routing(2048, 64, 8192, 8192, 384, 192, 1.5D, 24D, 2D, 0.2D, 1D, 0),
                 new Surface(true, surfaceSources, 4, 8, 2, 4, 10, 1.5D, Banks.defaults()),
                 new Hydraulics(8),
-                new Underground(true, undergroundSources, -48, 72, 3, 8, 1, 3, 6, 14, true),
+                new Underground(true, undergroundSources, -48, 72, 3, 8, 1, 3, 6, 14, true, 1),
                 new Outlets(
                         true,
                         new Grotto(true, 18, 8, 8, 32768),
@@ -49,11 +57,14 @@ public record HydrologyPlannerSettings(
                         12,
                         64,
                         8,
-                        12
+                        12,
+                        2
                 ),
                 Geometry.defaults(),
                 List.of(),
-                List.of()
+                List.of(),
+                0D,
+                SeaCaves.disabled()
         );
     }
 
@@ -66,7 +77,9 @@ public record HydrologyPlannerSettings(
                 hydraulics.hashCode(),
                 underground.hashCode(),
                 outlets.hashCode(),
-                geometry.hashCode()
+                geometry.hashCode(),
+                Double.doubleToLongBits(widestShoreBiomeWidth),
+                seaCaves.hashCode()
         );
         for (DeepFluid deepFluid : deepFluids) {
             hash = HydrologyHash.mix(hash, deepFluid.hashCode(), HydrologyHash.text(deepFluid.id()));
@@ -78,7 +91,7 @@ public record HydrologyPlannerSettings(
     }
 
     public int publicationRadius() {
-        return publicationRadius(routing, surface, underground, outlets, geometry, deepFluids, surfacePools);
+        return publicationRadius(routing, surface, underground, outlets, geometry, deepFluids, surfacePools, widestShoreBiomeWidth, seaCaves);
     }
 
     int crossTileColorPeriod() {
@@ -92,8 +105,11 @@ public record HydrologyPlannerSettings(
             Outlets outlets,
             Geometry geometry,
             List<DeepFluid> deepFluids,
-            List<SurfacePool> surfacePools
+            List<SurfacePool> surfacePools,
+            double widestShoreBiomeWidth,
+            SeaCaves seaCaves
     ) {
+        double shoreReach = Math.max(surface.shoreWidth(), widestShoreBiomeWidth);
         int alignedHalo = Math.floorDiv(
                 Math.min(
                         routing.maximumRouteLength(),
@@ -106,13 +122,13 @@ public record HydrologyPlannerSettings(
         if (surface.enabled() && surface.sources().enabled()) {
             int blendWidth = surface.banks().maximumBlendWidth();
             int surfaceRadius = (int) StrictMath.ceil(
-                    surface.maximumWidth() / 2D + surface.shoreWidth() + blendWidth
+                    surface.maximumWidth() * surface.banks().mouthFlareRatio() / 2D + shoreReach + blendWidth
             );
             surfaceRadius = Math.max(
                     surfaceRadius,
                     (int) StrictMath.ceil(geometry.drops().basinWidth(
                             geometry.drops().flowWidth(surface.maximumWidth())
-                    ) / 2D + surface.shoreWidth() + blendWidth)
+                    ) / 2D + shoreReach + blendWidth)
             );
             surfaceRadius = Math.max(surfaceRadius, outlets.coastalGrotto().horizontalRadius());
             surfaceRadius = Math.max(surfaceRadius, outlets.inlandGrotto().horizontalRadius());
@@ -144,8 +160,15 @@ public record HydrologyPlannerSettings(
             if (!pool.enabled()) {
                 continue;
             }
-            radius = Math.max(radius, pool.maximumRadius() + (int) StrictMath.ceil(surface.shoreWidth())
+            radius = Math.max(radius, pool.maximumRadius() + (int) StrictMath.ceil(shoreReach)
                     + surface.banks().maximumBlendWidth());
+        }
+        if (seaCaves.enabled() && seaCaves.maximumPerTile() > 0) {
+            // A chamber hangs off a shoreline that may lie a halo away, swept inland by its depth.
+            radius = Math.max(radius, Math.addExact(alignedHalo, Math.addExact(
+                    outlets.coastalGrotto().horizontalRadius(),
+                    Math.addExact(seaCaves.depth(), 1)
+            )));
         }
         return radius;
     }
@@ -260,9 +283,12 @@ public record HydrologyPlannerSettings(
         }
     }
 
+    /**
+     * {@code sink} is how many blocks the water surface sits below the lowest natural ground beside
+     * the channel; zero keeps the water flush with the bank and the bank top always meets the water.
+     */
     public record Banks(
-            int inset,
-            int freeboard,
+            int sink,
             double blendSlope,
             int minimumBlendWidth,
             int maximumBlendWidth,
@@ -271,13 +297,19 @@ public record HydrologyPlannerSettings(
             int cascadeRun,
             int waterfallMinimumDrop,
             double mouthFlareRatio,
+            Inlet inlet,
             double springWidthRatio,
             int springLength,
-            boolean exposeCutStrata
+            boolean exposeCutStrata,
+            Erosion erosion,
+            Ponds ponds
     ) {
         // Structural invariants only; authoring bounds live in the pack validator.
         public Banks {
-            if (inset < 0 || freeboard < 0
+            if (erosion == null || ponds == null || inlet == null) {
+                throw new IllegalArgumentException("Surface erosion, inlet and pond settings are required.");
+            }
+            if (sink < 0
                     || !Double.isFinite(blendSlope) || blendSlope <= 0D
                     || minimumBlendWidth < 1 || maximumBlendWidth < minimumBlendWidth
                     || !Double.isFinite(roughness) || roughness < 0D || roughness > 1D
@@ -292,7 +324,98 @@ public record HydrologyPlannerSettings(
         }
 
         public static Banks defaults() {
-            return new Banks(1, 1, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, 2.5D, 24, true);
+            return new Banks(0, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, Inlet.defaults(), 2.5D, 24, true, Erosion.defaults(), Ponds.defaults());
+        }
+
+        public Banks withInlet(Inlet inlet) {
+            return new Banks(sink, blendSlope, minimumBlendWidth, maximumBlendWidth, roughness, roughnessWavelength,
+                    cascadeRun, waterfallMinimumDrop, mouthFlareRatio, inlet, springWidthRatio, springLength,
+                    exposeCutStrata, erosion, ponds);
+        }
+    }
+
+    /**
+     * The drowned reach where a surface river meets the sea. Over the last {@code length} blocks before
+     * the coast the water is held at sea level, the channel widens toward the mouth flare and its bed
+     * deepens by {@code depth}; the stations above it grade down one block per station into the inlet.
+     * The inlet and its approach may be cut up to {@code maximumIncision} deep instead of the channel
+     * cap, so a coastal rise no longer rejects the course; a rise the cap cannot pass ends the inlet
+     * there, and the inlet never takes more than half the exposed course. A zero length is the plain
+     * crossing: the head drops to sea level at the coast, the channel neither widens nor deepens.
+     */
+    public record Inlet(
+            int length,
+            int depth,
+            int maximumIncision
+    ) {
+        public Inlet {
+            if (length < 0 || length > 1024 || depth < 0 || depth > 64 || maximumIncision < 0 || maximumIncision > 512) {
+                throw new IllegalArgumentException("Surface inlet settings are invalid.");
+            }
+        }
+
+        public static Inlet none() {
+            return new Inlet(0, 0, 0);
+        }
+
+        public static Inlet defaults() {
+            return new Inlet(64, 3, 32);
+        }
+    }
+
+    /**
+     * How the ground around a channel is eroded into a valley. {@code smoothingRadius} is the run of
+     * stations the blend width is averaged over, {@code thalwegFraction} the share of the channel
+     * half-width that stays at full bed depth, {@code blendCurve} the exponent on the blend progress
+     * (below one hollows the valley sides, above one steepens them near the shore), and
+     * {@code bedNoise} the share of the channel roughness applied to the bed. Disabled erosion keeps
+     * only the wet channel, the shore band and the containing lip.
+     */
+    public record Erosion(
+            boolean enabled,
+            int smoothingRadius,
+            double thalwegFraction,
+            double blendCurve,
+            double bedNoise
+    ) {
+        public Erosion {
+            if (smoothingRadius < 0
+                    || !Double.isFinite(thalwegFraction) || thalwegFraction < 0D || thalwegFraction >= 1D
+                    || !Double.isFinite(blendCurve) || blendCurve <= 0D
+                    || !Double.isFinite(bedNoise) || bedNoise < 0D) {
+                throw new IllegalArgumentException("Surface erosion settings are invalid.");
+            }
+        }
+
+        public static Erosion defaults() {
+            return new Erosion(true, 12, 0.45D, 1D, 0.5D);
+        }
+    }
+
+    /** A pond at one end of a surface course: a round bowl holding the course's head at that end. */
+    public record Pond(boolean enabled, int minimumRadius, int maximumRadius, int depth) {
+        public Pond {
+            if (minimumRadius < 1 || maximumRadius < minimumRadius || depth < 1) {
+                throw new IllegalArgumentException("Surface pond settings are invalid.");
+            }
+        }
+    }
+
+    /** The ponds at a surface course's source and at an inland terminal. */
+    public record Ponds(Pond source, Pond terminal) {
+        public Ponds {
+            if (source == null || terminal == null) {
+                throw new IllegalArgumentException("Surface pond settings are required.");
+            }
+        }
+
+        public static Ponds defaults() {
+            return new Ponds(new Pond(true, 6, 12, 3), new Pond(true, 4, 7, 3));
+        }
+
+        /** No pond at either end: what a standing pool or a test channel asks for. */
+        public static Ponds none() {
+            return new Ponds(new Pond(false, 1, 1, 1), new Pond(false, 1, 1, 1));
         }
     }
 
@@ -321,6 +444,33 @@ public record HydrologyPlannerSettings(
         }
     }
 
+    /**
+     * Sea caves: coastal grottos that open from the ocean into the coast without a river. A tile keeps at
+     * most {@code maximumPerTile} of them, the steepest owned coast first, at least {@code minimumSpacing}
+     * apart, only where the coast stands {@code minimumCoastHeight} above the sea, each chamber swept
+     * {@code depth} blocks inland from the shoreline. Chamber size and volume come from the coastal grotto.
+     */
+    public record SeaCaves(
+            boolean enabled,
+            int maximumPerTile,
+            int minimumSpacing,
+            int minimumCoastHeight,
+            int depth
+    ) {
+        public SeaCaves {
+            if (maximumPerTile < 0 || maximumPerTile > 64
+                    || minimumSpacing < 16 || minimumSpacing > 8192
+                    || minimumCoastHeight < 1 || minimumCoastHeight > 128
+                    || depth < 0 || depth > 128) {
+                throw new IllegalArgumentException("Sea cave bounds are invalid.");
+            }
+        }
+
+        public static SeaCaves disabled() {
+            return new SeaCaves(false, 0, 16, 1, 0);
+        }
+    }
+
     // The routing gates read one hydraulic threshold: the drop that makes a reach a waterfall.
     public record Hydraulics(int waterfallMinimumDrop) {
         public Hydraulics {
@@ -341,7 +491,8 @@ public record HydrologyPlannerSettings(
             int maximumDepth,
             int minimumHeadroom,
             int maximumHeadroom,
-            boolean connectToExistingCaves
+            boolean connectToExistingCaves,
+            int tributaries
     ) {
         public Underground {
             if (sources == null || minimumFluidY > maximumFluidY) {
@@ -350,6 +501,9 @@ public record HydrologyPlannerSettings(
             requireRange(minimumWidth, maximumWidth, 1, 256, "underground width");
             requireRange(minimumDepth, maximumDepth, 1, 64, "underground depth");
             requireRange(minimumHeadroom, maximumHeadroom, 1, 128, "underground headroom");
+            if (tributaries < 0 || tributaries > 4) {
+                throw new IllegalArgumentException("underground tributaries must be between 0 and 4.");
+            }
         }
     }
 
@@ -361,7 +515,8 @@ public record HydrologyPlannerSettings(
             int coastalCliffMinimumHeight,
             int mouthLevelingDistance,
             int maximumOceanApron,
-            int maximumPerTile
+            int maximumPerTile,
+            int maximumCoastalPerTile
     ) {
         public Outlets {
             if (coastalGrotto == null || inlandGrotto == null) {
@@ -371,7 +526,8 @@ public record HydrologyPlannerSettings(
                 throw new IllegalArgumentException("Surface sinkholes require inland grotto outlets.");
             }
             if (coastalCliffMinimumHeight < 0 || maximumOceanApron < 0 || maximumOceanApron > 64
-                    || mouthLevelingDistance < 0 || maximumPerTile < 1 || maximumPerTile > 256) {
+                    || mouthLevelingDistance < 0 || maximumPerTile < 1 || maximumPerTile > 256
+                    || maximumCoastalPerTile < 0 || maximumCoastalPerTile > 256) {
                 throw new IllegalArgumentException("Outlet bounds are invalid.");
             }
         }

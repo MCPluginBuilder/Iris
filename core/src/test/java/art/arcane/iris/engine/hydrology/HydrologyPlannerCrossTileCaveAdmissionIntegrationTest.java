@@ -5,7 +5,10 @@ import art.arcane.iris.engine.hydrology.cave.CaveVoxel;
 import art.arcane.iris.engine.hydrology.cave.CaveVoxelPrecondition;
 import art.arcane.iris.engine.hydrology.cave.CaveVoxelView;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveConflictPolicy;
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCavePlan;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -17,6 +20,7 @@ import java.util.Map;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
 
 public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
     private static final long SEED = 77L;
@@ -65,8 +69,35 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
         assertEquals(forward.get(pair.first()).diagnosticCandidates().toString(), 1, firstSources.size());
         assertEquals(forward.get(pair.second()).diagnosticCandidates().toString(), 1, secondSources.size());
         assertPointNear(new HydrologyPoint(32, 121, -272), firstSources.getFirst(), 8);
-        assertPointNear(new HydrologyPoint(16, 126, -192), secondSources.getFirst(), 8);
+        // The second tile keeps the mouth on its own coast, so its heaviest required source no longer
+        // competes with the first tile's network and is accepted ahead of the lighter fallback source.
+        assertPointNear(new HydrologyPoint(16, 126, -224), secondSources.getFirst(), 8);
         assertNoIncompatibleCaveOverlaps(pair, forward.get(pair.first()), forward.get(pair.second()));
+    }
+
+    @Test
+    public void boundPlatformResolvesNeighbourOwnersInParallelToTheSameTiles() {
+        List<HydrologyTileKey> corner = List.of(
+                new HydrologyTileKey(-1, -1),
+                new HydrologyTileKey(0, -1),
+                new HydrologyTileKey(-1, 0),
+                new HydrologyTileKey(0, 0)
+        );
+        Map<HydrologyTileKey, HydrologyTile> lazy = plans(planner(), corner);
+
+        IrisSettings previousSettings = IrisSettings.settings;
+        IrisSettings.settings = new IrisSettings();
+        IrisPlatforms.unbind();
+        IrisPlatforms.bind(mock(IrisPlatform.class));
+        Map<HydrologyTileKey, HydrologyTile> parallel;
+        try {
+            parallel = plans(planner(), corner);
+        } finally {
+            IrisPlatforms.unbind();
+            IrisSettings.settings = previousSettings;
+        }
+
+        assertEquals(lazy, parallel);
     }
 
     @Test
@@ -74,7 +105,10 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
         HydrologyPlanner planner = planner();
 
         assertEquals(1, planner.maximumCrossTileDependencyOwners(new HydrologyTileKey(0, 0)));
-        assertEquals(49, planner.maximumCrossTileDependencyOwners(new HydrologyTileKey(-1, -1)));
+        // The mouth flare reaches maximumWidth * flareRatio / 2 beside the coast, which pushes these
+        // 256-block tiles to a three-colour period: rank 8 at (-1, -1), two tiles of offset per rank.
+        assertEquals(3, settings().crossTileColorPeriod());
+        assertEquals(1089, planner.maximumCrossTileDependencyOwners(new HydrologyTileKey(-1, -1)));
     }
 
     @Test
@@ -275,7 +309,8 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         5,
                         6,
                         12,
-                        true
+                        true,
+                        0
                 ),
                 new HydrologyPlannerSettings.Outlets(
                         true,
@@ -285,10 +320,13 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         12,
                         48,
                         2,
+                        8,
                         8
                 ),
                 stableGeometry(),
-                List.of(deepFluid), List.of()
+                List.of(deepFluid), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -349,7 +387,8 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         baseUnderground.maximumDepth(),
                         baseUnderground.minimumHeadroom(),
                         baseUnderground.maximumHeadroom(),
-                        baseUnderground.connectToExistingCaves()
+                        baseUnderground.connectToExistingCaves(),
+                        0
                 ),
                 new HydrologyPlannerSettings.Outlets(
                         base.outlets().oceanEnabled(),
@@ -359,10 +398,13 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         base.outlets().coastalCliffMinimumHeight(),
                         base.outlets().mouthLevelingDistance(),
                         base.outlets().maximumOceanApron(),
+                        base.outlets().maximumPerTile(),
                         base.outlets().maximumPerTile()
                 ),
                 base.geometry(),
-                base.deepFluids(), List.of()
+                base.deepFluids(), List.of(),
+                0D,
+                HydrologyPlannerSettings.SeaCaves.disabled()
         );
     }
 
@@ -404,7 +446,9 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                     "shore",
                     "dry",
                     "flooded",
-                    List.of("water"), List.of()
+                    List.of("water"), List.of(),
+                    Double.NaN,
+                    null
             );
         };
     }
@@ -445,7 +489,9 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                     sample.shoreBiomeKey(),
                     sample.bankBiomeKey(),
                     sample.floodedCaveBiomeKey(),
-                    sample.preferredProfileKeys(), List.of()
+                    sample.preferredProfileKeys(), List.of(),
+                    Double.NaN,
+                    null
             );
         };
     }
@@ -478,7 +524,9 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                 "shore",
                 "dry",
                 "flooded",
-                List.of("water"), List.of()
+                List.of("water"), List.of(),
+                Double.NaN,
+                null
         );
     }
 

@@ -998,6 +998,9 @@ final class HydrologyFootprintCompiler {
                 continue;
             }
             addLayer(columns, x, z, terrain, layer);
+            if (segment.type() == HydrologyFeatureType.COASTAL_GROTTO) {
+                addAdjacentSeaApron(columns, course, segment, point, x, z, flowX, flowZ, pointFeatures);
+            }
         }
     }
 
@@ -1010,9 +1013,10 @@ final class HydrologyFootprintCompiler {
             int z,
             SurfaceRasterIndex plannedSurface
     ) {
-        if (!terrainRoofedSurfaceTransition(course, segment)) {
+        if (!terrainRoofedLayer(course, segment)) {
             return layer;
         }
+        boolean seaCave = course.type() == RiverCourseType.SEA_CAVE;
         int plannedTerrainHeight = plannedSurface.resolve(
                 x,
                 z,
@@ -1031,6 +1035,10 @@ final class HydrologyFootprintCompiler {
             if (neighborTerrain == null) {
                 continue;
             }
+            if (seaCave && neighborTerrain.ocean()) {
+                // The sea face is the intended opening; the seabed never lowers the chamber roof.
+                continue;
+            }
             if (plannedSurface.ownsSurfaceChannelAt(neighborX, neighborZ, course.id())) {
                 continue;
             }
@@ -1040,6 +1048,10 @@ final class HydrologyFootprintCompiler {
                     neighborTerrain.naturalHeight()
             );
             maximumCeiling = Math.min(maximumCeiling, neighborSurface - 1);
+        }
+        if (seaCave && Math.min(layer.ceilingY(), maximumCeiling) <= layer.fluidHeadY()) {
+            // A sea-cave column needs air between the sea and its roof; a roof at or below sea level is not carved.
+            return null;
         }
         if (maximumCeiling == Integer.MAX_VALUE || layer.ceilingY() <= maximumCeiling) {
             return layer;
@@ -1158,7 +1170,7 @@ final class HydrologyFootprintCompiler {
         );
         int fluidHead = channel ? shape.fluidHead() : bed;
         int ceiling = channel ? localCeiling(shape, ellipsoidScale) : fluidHead;
-        if (channel && terrainRoofedSurfaceTransition(course, segment)) {
+        if (channel && terrainRoofedLayer(course, segment)) {
             ceiling = Math.max(fluidHead, Math.min(ceiling, terrain.naturalHeight() - 1));
         }
         boolean terrainOwned = !falling;
@@ -1235,13 +1247,24 @@ final class HydrologyFootprintCompiler {
             HydrologyTerrainSample terrain,
             HydrologyFeatureRef[] pointFeatures
     ) {
-        if (segment.type() != HydrologyFeatureType.MOUTH
-                && segment.type() != HydrologyFeatureType.COASTAL_GROTTO) {
+        if (!oceanApronEligible(segment, distance)) {
             return;
         }
-        if (distance > settings.outlets().maximumOceanApron() + 0.25D) {
-            return;
-        }
+        addOceanApronLayer(columns, course, segment, point, x, z, flowX, flowZ, terrain, pointFeatures);
+    }
+
+    private void addOceanApronLayer(
+            Long2ObjectLinkedOpenHashMap<MutableColumn> columns,
+            RiverCourse course,
+            HydraulicSegment segment,
+            HydrologyPoint point,
+            int x,
+            int z,
+            int flowX,
+            int flowZ,
+            HydrologyTerrainSample terrain,
+            HydrologyFeatureRef[] pointFeatures
+    ) {
         int fluidHead = Math.min(settings.seaLevel(), point.y());
         HydrologyFeatureRef feature = feature(
                 course,
@@ -1396,7 +1419,14 @@ final class HydrologyFootprintCompiler {
         return shape.fluidHead() + localExtent;
     }
 
-    private boolean terrainRoofedSurfaceTransition(RiverCourse course, HydraulicSegment segment) {
+    /**
+     * Layers whose ceiling follows the terrain: the underground transition of a surface river, and the
+     * chamber of a standalone sea cave, which must never break the surface above it.
+     */
+    private boolean terrainRoofedLayer(RiverCourse course, HydraulicSegment segment) {
+        if (course.type() == RiverCourseType.SEA_CAVE) {
+            return segment.type() == HydrologyFeatureType.COASTAL_GROTTO;
+        }
         return course.type() == RiverCourseType.SURFACE
                 && (segment.type() == HydrologyFeatureType.UNDERGROUND_POOL
                 || segment.type() == HydrologyFeatureType.UNDERGROUND_DROP);
@@ -1680,7 +1710,61 @@ final class HydrologyFootprintCompiler {
     private boolean oceanApronEligible(HydraulicSegment segment, double distance) {
         return (segment.type() == HydrologyFeatureType.MOUTH
                 || segment.type() == HydrologyFeatureType.COASTAL_GROTTO)
-                && distance <= settings.outlets().maximumOceanApron() + 0.25D;
+                && distance <= apronReach(segment) + 0.25D;
+    }
+
+    /**
+     * How far from the centerline the ocean apron reaches. A coastal grotto chamber is as wide as its
+     * horizontal radius, so its apron reaches at least that far: every sea column the chamber touches
+     * must carry the apron that declares the sea face an intentional opening.
+     */
+    private int apronReach(HydraulicSegment segment) {
+        int reach = settings.outlets().maximumOceanApron();
+        if (segment.type() == HydrologyFeatureType.COASTAL_GROTTO) {
+            return Math.max(reach, settings.outlets().coastalGrotto().horizontalRadius());
+        }
+        return reach;
+    }
+
+    /**
+     * The organic chamber boundary can put a sea column one block past the apron reach while the land
+     * column beside it is still carved; the apron follows the chamber there so the face stays open.
+     */
+    private void addAdjacentSeaApron(
+            Long2ObjectLinkedOpenHashMap<MutableColumn> columns,
+            RiverCourse course,
+            HydraulicSegment segment,
+            HydrologyPoint point,
+            int x,
+            int z,
+            int flowX,
+            int flowZ,
+            HydrologyFeatureRef[] pointFeatures
+    ) {
+        for (int[] offset : HORIZONTAL_NEIGHBORS) {
+            int neighborX = x + offset[0];
+            int neighborZ = z + offset[1];
+            HydrologyTerrainSample neighborTerrain = sampleTerrainBasis(neighborX, neighborZ);
+            if (neighborTerrain == null) {
+                continue;
+            }
+            if (classifyNatural(neighborX, neighborZ) != HydrologyRoutingTerrainSampler.NaturalClassification.OCEAN
+                    && !neighborTerrain.ocean()) {
+                continue;
+            }
+            addOceanApronLayer(
+                    columns,
+                    course,
+                    segment,
+                    point,
+                    neighborX,
+                    neighborZ,
+                    flowX,
+                    flowZ,
+                    neighborTerrain,
+                    pointFeatures
+            );
+        }
     }
 
     private HydrologyFeatureRef feature(
