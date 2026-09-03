@@ -2,6 +2,7 @@ package art.arcane.iris.core;
 
 import art.arcane.iris.BuildConstants;
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.IrisGeneratorBinding;
+import art.arcane.iris.core.compat.ContentGate;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.core.nms.datapack.DataVersion;
@@ -235,6 +236,7 @@ public final class IrisDatapackCompiler {
                 fingerprintContent(dimension.getDimensionType().toJson(fixer)));
 
         String namespace = dimension.getLoadKey().toLowerCase(Locale.ROOT);
+        ContentGate contentGate = dimension.getLoader() == null ? null : dimension.getLoader().getContentGate();
         for (IrisBiome biome : dimension.getAllBiomes(dimension::getLoader)) {
             if (biome == null || !biome.isCustom()) {
                 continue;
@@ -250,7 +252,7 @@ public final class IrisDatapackCompiler {
                 }
                 requirements.put(
                         "worldgen/biome/" + biomeKey,
-                        fingerprintContent(customBiome.generateJson(fixer)));
+                        fingerprintContent(customBiome.generateJson(fixer, contentGate)));
                 TreeSet<String> tags = new TreeSet<>();
                 for (String tag : customBiome.getEffectiveTags(derivativeKey)) {
                     String normalizedTag = normalizeRegistryKey(tag);

@@ -4,6 +4,7 @@ import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.annotations.RegistryListResource;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KSet;
@@ -82,6 +83,19 @@ public class IrisRiverPolicy {
     @MaxNumber(4)
     @Desc("Multiplier applied to the eroded bank width outside the shore band.")
     private Double bankMultiplier = null;
+
+    /**
+     * A declared river biome selection with biomes the version-content gate excluded removed. A declared-but-now-empty
+     * selection keeps its "explicitly clears the inherited selection" meaning; null (undeclared) stays null.
+     */
+    public KList<String> compatBiomes(KList<String> declared, IrisData data, String field) {
+        if (declared == null) {
+            return null;
+        }
+
+        return CompatPools.surviving(data == null ? null : data.getBiomeLoader(), declared, data,
+                "river policy", "", field);
+    }
 
     public KSet<String> getAllBiomeIds() {
         KSet<String> biomeIds = new KSet<>();

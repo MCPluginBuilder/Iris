@@ -18,6 +18,10 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.CompatFinding;
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.annotations.ArrayType;
@@ -29,6 +33,9 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @EqualsAndHashCode(callSuper = true)
 @Accessors(chain = true)
@@ -121,6 +128,64 @@ public class IrisSpawner extends IrisRegistrant {
             return;
 
         engine.getEngineData().getChunk(x, z).getCooldown(this).spawn(engine);
+    }
+
+    /**
+     * Cascade: a spawn whose entity the gate excluded can never spawn, so it leaves this spawner's lists; a spawner
+     * with nothing left to spawn leaves every pool that references it. Loading entities here is safe - entities never
+     * load spawners.
+     */
+    @Override
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        CompatStatus base = super.evaluateCompat(gate);
+
+        if (base.excluded()) {
+            return base;
+        }
+
+        IrisData data = getLoader();
+
+        if (data == null || data.getEntityLoader() == null) {
+            return base;
+        }
+
+        boolean declared = !spawns.isEmpty() || !initialSpawns.isEmpty();
+        List<CompatFinding> drops = new ArrayList<>();
+        spawns = dropExcludedSpawns(data, spawns, "spawns", drops);
+        initialSpawns = dropExcludedSpawns(data, initialSpawns, "initialSpawns", drops);
+
+        if (!declared || !spawns.isEmpty() || !initialSpawns.isEmpty()) {
+            return base;
+        }
+
+        return CompatPools.cascade(data, base, drops, "spawner", getLoadKey(), "no entity spawns remain");
+    }
+
+    private KList<IrisEntitySpawn> dropExcludedSpawns(IrisData data,
+                                                      KList<IrisEntitySpawn> declared,
+                                                      String field,
+                                                      List<CompatFinding> drops) {
+        KList<IrisEntitySpawn> kept = new KList<>();
+
+        for (int index = 0; index < declared.size(); index++) {
+            IrisEntitySpawn spawn = declared.get(index);
+
+            if (spawn == null) {
+                continue;
+            }
+
+            IrisEntity entity = data.getEntityLoader().load(spawn.getEntity());
+
+            if (entity != null && entity.isCompatExcluded()) {
+                CompatPools.drop(data, entity, "spawner", getLoadKey(),
+                        field + "[" + index + "] " + spawn.getEntity(), drops);
+                continue;
+            }
+
+            kept.add(spawn);
+        }
+
+        return kept;
     }
 
     @Override

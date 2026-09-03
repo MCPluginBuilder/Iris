@@ -559,13 +559,9 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     public KList<IrisBiome> getRealChildren(DataProvider g) {
         return realChildren.aquire(() ->
         {
-            KList<IrisBiome> realChildren = new KList<>();
-
-            for (String i : getChildren()) {
-                realChildren.add(g.getData().getBiomeLoader().load(i));
-            }
-
-            return realChildren;
+            IrisData data = g == null ? null : g.getData();
+            return CompatPools.load(data == null ? null : data.getBiomeLoader(), getChildren(), data,
+                    "biome", getLoadKey(), "children", null);
         });
     }
 

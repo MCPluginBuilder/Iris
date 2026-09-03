@@ -20,6 +20,7 @@ package art.arcane.iris.engine;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
@@ -178,8 +179,9 @@ public class IrisComplex implements DataProvider {
         fluidHeight = engine.getDimension().getFluidHeight();
         generators = new HashMap<>();
         generatorBiomes = Collections.newSetFromMap(new IdentityHashMap<>());
-        focusBiome = engine.getFocus();
-        focusRegion = engine.getFocusRegion();
+        // A registrant the version-content gate excluded never enters a pool, focus included.
+        focusBiome = compatUsable(engine.getFocus());
+        focusRegion = compatUsable(engine.getFocusRegion());
         Map<InferredType, ProceduralStream<IrisBiome>> inferredStreams = new HashMap<>();
         KList<IrisRegion> preparedRegions = new KList<>();
 
@@ -195,7 +197,7 @@ public class IrisComplex implements DataProvider {
         } else {
             engine.getDimension().getRegions().forEach(regionKey -> {
                 IrisRegion region = data.getRegionLoader().load(regionKey);
-                if (region == null) {
+                if (region == null || region.isCompatExcluded()) {
                     return;
                 }
                 prepareInferredBiomes(region, preparedRegions);
@@ -244,7 +246,7 @@ public class IrisComplex implements DataProvider {
                 ProceduralStream.of((x, z) -> focusRegion,
                         Interpolated.of(a -> 0D, a -> focusRegion))
                 : regionStyleStream
-                .selectRarity(data.getRegionLoader().loadAll(engine.getDimension().getRegions()))
+                .selectRarity(compatRegionPool(engine))
                 .cache2D("regionStream", engine, cacheSize);
         regionStream = focusRegion != null ? proceduralRegionStream : proceduralRegionStream
                 .convertAware2D((region, x, z) -> {
@@ -1083,9 +1085,28 @@ public class IrisComplex implements DataProvider {
     private KList<IrisBiome> loadInferredBiomes(KList<String> keys, InferredType type) {
         KList<IrisBiome> inferred = new KList<>();
         for (IrisBiome biome : data.getBiomeLoader().loadAll(keys)) {
+            // Excluded biomes cannot generate on this Minecraft version, so they leave the selection pool.
+            if (biome.isCompatExcluded()) {
+                continue;
+            }
             inferred.add(biome.withInferredType(type));
         }
         return inferred;
+    }
+
+    /** The dimension's region pool with regions the version-content gate excluded removed. */
+    private KList<IrisRegion> compatRegionPool(Engine engine) {
+        KList<IrisRegion> pool = new KList<>();
+        for (IrisRegion region : data.getRegionLoader().loadAll(engine.getDimension().getRegions())) {
+            if (!region.isCompatExcluded()) {
+                pool.add(region);
+            }
+        }
+        return pool;
+    }
+
+    private static <T extends IrisRegistrant> T compatUsable(T registrant) {
+        return registrant == null || registrant.isCompatExcluded() ? null : registrant;
     }
 
     private void registerGenerators(IrisBiome biome) {

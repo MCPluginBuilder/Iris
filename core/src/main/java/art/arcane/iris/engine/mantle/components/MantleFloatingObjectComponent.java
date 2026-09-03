@@ -171,6 +171,10 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
         if (placement == null || columns == null || columns.isEmpty()) {
             return;
         }
+
+        if (placement.isCompatExcluded(data)) {
+            return;
+        }
         int density = placement.getDensity(rng, minX, minZ, data);
         double perAttempt = placement.getChance();
         for (int i = 0; i < density; i++) {
@@ -215,6 +219,10 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
     @ChunkCoordinates
     private void tryPlaceAnchoredChunk(MantleWriter writer, IrisComplex complex, RNG rng, IrisData data, IrisObjectPlacement placement, FloatingIslandSample[] samples, IslandObjectPlacer.SampleProvider sampleProvider, KList<Integer> columns, KList<Integer> interior, int minX, int minZ, IrisFloatingChildBiomes entry) {
         if (placement == null || columns.isEmpty()) {
+            return;
+        }
+
+        if (placement.isCompatExcluded(data)) {
             return;
         }
         int density = placement.getDensity(rng, minX, minZ, data);
@@ -300,6 +308,10 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
     @ChunkCoordinates
     private void tryPlaceInvertedChunk(MantleWriter writer, IrisComplex complex, RNG rng, IrisData data, IrisObjectPlacement placement, FloatingIslandSample[] samples, IslandObjectPlacer.SampleProvider sampleProvider, KList<Integer> columns, KList<Integer> interior, int minX, int minZ, IrisFloatingChildBiomes entry) {
         if (placement == null || columns.isEmpty()) {
+            return;
+        }
+
+        if (placement.isCompatExcluded(data)) {
             return;
         }
         int density = placement.getDensity(rng, minX, minZ, data);

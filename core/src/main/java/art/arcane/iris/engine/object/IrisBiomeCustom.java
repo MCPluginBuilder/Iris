@@ -18,6 +18,8 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.ContentGate;
+import art.arcane.iris.core.compat.KeyStatus;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.DependsOn;
@@ -132,6 +134,16 @@ public class IrisBiomeCustom {
     }
 
     public String generateJson(IDataFixer fixer) {
+        return generateJson(fixer, null);
+    }
+
+    /**
+     * @param gate version-content gate used to keep spawns whose entity type is missing on this server out of the
+     *             generated datapack (the game rejects a datapack that names an unknown entity). Null consults the
+     *             live platform registries; an unreadable registry keeps every spawn.
+     */
+    public String generateJson(IDataFixer fixer, ContentGate gate) {
+        ContentGate contentGate = gate == null ? ContentGate.forData(null) : gate;
         JSONObject effects = new JSONObject();
         effects.put("sky_color", parseColor(getSkyColor()));
         effects.put("fog_color", parseColor(getFogColor()));
@@ -194,6 +206,10 @@ public class IrisBiomeCustom {
                 String key = i.getTypeKey();
                 if (key == null) {
                     IrisLogging.warn("Skipping custom biome spawn with null entity type in biome " + getId());
+                    continue;
+                }
+                if (contentGate.entity(key) == KeyStatus.MISSING) {
+                    IrisLogging.debug("Dropping custom biome spawn " + key + " in biome " + getId() + ": entity missing on this server");
                     continue;
                 }
                 IrisBiomeCustomSpawnType group = i.getGroup() == null ? IrisBiomeCustomSpawnType.MISC : i.getGroup();

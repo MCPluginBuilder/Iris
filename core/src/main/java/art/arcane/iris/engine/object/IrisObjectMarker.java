@@ -63,7 +63,7 @@ public class IrisObjectMarker {
             KList<PlatformBlockState> b = new KList<>();
 
             for (IrisBlockData i : mark) {
-                PlatformBlockState bx = i.getBlockData(rdata);
+                PlatformBlockState bx = i.getBlockDataOrPlaceholder(rdata);
 
                 if (bx != null) {
                     b.add(bx);

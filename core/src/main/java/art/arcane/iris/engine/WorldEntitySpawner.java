@@ -299,7 +299,8 @@ final class WorldEntitySpawner {
         }
 
         //@builder
-        Predicate<IrisSpawner> filter = i -> i.canSpawn(manager.getEngine(), c.getX(), c.getZ());
+        // Excluded spawners cannot spawn anything on this Minecraft version, so they never enter the selection pool.
+        Predicate<IrisSpawner> filter = i -> !i.isCompatExcluded() && i.canSpawn(manager.getEngine(), c.getX(), c.getZ());
         ChunkCounter counter = new ChunkCounter(c.getEntities());
 
         IrisBiome biome = EngineBukkitOps.getSurfaceBiome(manager.getEngine(), c);

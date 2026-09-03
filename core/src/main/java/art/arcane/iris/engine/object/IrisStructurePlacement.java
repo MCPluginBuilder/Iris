@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
@@ -146,5 +147,25 @@ public class IrisStructurePlacement {
     public boolean isAnchoredUnderground() {
         IrisStructureAnchorMode activeAnchor = resolvedAnchor();
         return activeAnchor == IrisStructureAnchorMode.HEIGHT_BAND || activeAnchor.isCave();
+    }
+
+    /**
+     * Reports cave biome references the version-content gate excluded. The list is deliberately not filtered: it is an
+     * allowlist whose emptiness means "any cave biome", and it feeds the placement determinism signature. An excluded
+     * biome never generates, so the entry is inert - this only makes it visible in the pack compat report.
+     */
+    void reportExcludedCaveBiomes(IrisData data, String subjectType, String subjectKey, String field) {
+        if (data == null || data.getBiomeLoader() == null || caveBiomes == null) {
+            return;
+        }
+
+        for (int index = 0; index < caveBiomes.size(); index++) {
+            String key = caveBiomes.get(index);
+            IrisBiome biome = data.getBiomeLoader().load(key);
+
+            if (biome != null && biome.isCompatExcluded()) {
+                CompatPools.drop(data, biome, subjectType, subjectKey, field + "[" + index + "] " + key, null);
+            }
+        }
     }
 }

@@ -507,6 +507,10 @@ public final class IrisStructureLocator {
             throw new IllegalStateException("Iris structure placement references missing structure '"
                     + selectedKey + "'");
         }
+        if (structure.isCompatExcluded()) {
+            // Gated out on this Minecraft version; the pack report already says why.
+            return null;
+        }
         StructureGraphCompilation compilation = StructureGraphCatalog.compile(engine.getData(), structure);
         if (!compilation.isAssemblyViable()) {
             throw new IllegalStateException("Iris structure '" + selectedKey

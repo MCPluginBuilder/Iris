@@ -18,6 +18,9 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
@@ -103,6 +106,49 @@ public class IrisMod extends IrisRegistrant {
     @ArrayType(min = 1, type = IrisModNoiseStyleReplacer.class)
     @Desc("Replace noise styles with other styles")
     private KList<IrisModNoiseStyleReplacer> styleReplacers = new KList<>();
+
+    /**
+     * A pack modification only references other registrants, so it never cascades: excluded biome and region
+     * references are dropped from its lists and reported, and the modification keeps applying whatever is left.
+     */
+    @Override
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        CompatStatus base = super.evaluateCompat(gate);
+        IrisData data = getLoader();
+
+        if (data == null) {
+            return base;
+        }
+
+        removeBiomes = biomes(data, removeBiomes, "removeBiomes");
+        removeRegions = regions(data, removeRegions, "removeRegions");
+        injectRegions = regions(data, injectRegions, "injectRegions");
+
+        for (int index = 0; index < biomeInjectors.size(); index++) {
+            IrisModBiomeInjector injector = biomeInjectors.get(index);
+            injector.setInject(biomes(data, injector.getInject(), "biomeInjectors[" + index + "].inject"));
+        }
+
+        for (int index = 0; index < biomeReplacers.size(); index++) {
+            IrisModBiomeReplacer replacer = biomeReplacers.get(index);
+            replacer.setFind(biomes(data, replacer.getFind(), "biomeReplacers[" + index + "].find"));
+        }
+
+        for (int index = 0; index < regionReplacers.size(); index++) {
+            IrisModRegionReplacer replacer = regionReplacers.get(index);
+            replacer.setFind(regions(data, replacer.getFind(), "regionReplacers[" + index + "].find"));
+        }
+
+        return base;
+    }
+
+    private KList<String> biomes(IrisData data, KList<String> keys, String field) {
+        return CompatPools.surviving(data.getBiomeLoader(), keys, data, "mod", getLoadKey(), field);
+    }
+
+    private KList<String> regions(IrisData data, KList<String> keys, String field) {
+        return CompatPools.surviving(data.getRegionLoader(), keys, data, "mod", getLoadKey(), field);
+    }
 
     @Override
     public String getFolderName() {

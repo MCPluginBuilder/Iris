@@ -20,6 +20,7 @@ package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -410,7 +411,7 @@ public final class HintedLocator<T> implements Locator<T> {
                 continue;
             }
 
-            if (placesObject(region.getSurfaceObjects(), objectKey)) {
+            if (placesObject(region.getSurfaceObjects(), objectKey, engine.getData())) {
                 directRegions.add(region.getLoadKey());
             }
 
@@ -511,9 +512,9 @@ public final class HintedLocator<T> implements Locator<T> {
         };
     }
 
-    private static boolean placesObject(KList<IrisObjectPlacement> placements, String objectKey) {
+    private static boolean placesObject(KList<IrisObjectPlacement> placements, String objectKey, IrisData data) {
         for (IrisObjectPlacement placement : placements) {
-            if (placement != null && placement.getPlace().contains(objectKey)) {
+            if (placement != null && placement.compatPlace(data).contains(objectKey)) {
                 return true;
             }
         }
@@ -637,7 +638,7 @@ public final class HintedLocator<T> implements Locator<T> {
                     continue;
                 }
 
-                if (placesObject(biome.getSurfaceObjects(), objectKey)) {
+                if (placesObject(biome.getSurfaceObjects(), objectKey, engine.getData())) {
                     return true;
                 }
 

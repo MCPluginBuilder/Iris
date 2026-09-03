@@ -1,5 +1,7 @@
 package art.arcane.iris.engine.hydrology.policy;
 
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -17,7 +19,8 @@ public final class RiverPolicyResolver {
         return resolve(
                 dimension == null ? null : dimension.getRiverPolicy(),
                 region == null ? null : region.getRiverPolicy(),
-                biome == null ? null : biome.getRiverPolicy()
+                biome == null ? null : biome.getRiverPolicy(),
+                loaderOf(biome, region, dimension)
         );
     }
 
@@ -26,11 +29,34 @@ public final class RiverPolicyResolver {
             IrisRiverPolicy regionPolicy,
             IrisRiverPolicy biomePolicy
     ) {
+        return resolve(dimensionPolicy, regionPolicy, biomePolicy, null);
+    }
+
+    /**
+     * @param data pack the policies came from, used to drop river biome references the version-content gate excluded.
+     *             Null skips that filtering.
+     */
+    public static EffectiveRiverPolicy resolve(
+            IrisRiverPolicy dimensionPolicy,
+            IrisRiverPolicy regionPolicy,
+            IrisRiverPolicy biomePolicy,
+            IrisData data
+    ) {
         State state = new State();
-        state.apply(dimensionPolicy);
-        state.apply(regionPolicy);
-        state.apply(biomePolicy);
+        state.apply(dimensionPolicy, data);
+        state.apply(regionPolicy, data);
+        state.apply(biomePolicy, data);
         return state.build();
+    }
+
+    private static IrisData loaderOf(IrisRegistrant... registrants) {
+        for (IrisRegistrant registrant : registrants) {
+            if (registrant != null && registrant.getLoader() != null) {
+                return registrant.getLoader();
+            }
+        }
+
+        return null;
     }
 
     private static final class State {
@@ -50,7 +76,7 @@ public final class RiverPolicyResolver {
         private double routingMultiplier = 1D;
         private double bankMultiplier = 1D;
 
-        private void apply(IrisRiverPolicy policy) {
+        private void apply(IrisRiverPolicy policy, IrisData data) {
             if (policy == null) {
                 return;
             }
@@ -67,19 +93,19 @@ public final class RiverPolicyResolver {
                 profiles = List.copyOf(policy.getProfiles());
             }
             if (policy.getSurfaceBiomes() != null) {
-                surfaceBiomes = List.copyOf(policy.getSurfaceBiomes());
+                surfaceBiomes = List.copyOf(policy.compatBiomes(policy.getSurfaceBiomes(), data, "surfaceBiomes"));
             }
             if (policy.getMouthBiomes() != null) {
-                mouthBiomes = List.copyOf(policy.getMouthBiomes());
+                mouthBiomes = List.copyOf(policy.compatBiomes(policy.getMouthBiomes(), data, "mouthBiomes"));
             }
             if (policy.getShoreBiomes() != null) {
-                shoreBiomes = List.copyOf(policy.getShoreBiomes());
+                shoreBiomes = List.copyOf(policy.compatBiomes(policy.getShoreBiomes(), data, "shoreBiomes"));
             }
             if (policy.getBankBiomes() != null) {
-                bankBiomes = List.copyOf(policy.getBankBiomes());
+                bankBiomes = List.copyOf(policy.compatBiomes(policy.getBankBiomes(), data, "bankBiomes"));
             }
             if (policy.getFloodedCaveBiomes() != null) {
-                floodedCaveBiomes = List.copyOf(policy.getFloodedCaveBiomes());
+                floodedCaveBiomes = List.copyOf(policy.compatBiomes(policy.getFloodedCaveBiomes(), data, "floodedCaveBiomes"));
             }
             if (policy.getSurfacePools() != null) {
                 surfacePools = List.copyOf(policy.getSurfacePools());

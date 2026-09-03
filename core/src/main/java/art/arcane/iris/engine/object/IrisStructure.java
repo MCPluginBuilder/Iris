@@ -18,6 +18,12 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.CompatAction;
+import art.arcane.iris.core.compat.CompatFinding;
+import art.arcane.iris.core.compat.CompatRegistry;
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
@@ -124,6 +130,42 @@ public class IrisStructure extends IrisRegistrant {
             }
         }
         return placement;
+    }
+
+    /**
+     * The start pool is the only mandatory entry point into an assembly: when it has nothing left to place, the
+     * structure cannot generate on this server and every placement that lists it skips it.
+     */
+    @Override
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        CompatStatus base = super.evaluateCompat(gate);
+
+        if (base.excluded() || gate == null || !gate.ready()) {
+            return base;
+        }
+
+        IrisData data = getLoader();
+
+        if (data == null || startPool == null || startPool.isBlank()) {
+            return base;
+        }
+
+        IrisJigsawPool pool = data.load(IrisJigsawPool.class, startPool.trim(), false);
+
+        if (pool == null || !pool.isCompatExcluded()) {
+            return base;
+        }
+
+        CompatFinding reason = pool.getCompat().reasons().isEmpty() ? null : pool.getCompat().reasons().getLast();
+        CompatFinding excluded = new CompatFinding(
+                reason == null ? CompatRegistry.BLOCK : reason.registry(),
+                reason == null ? startPool.trim() : reason.key(),
+                CompatAction.EXCLUDED, "structure", getLoadKey(),
+                "start pool " + startPool.trim() + " is unavailable");
+        gate.report().record(excluded);
+        KList<CompatFinding> reasons = new KList<>(base.reasons());
+        reasons.add(excluded);
+        return CompatStatus.excludedBy(reasons);
     }
 
     @Override

@@ -1179,6 +1179,11 @@ public final class StructureAssembler {
         if (pool.getPieces() == null) {
             throw assemblyFailure("pool has no piece list");
         }
+        // A pool the version-content gate excluded has nothing left to place: treat it as empty so the branch
+        // terminates or falls back, instead of failing the whole assembly.
+        if (pool.isCompatExcluded()) {
+            return List.of();
+        }
         List<IrisJigsawPieceEntry> eligible = new ArrayList<>();
         List<IrisJigsawPieceEntry> required = new ArrayList<>();
         for (IrisJigsawPieceEntry entry : pool.getPieces()) {
@@ -1198,6 +1203,9 @@ public final class StructureAssembler {
             IrisJigsawPiece piece = resolver.loadPiece(pieceKey);
             if (piece == null) {
                 throw assemblyFailure("pool references missing piece '" + pieceKey + "'");
+            }
+            if (piece.isCompatExcluded()) {
+                continue;
             }
             int placements = placementCounts.getOrDefault(pieceKey, 0);
             if (!pieceEnabled(piece)
