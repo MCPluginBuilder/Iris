@@ -32,6 +32,8 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisOreGenerator;
 import art.arcane.iris.engine.object.IrisOreGeneratorBounds;
 import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.engine.object.IrisRiverMaterialConfig;
+import art.arcane.iris.engine.object.IrisSurfaceRiverBankConfig;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.util.project.context.ChunkedDataCache;
 import art.arcane.iris.util.project.context.ChunkContext;
@@ -105,12 +107,17 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
         KList<IrisOreGenerator> dimensionUndergroundOres = hideOres ? null : dimension.getUndergroundOreGenerators();
         IrisOreGeneratorBounds dimensionSurfaceOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getSurfaceOreGeneratorBounds();
         IrisOreGeneratorBounds dimensionUndergroundOreBounds = hideOres ? IrisOreGeneratorBounds.EMPTY : dimension.getUndergroundOreGeneratorBounds();
-        boolean exposeCutStrata = dimension.getHydrology() != null
-                && dimension.getHydrology().getRivers().getSurface().getBanks().isExposeCutStrata();
+        IrisSurfaceRiverBankConfig riverBanks = dimension.getHydrology() == null
+                ? null
+                : dimension.getHydrology().getRivers().getSurface().getBanks();
+        boolean exposeCutStrata = riverBanks != null && riverBanks.isExposeCutStrata();
         IrisSurfaceRiverBedConfig riverBed = dimension.getHydrology() == null
                 ? null
                 : dimension.getHydrology().getRivers().getSurface().getBed();
         boolean padRiverBed = riverBed != null && !riverBed.isAllowGravityBlocks();
+        IrisRiverMaterialConfig bedMaterial = riverBed == null ? null : riverBed.getMaterial();
+        IrisRiverMaterialConfig shoreMaterial = riverBanks == null ? null : riverBanks.getShoreMaterial();
+        IrisRiverMaterialConfig bankMaterial = riverBanks == null ? null : riverBanks.getBankMaterial();
 
         for (int zf = 0; zf < chunkDepth; zf++) {
             int realZ = zf + z;
@@ -143,6 +150,8 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
                     ? Math.max(0, hydrology.naturalHeight() - he)
                     : 0;
             boolean riverOwned = padRiverBed && hydrologyTerrain != null && hydrologyTerrain.terrainOwned();
+            IrisRiverMaterialConfig roleMaterial = hydrologyRoleMaterial(
+                    hydrologyTerrain, bedMaterial, shoreMaterial, bankMaterial);
             PlatformBlockState fluid = hydrologyFluid == null
                     ? complex.resolveSurfaceFluid(realX, realZ)
                     : complex.resolveHydrologyFluid(hydrologyFluid.profileKey(), realX, realZ);
@@ -211,6 +220,10 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
 
                     if (blocks.hasIndex(depth + cut)) {
                         PlatformBlockState layerBlock = blocks.get(depth + cut);
+                        if (roleMaterial != null) {
+                            layerBlock = paintHydrologyMaterial(
+                                    layerBlock, roleMaterial, depth, localRng, realX, i, realZ, data);
+                        }
                         if (riverOwned && depth <= riverBed.getPadding() && IrisProceduralBlocks.isGravityAffected(layerBlock)) {
                             layerBlock = riverBed.getPaddingPalette().get(localRng, realX, i, realZ, data);
                         }
@@ -273,6 +286,56 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
                 }
             }
         }
+    }
+
+    /**
+     * The river material that owns this column's top layers, or null when the biome layers stand.
+     * Roles are exclusive: a channel bed, then the shore strip, then the eroded bank.
+     */
+    static IrisRiverMaterialConfig hydrologyRoleMaterial(
+            HydrologyColumnLayer terrainLayer,
+            IrisRiverMaterialConfig bedMaterial,
+            IrisRiverMaterialConfig shoreMaterial,
+            IrisRiverMaterialConfig bankMaterial
+    ) {
+        if (terrainLayer == null || !terrainLayer.terrainOwned()) {
+            return null;
+        }
+
+        IrisRiverMaterialConfig material;
+        if (terrainLayer.channel()) {
+            material = bedMaterial;
+        } else if (terrainLayer.shore()) {
+            material = shoreMaterial;
+        } else if (terrainLayer.grading()) {
+            material = bankMaterial;
+        } else {
+            material = null;
+        }
+
+        return material != null && material.isEnabled() ? material : null;
+    }
+
+    /**
+     * Replaces a biome layer with the river material for the top {@code depth} blocks. A painted
+     * gravity block still goes through the bed padding swap after this.
+     */
+    static PlatformBlockState paintHydrologyMaterial(
+            PlatformBlockState layerBlock,
+            IrisRiverMaterialConfig material,
+            int depth,
+            RNG rng,
+            int x,
+            int y,
+            int z,
+            IrisData data
+    ) {
+        if (material == null || !material.isEnabled() || depth >= material.getDepth()) {
+            return layerBlock;
+        }
+
+        PlatformBlockState painted = material.getPalette().get(rng, x, y, z, data);
+        return painted == null ? layerBlock : painted;
     }
 
     private PlatformBlockState generateOres(KList<IrisOreGenerator> oreGenerators, int x, int y, int z, RNG rng, IrisData data) {

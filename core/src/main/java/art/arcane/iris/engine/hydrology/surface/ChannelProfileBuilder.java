@@ -8,8 +8,6 @@ import art.arcane.iris.engine.hydrology.HydrologyTerrainSampler;
 import java.util.Objects;
 
 public final class ChannelProfileBuilder {
-    private static final int SMOOTHING_RADIUS = 16;
-
     private final HydrologyPlannerSettings.Surface surface;
     private final HydrologyTerrainSampler sampler;
     private final HydrologyGeometrySampler geometry;
@@ -65,17 +63,19 @@ public final class ChannelProfileBuilder {
             width[station] = clamp(sampledWidth * widthMultiplier, surface.minimumWidth(), surface.maximumWidth() * 2D);
             depth[station] = clamp(sampledDepth * depthMultiplier, 1D, surface.maximumDepth() * 2D);
         }
-        double[] smoothWidth = smooth(width);
-        double[] smoothDepth = smooth(depth);
-        // The headwater opens as a spring pool: wider and one block deeper, narrowing to the cruise width.
-        // Ground that falls away across the pool shrinks it so it never demands a cut the valley solver rejects.
+        HydrologyPlannerSettings.Channel channel = surface.banks().channel();
+        double[] smoothWidth = smooth(width, channel.smoothingRadius());
+        double[] smoothDepth = smooth(depth, channel.smoothingRadius());
+        // The headwater opens as a spring pool: wider and the spring extra depth deeper, narrowing to the
+        // cruise width. Ground that falls away across the pool shrinks it so it never demands a cut the
+        // valley solver rejects.
         int spring = Math.min(surface.banks().springLength(), count / 2);
         double springRatio = surface.banks().springWidthRatio();
         for (int station = 0; station < spring; station++) {
             double remaining = 1D - SurfaceNoise.smoothStep(station / (double) spring);
             double localRatio = 1D + (springRatio - 1D) * springRoom(centerline, station, smoothWidth[station] * springRatio / 2D);
             smoothWidth[station] *= 1D + (localRatio - 1D) * remaining;
-            smoothDepth[station] += remaining;
+            smoothDepth[station] += remaining * channel.springExtraDepth();
         }
         // The inlet: over its length before the coast the channel widens toward the mouth flare and
         // its bed deepens by the inlet depth, so the estuary is wider and deeper than the river. The
@@ -122,18 +122,22 @@ public final class ChannelProfileBuilder {
         return Math.max(0D, Math.min(1D, 1D - drop / allowance));
     }
 
-    static double[] smooth(double[] values) {
+    /** Triangle-weighted running mean over {@code radius} stations either side; a zero radius keeps every sample. */
+    static double[] smooth(double[] values, int radius) {
         int count = values.length;
+        if (radius <= 0) {
+            return values.clone();
+        }
         double[] smoothed = new double[count];
         for (int station = 0; station < count; station++) {
             double total = 0D;
             double weight = 0D;
-            for (int offset = -SMOOTHING_RADIUS; offset <= SMOOTHING_RADIUS; offset++) {
+            for (int offset = -radius; offset <= radius; offset++) {
                 int index = station + offset;
                 if (index < 0 || index >= count) {
                     continue;
                 }
-                double factor = SMOOTHING_RADIUS + 1 - Math.abs(offset);
+                double factor = radius + 1 - Math.abs(offset);
                 total += values[index] * factor;
                 weight += factor;
             }

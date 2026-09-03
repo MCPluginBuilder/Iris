@@ -157,7 +157,9 @@ public class HydrologyPlannerTributaryTest {
                 List.of("default"),
                 List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -221,7 +223,9 @@ public class HydrologyPlannerTributaryTest {
                 List.of("default"),
                 List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -236,9 +240,9 @@ public class HydrologyPlannerTributaryTest {
         HydrologyPlannerSettings.Source sources = new HydrologyPlannerSettings.Source(true, density, 0, 0, maximumPerTile, 128);
         HydrologyPlannerSettings.Surface surface = new HydrologyPlannerSettings.Surface(
                 true, sources, 4, 8, 2, 4, 40, 1.5D, HydrologyPlannerSettings.Banks.defaults());
-        HydrologyPlannerSettings.Underground underground = new HydrologyPlannerSettings.Underground(
+        HydrologyPlannerSettings.Underground underground = HydrologyPlannerSettings.Underground.of(
                 false, base.underground().sources(), -48, 72, 3, 8, 1, 3, 6, 14, true, 0);
-        HydrologyPlannerSettings.Outlets outlets = new HydrologyPlannerSettings.Outlets(
+        HydrologyPlannerSettings.Outlets outlets = HydrologyPlannerSettings.Outlets.of(
                 true,
                 base.outlets().coastalGrotto(),
                 base.outlets().inlandGrotto(),
@@ -349,7 +353,7 @@ public class HydrologyPlannerTributaryTest {
     @Test
     public void undergroundTributariesAreBounded() {
         HydrologyPlannerSettings base = HydrologyPlannerSettings.defaults();
-        org.junit.Assert.assertThrows(IllegalArgumentException.class, () -> new HydrologyPlannerSettings.Underground(
+        org.junit.Assert.assertThrows(IllegalArgumentException.class, () -> HydrologyPlannerSettings.Underground.of(
                 true, base.underground().sources(), -48, 72, 3, 8, 1, 3, 6, 14, true, 5));
     }
 
@@ -370,7 +374,7 @@ public class HydrologyPlannerTributaryTest {
                     54, 0D, true, false, 30, 32, false, false, false, false, false, false,
                     0D, 0D, 0D, 1D, 1D, 1D, 1D, 1D,
                     "ocean_parent", "surface", "mouth", "shore", "dry", "flooded",
-                    List.of("default"), List.of(), Double.NaN, null);
+                    List.of("default"), List.of(), Double.NaN, null, Double.NaN, true);
         }
         int height = 118 - Math.floorDiv(x, 12) + (int) StrictMath.round(StrictMath.sin(z / 18D) * 2D);
         boolean source = x >= 0 && x <= 24 && (z >= 8 && z <= 40 || z >= 72 && z <= 104);
@@ -378,20 +382,20 @@ public class HydrologyPlannerTributaryTest {
                 height, 1D, false, true, 70, 74, true, true, false, false, source, false,
                 0D, 0D, source ? 1D : 0D, 1D, 1D, 1D, 1D, 1D,
                 "parent", "surface", "mouth", "shore", "dry", "flooded",
-                List.of("default"), List.of(), Double.NaN, null);
+                List.of("default"), List.of(), Double.NaN, null, Double.NaN, true);
     }
 
     private static HydrologyPlannerSettings undergroundSettings(int tributaries) {
         HydrologyPlannerSettings.Source none = new HydrologyPlannerSettings.Source(false, 0D, 80, 0, 0, 24);
         HydrologyPlannerSettings.Source sources = new HydrologyPlannerSettings.Source(true, 1D, Integer.MIN_VALUE, 0, 1, 32);
-        HydrologyPlannerSettings.ChannelShape stableChannel = new HydrologyPlannerSettings.ChannelShape(2D, 0D, 0D, 11);
+        HydrologyPlannerSettings.ChannelShape stableChannel = HydrologyPlannerSettings.ChannelShape.of(2D, 0D, 0D, 11);
         return new HydrologyPlannerSettings(
                 63,
                 new HydrologyPlannerSettings.Routing(128, 16, 512, 256, 0, 0, 0.5D, 12D, 0.5D, 0.1D, 1D, 0),
                 new HydrologyPlannerSettings.Surface(false, none, 4, 18, 2, 4, 10, 1.5D, HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(true, sources, 68, 82, 4, 12, 2, 4, 5, 9, true, tributaries),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Underground.of(true, sources, 68, 82, 4, 12, 2, 4, 5, 9, true, tributaries),
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),

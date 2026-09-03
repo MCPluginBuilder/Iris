@@ -229,9 +229,21 @@ public class IrisBlockData extends IrisRegistrant {
         return data.getBlockLoader() != null && data.getBlockLoader().load(getBlock(), false) != null;
     }
 
-    /** Registry, legacy rename table, then dimension blockFallbacks; null when the state is missing on this server. */
+    /**
+     * Registry, legacy rename table, then dimension blockFallbacks; null when the state is missing on this server.
+     * <p>
+     * A gate that is not ready (its registry cannot be enumerated, so every status is
+     * {@link art.arcane.iris.core.compat.KeyStatus#UNKNOWN}) gates nothing and answers null for every key, so this
+     * keeps the plain registry lookup in that case - otherwise every block in the pack would resolve to air.
+     */
     private static PlatformBlockState resolve(IrisData data, String state) {
-        ContentGate.BlockResolution resolution = data.getContentGate().resolveBlock(state);
+        ContentGate gate = data.getContentGate();
+
+        if (gate == null || !gate.ready()) {
+            return B.getStateOrNull(state, false);
+        }
+
+        ContentGate.BlockResolution resolution = gate.resolveBlock(state);
         return resolution == null ? null : resolution.state();
     }
 

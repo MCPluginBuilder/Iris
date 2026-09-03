@@ -1915,9 +1915,226 @@ public class HydrologyFootprintCompilerTest {
         );
     }
 
+    @Test
+    public void waterfallThalwegFractionDefaultsReproduceTheThroatBed() {
+        HydraulicSegment segment = new HydraulicSegment(
+                121L,
+                120L,
+                HydrologyFeatureType.WATERFALL,
+                90,
+                70,
+                16,
+                12,
+                true,
+                false,
+                List.of(new HydrologyPoint(0, 90, 0), new HydrologyPoint(32, 70, 0))
+        );
+        RiverCourse course = course(120L, RiverCourseType.SURFACE, segment);
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(96, 1D, "parent");
+
+        RiverFootprint defaults = compile(HydrologyPlannerSettings.defaults(), terrain, course);
+        RiverFootprint explicit = compile(withFlow(new HydrologyPlannerSettings.Flow(0.65D, 2, 2D, 1)), terrain, course);
+        RiverFootprint broad = compile(withFlow(new HydrologyPlannerSettings.Flow(0.2D, 2, 2D, 1)), terrain, course);
+
+        assertEquals(defaults, explicit);
+        int shallower = 0;
+        for (HydrologyColumnSample sample : defaults.columns().values()) {
+            HydrologyColumnLayer deepThalweg = surfaceFluidLayer(defaults, sample.x(), sample.z());
+            HydrologyColumnLayer broadThalweg = surfaceFluidLayer(broad, sample.x(), sample.z());
+            if (deepThalweg == null || broadThalweg == null || !deepThalweg.channel() || deepThalweg.fallingFluid()) {
+                continue;
+            }
+            String where = "bed at " + sample.x() + "," + sample.z();
+            assertTrue(where, broadThalweg.bedY() >= deepThalweg.bedY());
+            if (broadThalweg.bedY() > deepThalweg.bedY()) {
+                shallower++;
+            }
+        }
+        assertTrue("no column changed depth", shallower > 0);
+    }
+
+    @Test
+    public void radialKnobsDefaultsReproduceThePassageAndANarrowerBaseShrinksIt() {
+        RiverCourse course = undergroundCourse(130L, 24);
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(84, 1D, "parent");
+        HydrologyPlannerSettings.ChannelShape shorthand = HydrologyPlannerSettings.ChannelShape.of(2.4D, 0.28D, 0.24D, 11);
+        HydrologyPlannerSettings.ChannelShape explicit = new HydrologyPlannerSettings.ChannelShape(
+                2.4D, 0.28D, 0.24D, 11, 0.86D, 0.58D, 1.18D, 0.08D, 0.06D, 0D, 0.62D, 0.2D);
+        HydrologyPlannerSettings.ChannelShape narrow = new HydrologyPlannerSettings.ChannelShape(
+                2.4D, 0.28D, 0.24D, 11, 0.6D, 0.58D, 1.18D, 0.08D, 0.06D, 0D, 0.62D, 0.2D);
+
+        RiverFootprint defaults = compile(HydrologyPlannerSettings.defaults(), terrain, course);
+        RiverFootprint shorthandFootprint = compile(withUndergroundShape(shorthand), terrain, course);
+        RiverFootprint explicitFootprint = compile(withUndergroundShape(explicit), terrain, course);
+        RiverFootprint narrowFootprint = compile(withUndergroundShape(narrow), terrain, course);
+
+        assertEquals(defaults, shorthandFootprint);
+        assertEquals(defaults, explicitFootprint);
+        assertTrue(
+                "narrow " + narrowFootprint.columns().size() + " vs " + defaults.columns().size(),
+                narrowFootprint.columns().size() < defaults.columns().size()
+        );
+    }
+
+    @Test
+    public void ceilingRoughnessZeroKeepsTheRoofSmoothAndAPositiveValueVariesIt() {
+        RiverCourse course = undergroundCourse(135L, 0);
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(84, 1D, "parent");
+        HydrologyPlannerSettings.ChannelShape smooth = new HydrologyPlannerSettings.ChannelShape(
+                2.4D, 0.28D, 0.24D, 11, 0.86D, 0.58D, 1.18D, 0.08D, 0.06D, 0D, 0.62D, 0.2D);
+        HydrologyPlannerSettings.ChannelShape rough = new HydrologyPlannerSettings.ChannelShape(
+                2.4D, 0.28D, 0.24D, 11, 0.86D, 0.58D, 1.18D, 0.08D, 0.06D, 0.5D, 0.62D, 0.2D);
+
+        RiverFootprint defaults = compile(HydrologyPlannerSettings.defaults(), terrain, course);
+        RiverFootprint smoothFootprint = compile(withUndergroundShape(smooth), terrain, course);
+        RiverFootprint roughFootprint = compile(withUndergroundShape(rough), terrain, course);
+
+        assertEquals(defaults, smoothFootprint);
+        assertTrue(axisCeilings(roughFootprint).size() > 1);
+        assertEquals(1, axisCeilings(smoothFootprint).size());
+    }
+
+    @Test
+    public void grottoAspectRangeZeroGivesACircularPlanAtAspectOne() {
+        HydraulicSegment chamber = new HydraulicSegment(
+                141L,
+                140L,
+                HydrologyFeatureType.INLAND_GROTTO,
+                48,
+                48,
+                4,
+                2,
+                false,
+                false,
+                List.of(new HydrologyPoint(0, 48, 0))
+        );
+        RiverCourse course = course(140L, RiverCourseType.UNDERGROUND, chamber);
+        HydrologyTerrainSampler terrain = (int x, int z) -> HydrologyTerrainSample.openLand(84, 1D, "parent");
+        HydrologyPlannerSettings.ChannelShape circle = new HydrologyPlannerSettings.ChannelShape(
+                2.4D, 0D, 0D, 11, 0.86D, 0.58D, 1.18D, 0D, 0D, 0D, 1D, 0D);
+        HydrologyPlannerSettings.ChannelShape ellipse = new HydrologyPlannerSettings.ChannelShape(
+                2.4D, 0D, 0D, 11, 0.86D, 0.58D, 1.18D, 0D, 0D, 0D, 0.62D, 0D);
+
+        RiverFootprint circular = compile(withGrottoShape(circle), terrain, course);
+        RiverFootprint elliptical = compile(withGrottoShape(ellipse), terrain, course);
+
+        int east = planExtent(circular, 1, 0);
+        assertTrue(east > 0);
+        assertEquals(east, planExtent(circular, -1, 0));
+        assertEquals(east, planExtent(circular, 0, 1));
+        assertEquals(east, planExtent(circular, 0, -1));
+        assertTrue(
+                "elliptical " + elliptical.columns().size() + " vs " + circular.columns().size(),
+                elliptical.columns().size() < circular.columns().size()
+        );
+    }
+
+    /** Distinct ceilings over the centreline axis of a straight underground passage. */
+    private static HashSet<Integer> axisCeilings(RiverFootprint footprint) {
+        HashSet<Integer> ceilings = new HashSet<>();
+        for (int x = 0; x <= 48; x++) {
+            HydrologyColumnSample sample = footprint.sample(x, 0).orElse(null);
+            if (sample == null) {
+                continue;
+            }
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (layer.channel()) {
+                    ceilings.add(layer.ceilingY());
+                }
+            }
+        }
+        return ceilings;
+    }
+
+    /** How far the published plan reaches from the origin along one cardinal. */
+    private static int planExtent(RiverFootprint footprint, int stepX, int stepZ) {
+        int reach = 0;
+        while (footprint.sample(stepX * (reach + 1), stepZ * (reach + 1)).isPresent()) {
+            reach++;
+        }
+        return reach;
+    }
+
+    private static RiverCourse undergroundCourse(long id, int bend) {
+        HydraulicSegment segment = new HydraulicSegment(
+                id + 1L,
+                id,
+                HydrologyFeatureType.UNDERGROUND_POOL,
+                48,
+                48,
+                12,
+                2,
+                false,
+                false,
+                bend == 0
+                        ? List.of(new HydrologyPoint(0, 48, 0), new HydrologyPoint(48, 48, 0))
+                        : List.of(
+                                new HydrologyPoint(0, 48, 0),
+                                new HydrologyPoint(bend / 2, 48, 5),
+                                new HydrologyPoint(bend, 48, 0)
+                        )
+        );
+        return new RiverCourse(
+                id,
+                RiverCourseType.UNDERGROUND,
+                OptionalLong.of(id + 2L),
+                OptionalLong.of(id + 3L),
+                "water",
+                1,
+                List.of(),
+                List.of(segment)
+        );
+    }
+
+    private static RiverFootprint compile(
+            HydrologyPlannerSettings settings,
+            HydrologyTerrainSampler terrain,
+            RiverCourse course
+    ) {
+        return new HydrologyFootprintCompiler(settings, terrain, request -> request.minimum()).compile(List.of(course));
+    }
+
+    private static HydrologyPlannerSettings withGeometry(HydrologyPlannerSettings.Geometry geometry) {
+        HydrologyPlannerSettings base = HydrologyPlannerSettings.defaults();
+        return new HydrologyPlannerSettings(
+                base.seaLevel(), base.routing(), base.surface(), base.hydraulics(), base.underground(),
+                base.outlets(), geometry, base.deepFluids(), base.surfacePools(), base.widestShoreBiomeWidth(),
+                base.seaCaves());
+    }
+
+    private static HydrologyPlannerSettings withUndergroundShape(HydrologyPlannerSettings.ChannelShape shape) {
+        HydrologyPlannerSettings.Geometry base = HydrologyPlannerSettings.defaults().geometry();
+        return withGeometry(new HydrologyPlannerSettings.Geometry(
+                base.meanders(), base.surface(), shape, base.grottos(), base.drops()));
+    }
+
+    private static HydrologyPlannerSettings withGrottoShape(HydrologyPlannerSettings.ChannelShape shape) {
+        HydrologyPlannerSettings.Geometry base = HydrologyPlannerSettings.defaults().geometry();
+        return withGeometry(new HydrologyPlannerSettings.Geometry(
+                base.meanders(), base.surface(), base.underground(), shape, base.drops()));
+    }
+
+    private static HydrologyPlannerSettings withFlow(HydrologyPlannerSettings.Flow flow) {
+        HydrologyPlannerSettings base = HydrologyPlannerSettings.defaults();
+        HydrologyPlannerSettings.Banks banks = base.surface().banks();
+        HydrologyPlannerSettings.Banks tuned = new HydrologyPlannerSettings.Banks(
+                banks.sink(), banks.blendSlope(), banks.minimumBlendWidth(), banks.maximumBlendWidth(),
+                banks.roughness(), banks.roughnessWavelength(), banks.cascadeRun(), banks.waterfallMinimumDrop(),
+                banks.mouthFlareRatio(), banks.inlet(), banks.springWidthRatio(), banks.springLength(),
+                banks.exposeCutStrata(), banks.erosion(), banks.ponds(), banks.channel(), flow);
+        HydrologyPlannerSettings.Surface surface = base.surface();
+        HydrologyPlannerSettings.Surface tunedSurface = new HydrologyPlannerSettings.Surface(
+                surface.enabled(), surface.sources(), surface.minimumWidth(), surface.maximumWidth(),
+                surface.minimumDepth(), surface.maximumDepth(), surface.maximumIncision(), surface.shoreWidth(), tuned);
+        return new HydrologyPlannerSettings(
+                base.seaLevel(), base.routing(), tunedSurface, base.hydraulics(), base.underground(),
+                base.outlets(), base.geometry(), base.deepFluids(), base.surfacePools(), base.widestShoreBiomeWidth(),
+                base.seaCaves());
+    }
+
     private static HydrologyPlannerSettings seaCaveSettings(int maximumOceanApron, int chamberRadius) {
         HydrologyPlannerSettings base = HydrologyPlannerSettings.defaults();
-        HydrologyPlannerSettings.Outlets outlets = new HydrologyPlannerSettings.Outlets(
+        HydrologyPlannerSettings.Outlets outlets = HydrologyPlannerSettings.Outlets.of(
                 true,
                 new HydrologyPlannerSettings.Grotto(true, chamberRadius, 7, 10, 32768),
                 base.outlets().inlandGrotto(),
@@ -1932,7 +2149,7 @@ public class HydrologyFootprintCompilerTest {
                 base.geometry().meanders(),
                 base.geometry().surface(),
                 base.geometry().underground(),
-                new HydrologyPlannerSettings.ChannelShape(2.4D, 0D, 0D, 11),
+                HydrologyPlannerSettings.ChannelShape.of(2.4D, 0D, 0D, 11),
                 base.geometry().drops()
         );
         return new HydrologyPlannerSettings(

@@ -158,7 +158,7 @@ public class ValleyProfileSolverTest {
     @Test
     public void anInletHoldsTheLastStationsAtSeaLevelAndMayCutDeeperThanTheChannelCap() {
         HydrologyTerrainSampler coast = risingCoast();
-        HydrologyPlannerSettings.Inlet inlet = new HydrologyPlannerSettings.Inlet(32, 3, 32);
+        HydrologyPlannerSettings.Inlet inlet = HydrologyPlannerSettings.Inlet.of(32, 3, 32);
 
         ValleyProfile valley = solver(coast, inlet).solve(straight(300), channel(300, coast), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
         ValleyProfile plain = solver(coast, HydrologyPlannerSettings.Inlet.none())
@@ -185,9 +185,9 @@ public class ValleyProfileSolverTest {
                 ? HydrologyTerrainSample.ocean(50, "ocean")
                 : HydrologyTerrainSample.openLand(88, 0D, "land");
 
-        ValleyProfile valley = solver(plateau, new HydrologyPlannerSettings.Inlet(32, 3, 32))
+        ValleyProfile valley = solver(plateau, HydrologyPlannerSettings.Inlet.of(32, 3, 32))
                 .solve(straight(300), channel(300, plateau), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
-        ValleyProfile shallow = solver(plateau, new HydrologyPlannerSettings.Inlet(32, 3, 24))
+        ValleyProfile shallow = solver(plateau, HydrologyPlannerSettings.Inlet.of(32, 3, 24))
                 .solve(straight(300), channel(300, plateau), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
 
         assertNull(valley.rejection());
@@ -214,7 +214,7 @@ public class ValleyProfileSolverTest {
                 ? HydrologyTerrainSample.ocean(50, "ocean")
                 : HydrologyTerrainSample.openLand(x >= 220 ? 66 + (x - 220) / 5 : 110, 0D, "land");
 
-        ValleyProfile valley = solver(bluff, new HydrologyPlannerSettings.Inlet(64, 3, 32))
+        ValleyProfile valley = solver(bluff, HydrologyPlannerSettings.Inlet.of(64, 3, 32))
                 .solve(straight(300), channel(300, bluff), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
 
         assertNull(valley.rejection());
@@ -233,7 +233,7 @@ public class ValleyProfileSolverTest {
                 ? HydrologyTerrainSample.ocean(50, "ocean")
                 : HydrologyTerrainSample.openLand(x >= 30 && x < 50 ? 94 : 80, 0D, "land");
 
-        ValleyProfile valley = solver(ridge, new HydrologyPlannerSettings.Inlet(32, 3, 32))
+        ValleyProfile valley = solver(ridge, HydrologyPlannerSettings.Inlet.of(32, 3, 32))
                 .solve(straight(300), channel(300, ridge), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
 
         assertEquals(HydrologyCandidateRejection.SURFACE_CORRIDOR_UNSUPPORTED, valley.rejection());
@@ -246,7 +246,7 @@ public class ValleyProfileSolverTest {
                 ? HydrologyTerrainSample.ocean(50, "ocean")
                 : HydrologyTerrainSample.openLand(70, 0D, "land");
 
-        ValleyProfile valley = solver(coast, new HydrologyPlannerSettings.Inlet(64, 3, 32))
+        ValleyProfile valley = solver(coast, HydrologyPlannerSettings.Inlet.of(64, 3, 32))
                 .solve(straight(100), channel(100, coast), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
 
         assertNull(valley.rejection());
@@ -260,6 +260,62 @@ public class ValleyProfileSolverTest {
             assertEquals(70, valley.head()[station]);
         }
         assertContained(valley);
+    }
+
+    @Test
+    public void inletCourseFractionBoundsTheDrownedReach() {
+        HydrologyTerrainSampler coast = longCoast();
+        ValleyProfile tenth = solver(coast, new HydrologyPlannerSettings.Inlet(64, 3, 32, 0.1D, 1D))
+                .solve(straight(340), channel(340, coast), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
+        ValleyProfile half = solver(coast, new HydrologyPlannerSettings.Inlet(64, 3, 32, 0.5D, 1D))
+                .solve(straight(340), channel(340, coast), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
+
+        assertNull(tenth.rejection());
+        assertNull(half.rejection());
+        assertEquals(300, tenth.exposedStations());
+        assertEquals(30, drownedStations(tenth));
+        assertEquals(64, drownedStations(half));
+        assertEquals(SEA_LEVEL, tenth.head()[270]);
+        assertTrue(tenth.head()[269] > SEA_LEVEL);
+        assertContained(tenth);
+    }
+
+    @Test
+    public void inletRampSlopeGradesTheApproachFaster() {
+        HydrologyTerrainSampler coast = longCoast();
+        ValleyProfile gentle = solver(coast, new HydrologyPlannerSettings.Inlet(64, 3, 32, 0.5D, 1D))
+                .solve(straight(340), channel(340, coast), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
+        ValleyProfile steep = solver(coast, new HydrologyPlannerSettings.Inlet(64, 3, 32, 0.5D, 2D))
+                .solve(straight(340), channel(340, coast), SurfaceTerminal.OCEAN_MOUTH, SEA_LEVEL);
+
+        assertNull(gentle.rejection());
+        assertNull(steep.rejection());
+        assertEquals(SEA_LEVEL, gentle.head()[236]);
+        assertEquals(SEA_LEVEL, steep.head()[236]);
+        assertEquals(SEA_LEVEL + 1, gentle.head()[235]);
+        assertEquals(SEA_LEVEL + 2, steep.head()[235]);
+        assertEquals(SEA_LEVEL + 5, gentle.head()[231]);
+        assertEquals(70, steep.head()[231]);
+        assertEquals(70, gentle.head()[226]);
+        assertContained(gentle);
+        assertContained(steep);
+    }
+
+    /** Flat land at 70 out to the last land station, x=299, with open sea from x=300. */
+    private static HydrologyTerrainSampler longCoast() {
+        return (int x, int z) -> x >= 300
+                ? HydrologyTerrainSample.ocean(50, "ocean")
+                : HydrologyTerrainSample.openLand(70, 0D, "land");
+    }
+
+    private static int drownedStations(ValleyProfile valley) {
+        int drowned = 0;
+        for (int station = 0; station < valley.exposedStations(); station++) {
+            if (valley.head()[station] == SEA_LEVEL) {
+                drowned++;
+            }
+        }
+        return drowned;
     }
 
     /** Land falling gently to 66 at x=200, then a coast rising to 83 over the last forty blocks before the sea at x=240. */
@@ -279,7 +335,7 @@ public class ValleyProfileSolverTest {
         HydrologyPlannerSettings.Surface surface = new HydrologyPlannerSettings.Surface(
                 defaults.enabled(), defaults.sources(), defaults.minimumWidth(), defaults.maximumWidth(),
                 defaults.minimumDepth(), defaults.maximumDepth(), defaults.maximumIncision(), defaults.shoreWidth(),
-                new HydrologyPlannerSettings.Banks(banks.sink(), banks.blendSlope(), banks.minimumBlendWidth(), banks.maximumBlendWidth(),
+                HydrologyPlannerSettings.Banks.of(banks.sink(), banks.blendSlope(), banks.minimumBlendWidth(), banks.maximumBlendWidth(),
                         banks.roughness(), banks.roughnessWavelength(), banks.cascadeRun(), banks.waterfallMinimumDrop(),
                         banks.mouthFlareRatio(), inlet, banks.springWidthRatio(), banks.springLength(), banks.exposeCutStrata(),
                         banks.erosion(), banks.ponds()));
@@ -310,7 +366,7 @@ public class ValleyProfileSolverTest {
         HydrologyPlannerSettings.Surface surface = new HydrologyPlannerSettings.Surface(
                 defaults.enabled(), defaults.sources(), defaults.minimumWidth(), defaults.maximumWidth(),
                 defaults.minimumDepth(), defaults.maximumDepth(), defaults.maximumIncision(), defaults.shoreWidth(),
-                new HydrologyPlannerSettings.Banks(sink, banks.blendSlope(), banks.minimumBlendWidth(), banks.maximumBlendWidth(),
+                HydrologyPlannerSettings.Banks.of(sink, banks.blendSlope(), banks.minimumBlendWidth(), banks.maximumBlendWidth(),
                         banks.roughness(), banks.roughnessWavelength(), banks.cascadeRun(), banks.waterfallMinimumDrop(),
                         banks.mouthFlareRatio(), HydrologyPlannerSettings.Inlet.none(), banks.springWidthRatio(), banks.springLength(), banks.exposeCutStrata(),
                         banks.erosion(), banks.ponds()));

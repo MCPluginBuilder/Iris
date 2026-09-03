@@ -38,6 +38,16 @@ public class IrisCoastalRiverGrottoConfig {
     @Desc("Maximum accepted coastal grotto volume in blocks.")
     private int maximumVolume = 8192;
 
+    @MinNumber(0)
+    @MaxNumber(128)
+    @Desc("Blocks the coast must stand above the sea at the outlet for a river to end in a coastal grotto instead of an open mouth. Null uses the larger of 4 and verticalRadius.")
+    private Integer cliffMinimumHeight = null;
+
+    @MinNumber(0)
+    @MaxNumber(4)
+    @Desc("Share of cliffMinimumHeight the coast's slope must reach at the outlet before a grotto is chosen over an open mouth; 0 ignores the slope and decides on height alone.")
+    private double cliffSlopeFactor = 0.5D;
+
     @Desc("Standalone sea caves: coastal grottos opening from the ocean into the coast without a river.")
     private IrisSeaCaveConfig seaCaves = new IrisSeaCaveConfig();
 }

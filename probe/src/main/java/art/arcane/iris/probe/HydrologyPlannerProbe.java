@@ -244,7 +244,7 @@ public final class HydrologyPlannerProbe {
                         HydrologyPlannerSettings.Banks.defaults()
                 ),
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         undergroundDensity > 0D,
                         undergroundSources,
                         68,
@@ -258,7 +258,7 @@ public final class HydrologyPlannerProbe {
                         true,
                         0
                 ),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         false,
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),
                         new HydrologyPlannerSettings.Grotto(true, 4, 3, 3, 4096),
@@ -314,7 +314,7 @@ public final class HydrologyPlannerProbe {
                     List.of("water"), List.of()
             ,
                 Double.NaN,
-                null);
+                null, Double.NaN, true);
         };
     }
 
@@ -367,7 +367,7 @@ public final class HydrologyPlannerProbe {
                     List.of("water"), List.of()
             ,
                 Double.NaN,
-                null);
+                null, Double.NaN, true);
         };
     }
 
@@ -465,7 +465,7 @@ public final class HydrologyPlannerProbe {
                         HydrologyPlannerSettings.Banks.defaults()
                 ),
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         true,
                         undergroundSources,
                         68,
@@ -479,7 +479,7 @@ public final class HydrologyPlannerProbe {
                         true,
                         0
                 ),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         new HydrologyPlannerSettings.Grotto(coastalGrottosEnabled, 4, 3, 3, 4096),
                         new HydrologyPlannerSettings.Grotto(true, 4, 3, 3, 4096),
@@ -540,7 +540,9 @@ public final class HydrologyPlannerProbe {
                     "flooded",
                     List.of("water"), List.of(),
                     Double.NaN,
-                    null
+                    null,
+                    Double.NaN,
+                    true
             );
         };
     }
@@ -576,7 +578,7 @@ public final class HydrologyPlannerProbe {
                 List.of("water"), List.of()
         ,
                 Double.NaN,
-                null);
+                null, Double.NaN, true);
     }
 
     private static long[] parseSeeds(String[] arguments) {

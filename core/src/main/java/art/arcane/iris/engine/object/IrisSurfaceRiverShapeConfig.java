@@ -9,28 +9,28 @@ import lombok.experimental.Accessors;
 
 @Accessors(chain = true)
 @NoArgsConstructor
-@Desc("Controls rounded beds and rough, coherent channel walls.")
+@Desc("Controls the bed shape of surface river waterfall and cascade throats and the wall shape shared with the erosion compiler. The roughness fields fall back to the surface channel roughness when left null.")
 @Data
-public class IrisRiverChannelShapeConfig {
+public class IrisSurfaceRiverShapeConfig {
     @MinNumber(1)
     @MaxNumber(6)
-    @Desc("Cross-section exponent. Larger values broaden the rounded U-shaped bed.")
-    private double bedRoundness = 2.4D;
+    @Desc("Cross-section exponent of the throat bed. Larger values broaden the rounded U-shaped bed.")
+    private double bedRoundness = 2D;
 
     @MinNumber(0)
     @MaxNumber(1)
-    @Desc("Coherent vertical variation applied to the bed as a fraction of channel depth.")
-    private double bedRoughness = 0.28D;
+    @Desc("Coherent vertical variation applied to the throat bed as a fraction of channel depth. Null uses surface.channel.roughness.")
+    private Double bedRoughness = null;
 
     @MinNumber(0)
     @MaxNumber(1)
-    @Desc("Coherent radial variation applied to carved walls and banks.")
-    private double wallRoughness = 0.24D;
+    @Desc("Coherent radial variation applied to the throat walls. Null uses surface.channel.roughness.")
+    private Double wallRoughness = null;
 
     @MinNumber(3)
     @MaxNumber(128)
-    @Desc("Wavelength in blocks of bed and wall roughness.")
-    private int roughnessWavelength = 11;
+    @Desc("Wavelength in blocks of the throat bed and wall roughness. Null uses surface.channel.roughnessWavelength.")
+    private Integer roughnessWavelength = null;
 
     @MinNumber(0.4)
     @MaxNumber(1.2)
@@ -59,16 +59,16 @@ public class IrisRiverChannelShapeConfig {
 
     @MinNumber(0)
     @MaxNumber(1)
-    @Desc("Coherent variation of the carved ceiling height as a fraction of the headroom; 0 keeps the ceiling smooth and evaluates no extra noise.")
+    @Desc("Coherent variation of the carved ceiling height as a fraction of the headroom; 0 keeps the ceiling smooth and evaluates no extra noise. Only the carved segments of a surface course read it; an exposed channel has no ceiling.")
     private double ceilingRoughness = 0D;
 
     @MinNumber(0.2)
     @MaxNumber(1)
-    @Desc("Narrowest plan aspect of a chamber, the short axis as a fraction of the long axis; 1 makes every chamber circular in plan. Applies to grottos only.")
+    @Desc("Narrowest plan aspect of a chamber, the short axis as a fraction of the long axis; 1 makes every chamber circular in plan. The surface section carries this field so all three shape sections share one shape record; only grotto chambers read it.")
     private double aspectMinimum = 0.62D;
 
     @MinNumber(0)
     @MaxNumber(0.8)
-    @Desc("How much the plan aspect may vary above aspectMinimum from one chamber to the next; 0 gives every chamber the same aspect. Applies to grottos only.")
+    @Desc("How much the plan aspect may vary above aspectMinimum from one chamber to the next; 0 gives every chamber the same aspect. The surface section carries this field so all three shape sections share one shape record; only grotto chambers read it.")
     private double aspectRange = 0.2D;
 }

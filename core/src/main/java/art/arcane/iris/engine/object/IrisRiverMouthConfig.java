@@ -36,4 +36,14 @@ public class IrisRiverMouthConfig {
     @MaxNumber(128)
     @Desc("Deepest cut allowed in the inlet and its approach ramp, replacing channel.maximumIncision there, so the coast may be cut down to sea level through a rise of this height.")
     private int maximumIncision = 32;
+
+    @MinNumber(0.05)
+    @MaxNumber(1)
+    @Desc("Largest share of the river's exposed course the drowned inlet may occupy, so a short river keeps most of its length above sea level; the inlet is the shorter of inletLength and this share.")
+    private double inletCourseFraction = 0.5D;
+
+    @MinNumber(0.1)
+    @MaxNumber(4)
+    @Desc("Blocks of head gained per station on the approach ramp climbing from the inlet back to the river's natural profile; 1 climbs one block per station, higher values grade the approach faster.")
+    private double inletRampSlope = 1D;
 }

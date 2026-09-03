@@ -46,4 +46,9 @@ public class IrisRiverDropShapeConfig {
     @MaxNumber(32)
     @Desc("Maximum receiving-basin depth after drop-scaled erosion.")
     private int maximumBasinDepth = 8;
+
+    @MinNumber(0)
+    @MaxNumber(16)
+    @Desc("Horizontal run in blocks an underground drop spreads over per block of head loss, so tall drops become long cascades; 0 keeps every underground drop at its shortest run.")
+    private int undergroundCascadeRunPerBlock = 0;
 }

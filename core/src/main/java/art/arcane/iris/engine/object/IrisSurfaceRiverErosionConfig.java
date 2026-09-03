@@ -34,4 +34,20 @@ public class IrisSurfaceRiverErosionConfig {
     @MaxNumber(2)
     @Desc("Share of the channel roughness applied to the bed as depth variation; 0 leaves a smooth bed.")
     private double bedNoise = 0.5D;
+
+    @Desc("Shape of the valley side between the shore bench and natural terrain. SMOOTH is the eased curve used before this field existed.")
+    private IrisRiverBlendStyle style = IrisRiverBlendStyle.SMOOTH;
+
+    @MinNumber(2)
+    @MaxNumber(16)
+    @Desc("Number of level steps the valley side is cut into when style is TERRACED; ignored by every other style.")
+    private int terraceSteps = 4;
+
+    @MinNumber(0)
+    @MaxNumber(1)
+    @Desc("Share of the eroded band kept level at the bank top before the vertical wall when style is CLIFF; ignored by every other style.")
+    private double cliffFraction = 0.5D;
+
+    @Desc("Cross-section of the wet channel bed from the centerline out to the waterline. BOWL is the profile used before this field existed.")
+    private IrisRiverBedProfile bedProfile = IrisRiverBedProfile.BOWL;
 }

@@ -176,4 +176,68 @@ public class RiverPolicyResolverTest {
         assertEquals(RiverConfinement.NONE, RiverPolicyResolver.resolve(null, confined, released).confinement());
         assertEquals(RiverConfinement.NONE, RiverPolicyResolver.resolve(confined, released, null).confinement());
     }
+
+
+    @Test
+    public void shoreWidthInheritsFromDimensionThroughRegionToBiome() {
+        IrisRiverPolicy dimension = new IrisRiverPolicy().setShoreWidth(2D);
+        IrisRiverPolicy biome = new IrisRiverPolicy().setShoreWidth(0D);
+
+        assertNull(RiverPolicyResolver.resolve((IrisRiverPolicy) null, null, null).shoreWidth());
+        assertNull(RiverPolicyResolver.resolve(new IrisRiverPolicy(), new IrisRiverPolicy(), new IrisRiverPolicy()).shoreWidth());
+        assertEquals(2D, RiverPolicyResolver.resolve(dimension, null, null).shoreWidth(), 0D);
+        assertEquals(2D, RiverPolicyResolver.resolve(dimension, new IrisRiverPolicy(), null).shoreWidth(), 0D);
+        assertEquals(2D, RiverPolicyResolver.resolve(dimension, new IrisRiverPolicy(), new IrisRiverPolicy()).shoreWidth(), 0D);
+        assertEquals(0D, RiverPolicyResolver.resolve(dimension, new IrisRiverPolicy(), biome).shoreWidth(), 0D);
+        assertEquals(0D, RiverPolicyResolver.resolve(dimension, biome, null).shoreWidth(), 0D);
+    }
+
+    @Test
+    public void erosionInheritsUntilAnAreaDecidesIt() {
+        IrisRiverPolicy eroding = new IrisRiverPolicy().setErosion(true);
+        IrisRiverPolicy bare = new IrisRiverPolicy().setErosion(false);
+
+        assertNull(RiverPolicyResolver.resolve((IrisRiverPolicy) null, null, null).erosion());
+        assertNull(RiverPolicyResolver.resolve(new IrisRiverPolicy(), new IrisRiverPolicy(), new IrisRiverPolicy()).erosion());
+        assertEquals(Boolean.TRUE, RiverPolicyResolver.resolve(eroding, null, null).erosion());
+        assertEquals(Boolean.TRUE, RiverPolicyResolver.resolve(eroding, new IrisRiverPolicy(), new IrisRiverPolicy()).erosion());
+        assertEquals(Boolean.FALSE, RiverPolicyResolver.resolve(eroding, new IrisRiverPolicy(), bare).erosion());
+        assertEquals(Boolean.FALSE, RiverPolicyResolver.resolve(null, bare, new IrisRiverPolicy()).erosion());
+        assertEquals(Boolean.TRUE, RiverPolicyResolver.resolve(null, bare, eroding).erosion());
+    }
+
+    @Test
+    public void effectivePolicyRejectsANegativeOrInfiniteShoreWidth() {
+        EffectiveRiverPolicy base = RiverPolicyResolver.resolve((IrisRiverPolicy) null, null, null);
+
+        assertEquals(0D, withShoreWidth(base, 0D).shoreWidth(), 0D);
+        assertNull(withShoreWidth(base, null).shoreWidth());
+        assertThrows(IllegalArgumentException.class, () -> withShoreWidth(base, -1D));
+        assertThrows(IllegalArgumentException.class, () -> withShoreWidth(base, Double.POSITIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class, () -> withShoreWidth(base, Double.NaN));
+    }
+
+    private static EffectiveRiverPolicy withShoreWidth(EffectiveRiverPolicy policy, Double shoreWidth) {
+        return new EffectiveRiverPolicy(
+                policy.placement(),
+                policy.routing(),
+                policy.outletAdmission(),
+                policy.profiles(),
+                policy.surfaceBiomes(),
+                policy.mouthBiomes(),
+                policy.shoreBiomes(),
+                policy.bankBiomes(),
+                policy.floodedCaveBiomes(),
+                policy.surfacePools(),
+                policy.widthMultiplier(),
+                policy.depthMultiplier(),
+                policy.incisionMultiplier(),
+                policy.routingMultiplier(),
+                policy.bankMultiplier(),
+                policy.shoreBiomeWidth(),
+                policy.confinement(),
+                shoreWidth,
+                policy.erosion()
+        );
+    }
 }

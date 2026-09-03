@@ -1187,7 +1187,7 @@ public class HydrologyCaveCourseFilterTest {
 
     private static HydrologyPlannerSettings seaCaveSettings() {
         HydrologyPlannerSettings base = HydrologyPlannerSettings.defaults();
-        HydrologyPlannerSettings.Outlets outlets = new HydrologyPlannerSettings.Outlets(
+        HydrologyPlannerSettings.Outlets outlets = HydrologyPlannerSettings.Outlets.of(
                 true,
                 new HydrologyPlannerSettings.Grotto(true, 12, 7, 10, 32768),
                 base.outlets().inlandGrotto(),
@@ -1202,7 +1202,7 @@ public class HydrologyCaveCourseFilterTest {
                 base.geometry().meanders(),
                 base.geometry().surface(),
                 base.geometry().underground(),
-                new HydrologyPlannerSettings.ChannelShape(2.4D, 0D, 0D, 11),
+                HydrologyPlannerSettings.ChannelShape.of(2.4D, 0D, 0D, 11),
                 base.geometry().drops()
         );
         return new HydrologyPlannerSettings(

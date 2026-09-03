@@ -43,6 +43,24 @@ public class IrisUndergroundRiverConfig {
     @Desc("Extra underground courses an outlet may accept as tributaries joining its main passage; they are budgeted on top of the source density, and 0 keeps one passage per outlet.")
     private int tributaries = 1;
 
+    @MinNumber(1)
+    @MaxNumber(64)
+    @Desc("Blocks of solid rock kept between the top of a passage's headroom and the surface above it; a passage that cannot keep this much cover is lowered or rejected.")
+    private int minimumRockCover = 1;
+
+    @MinNumber(1)
+    @MaxNumber(32)
+    @Desc("Blocks of solid rock kept between the bottom of a passage's bed and the world floor below it.")
+    private int minimumFloorCover = 1;
+
+    @MinNumber(1)
+    @MaxNumber(64)
+    @Desc("Number of joined tributary sources at which a passage reaches its full sampled width; fewer contributing sources carve a proportionally narrower passage, and 1 gives every passage its full width.")
+    private int wideningSources = 8;
+
+    @Desc("Optional palette painted over the floor layers under an underground river instead of the cave biome's own layers. Disabled by default, which keeps the biome's layers.")
+    private IrisRiverMaterialConfig bedMaterial = new IrisRiverMaterialConfig();
+
     private static IrisStyledRange range(double min, double max, double zoom) {
         return new IrisStyledRange(min, max, new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(zoom));
     }

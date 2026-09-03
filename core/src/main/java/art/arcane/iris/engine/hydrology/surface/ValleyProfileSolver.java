@@ -120,17 +120,18 @@ public final class ValleyProfileSolver {
         }
         // The inlet: the drowned reach runs inland from the coast, holding the water at sea level, as
         // far as the inlet length allows and the ground can be cut to sea level within the inlet cap;
-        // a rise the cap cannot pass ends it there. Above it the approach grades down one block per
-        // station into the estuary wherever that cut fits, instead of dropping in a wall at the coast.
-        // The drowned reach is the end of a river, never most of one: it takes at most half the exposed
-        // course and the approach half of that again, so the headwater keeps its natural head.
+        // a rise the cap cannot pass ends it there. Above it the approach grades down the inlet ramp
+        // slope per station into the estuary wherever that cut fits, instead of dropping in a wall at
+        // the coast. The drowned reach is the end of a river, never most of one: it takes at most the
+        // inlet course fraction of the exposed course and the approach half of that again, so the
+        // headwater keeps its natural head.
         // Every head set here is at or below the terrain-supported head, so the course stays non-rising.
         HydrologyPlannerSettings.Inlet inlet = surface.banks().inlet();
         int channelIncision = surface.maximumIncision();
         int inletIncision = Math.max(channelIncision, inlet.maximumIncision());
         int rampStart = exposed;
         if (terminal == SurfaceTerminal.OCEAN_MOUTH && inlet.length() > 0) {
-            int reach = Math.min(inlet.length(), exposed / 2);
+            int reach = Math.min(inlet.length(), (int) StrictMath.floor(exposed * inlet.courseFraction()));
             int inletStart = exposed;
             while (inletStart > 0 && exposed - inletStart < reach
                     && cutFits(inletStart - 1, seaLevel, channel, centerNatural, incisionMultiplier, inletIncision)) {
@@ -143,7 +144,7 @@ public final class ValleyProfileSolver {
             // The ramp is contiguous with the inlet: the first station the cap cannot lower ends it,
             // otherwise a station lowered further upstream would sit below one left at its natural head.
             for (int station = inletStart - 1; station >= rampStart; station--) {
-                int target = seaLevel + (inletStart - station);
+                int target = seaLevel + (int) StrictMath.round((inletStart - station) * inlet.rampSlope());
                 if (head[station] <= target) {
                     continue;
                 }

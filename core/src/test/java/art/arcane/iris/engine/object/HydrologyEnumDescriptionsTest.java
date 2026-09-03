@@ -13,7 +13,9 @@ public class HydrologyEnumDescriptionsTest {
     private static final List<Class<? extends Enum<?>>> HYDROLOGY_ENUMS = List.of(
             IrisRiverPlacementMode.class,
             IrisRiverRoutingMode.class,
-            IrisGrottoPoolLevel.class
+            IrisGrottoPoolLevel.class,
+            IrisRiverBlendStyle.class,
+            IrisRiverBedProfile.class
     );
 
     @Test

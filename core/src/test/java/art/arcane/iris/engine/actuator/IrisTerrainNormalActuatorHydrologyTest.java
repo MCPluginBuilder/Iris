@@ -1,12 +1,16 @@
 package art.arcane.iris.engine.actuator;
 
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
 import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
 import art.arcane.iris.engine.hydrology.HydrologyFeatureRef;
 import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
 import art.arcane.iris.engine.object.IrisDecorationStep;
+import art.arcane.iris.engine.object.IrisMaterialPalette;
+import art.arcane.iris.engine.object.IrisRiverMaterialConfig;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.math.RNG;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -15,8 +19,15 @@ import java.util.List;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class IrisTerrainNormalActuatorHydrologyTest {
@@ -111,5 +122,172 @@ public class IrisTerrainNormalActuatorHydrologyTest {
         assertSame(ice, state);
         assertEquals("minecraft:ice", state.key());
         assertFalse(state.isWater());
+    }
+
+    @Test
+    public void bedMaterialPaintsTheChannelBedToItsDepth() {
+        Fixture fixture = new Fixture();
+        IrisRiverMaterialConfig bedMaterial = fixture.enabled(2);
+        IrisRiverMaterialConfig shoreMaterial = fixture.disabled();
+        IrisRiverMaterialConfig bankMaterial = fixture.disabled();
+        HydrologyColumnLayer channel = channelLayer();
+
+        IrisRiverMaterialConfig role = IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                channel, bedMaterial, shoreMaterial, bankMaterial);
+
+        assertSame(bedMaterial, role);
+        assertSame(fixture.painted, fixture.paint(role, 0));
+        assertSame(fixture.painted, fixture.paint(role, 1));
+        assertSame(fixture.biomeLayer, fixture.paint(role, 2));
+        assertNull(IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                apronLayer(), bedMaterial, shoreMaterial, bankMaterial));
+        assertNull(IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                null, bedMaterial, shoreMaterial, bankMaterial));
+    }
+
+    @Test
+    public void shoreMaterialPaintsOnlyShoreColumns() {
+        Fixture fixture = new Fixture();
+        IrisRiverMaterialConfig bedMaterial = fixture.disabled();
+        IrisRiverMaterialConfig shoreMaterial = fixture.enabled(1);
+        IrisRiverMaterialConfig bankMaterial = fixture.disabled();
+
+        assertSame(shoreMaterial, IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                shoreLayer(), bedMaterial, shoreMaterial, bankMaterial));
+        assertNull(IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                channelLayer(), bedMaterial, shoreMaterial, bankMaterial));
+        assertNull(IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                bankLayer(), bedMaterial, shoreMaterial, bankMaterial));
+        assertSame(fixture.painted, fixture.paint(shoreMaterial, 0));
+        assertSame(fixture.biomeLayer, fixture.paint(shoreMaterial, 1));
+    }
+
+    @Test
+    public void bankMaterialPaintsOnlyBankColumns() {
+        Fixture fixture = new Fixture();
+        IrisRiverMaterialConfig bedMaterial = fixture.disabled();
+        IrisRiverMaterialConfig shoreMaterial = fixture.disabled();
+        IrisRiverMaterialConfig bankMaterial = fixture.enabled(3);
+
+        assertSame(bankMaterial, IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                bankLayer(), bedMaterial, shoreMaterial, bankMaterial));
+        assertNull(IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                shoreLayer(), bedMaterial, shoreMaterial, bankMaterial));
+        assertNull(IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                channelLayer(), bedMaterial, shoreMaterial, bankMaterial));
+        assertSame(fixture.painted, fixture.paint(bankMaterial, 2));
+        assertSame(fixture.biomeLayer, fixture.paint(bankMaterial, 3));
+    }
+
+    @Test
+    public void disabledMaterialsKeepTheBiomeLayers() {
+        Fixture fixture = new Fixture();
+        IrisRiverMaterialConfig bedMaterial = fixture.disabled();
+        IrisRiverMaterialConfig shoreMaterial = fixture.disabled();
+        IrisRiverMaterialConfig bankMaterial = fixture.disabled();
+
+        for (HydrologyColumnLayer layer : List.of(channelLayer(), shoreLayer(), bankLayer())) {
+            IrisRiverMaterialConfig disabledRole = IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                    layer, bedMaterial, shoreMaterial, bankMaterial);
+            IrisRiverMaterialConfig absentRole = IrisTerrainNormalActuator.hydrologyRoleMaterial(
+                    layer, null, null, null);
+            assertNull(disabledRole);
+            assertNull(absentRole);
+            for (int depth = 0; depth < 4; depth++) {
+                assertSame(fixture.biomeLayer, fixture.paint(disabledRole, depth));
+                assertSame(fixture.biomeLayer, fixture.paint(absentRole, depth));
+            }
+        }
+
+        verify(fixture.palette, never()).get(any(RNG.class), anyDouble(), anyDouble(), anyDouble(), any());
+    }
+
+    private static HydrologyColumnLayer channelLayer() {
+        return surfaceLayer(true, false);
+    }
+
+    private static HydrologyColumnLayer shoreLayer() {
+        return surfaceLayer(false, true);
+    }
+
+    private static HydrologyColumnLayer bankLayer() {
+        return surfaceLayer(false, false);
+    }
+
+    private static HydrologyColumnLayer surfaceLayer(boolean channel, boolean shore) {
+        return new HydrologyColumnLayer(
+                surfaceFeature(),
+                60,
+                63,
+                63,
+                channel,
+                shore,
+                !channel,
+                channel,
+                false,
+                false,
+                true,
+                channel,
+                false,
+                "default",
+                "river",
+                "mouth",
+                "shore",
+                "bank",
+                "cave"
+        );
+    }
+
+    private static HydrologyColumnLayer apronLayer() {
+        return new HydrologyColumnLayer(
+                surfaceFeature(),
+                63,
+                63,
+                63,
+                true,
+                false,
+                false,
+                true,
+                false,
+                false,
+                false,
+                false,
+                true,
+                "default",
+                "river",
+                "mouth",
+                "shore",
+                "bank",
+                "cave"
+        );
+    }
+
+    private static HydrologyFeatureRef surfaceFeature() {
+        return new HydrologyFeatureRef(21L, HydrologyFeatureType.RIFFLE, 22L, 23L, 11, 63, -4, 1, 0, false);
+    }
+
+    private static final class Fixture {
+        private final PlatformBlockState biomeLayer = mock(PlatformBlockState.class);
+        private final PlatformBlockState painted = mock(PlatformBlockState.class);
+        private final IrisMaterialPalette palette = mock(IrisMaterialPalette.class);
+        private final IrisData data = mock(IrisData.class);
+        private final RNG rng = new RNG(7L);
+
+        private Fixture() {
+            when(palette.get(same(rng), eq(11.0), eq(63.0), eq(-4.0), same(data))).thenReturn(painted);
+        }
+
+        private IrisRiverMaterialConfig enabled(int depth) {
+            return new IrisRiverMaterialConfig().setEnabled(true).setPalette(palette).setDepth(depth);
+        }
+
+        private IrisRiverMaterialConfig disabled() {
+            return new IrisRiverMaterialConfig().setPalette(palette).setDepth(4);
+        }
+
+        private PlatformBlockState paint(IrisRiverMaterialConfig material, int depth) {
+            return IrisTerrainNormalActuator.paintHydrologyMaterial(
+                    biomeLayer, material, depth, rng, 11, 63, -4, data);
+        }
     }
 }

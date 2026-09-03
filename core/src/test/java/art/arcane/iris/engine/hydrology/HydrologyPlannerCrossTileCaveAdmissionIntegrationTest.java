@@ -298,7 +298,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         1.5D,
                         HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         true,
                         undergroundSources,
                         68,
@@ -312,7 +312,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         true,
                         0
                 ),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         new HydrologyPlannerSettings.Grotto(true, 4, 3, 3, 4096),
                         new HydrologyPlannerSettings.Grotto(true, 4, 3, 3, 4096),
@@ -332,7 +332,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
 
     private HydrologyPlannerSettings.Geometry stableGeometry() {
         HydrologyPlannerSettings.ChannelShape stableChannel =
-                new HydrologyPlannerSettings.ChannelShape(2D, 0D, 0D, 11);
+                HydrologyPlannerSettings.ChannelShape.of(2D, 0D, 0D, 11);
         return new HydrologyPlannerSettings.Geometry(
                 new HydrologyPlannerSettings.Meanders(224, 72, 0D, 0D, 0D, 0, 75D),
                 stableChannel,
@@ -376,7 +376,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         baseSurface.shoreWidth(),
                         HydrologyPlannerSettings.Banks.defaults()),
                 base.hydraulics(),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         false,
                         disabledSources,
                         baseUnderground.minimumFluidY(),
@@ -390,7 +390,7 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                         baseUnderground.connectToExistingCaves(),
                         0
                 ),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         base.outlets().oceanEnabled(),
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),
                         base.outlets().inlandGrotto(),
@@ -448,7 +448,9 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                     "flooded",
                     List.of("water"), List.of(),
                     Double.NaN,
-                    null
+                    null,
+                    Double.NaN,
+                    true
             );
         };
     }
@@ -491,7 +493,9 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                     sample.floodedCaveBiomeKey(),
                     sample.preferredProfileKeys(), List.of(),
                     Double.NaN,
-                    null
+                    null,
+                    Double.NaN,
+                    true
             );
         };
     }
@@ -526,7 +530,9 @@ public class HydrologyPlannerCrossTileCaveAdmissionIntegrationTest {
                 "flooded",
                 List.of("water"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 

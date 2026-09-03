@@ -54,16 +54,47 @@ public class IrisRiverConfigurationTest {
         assertEquals(10, surface.getChannel().getMaximumIncision());
         assertEquals(0.25D, surface.getChannel().getRoughness(), 0D);
         assertEquals(16, surface.getChannel().getRoughnessWavelength());
+        assertEquals(16, surface.getChannel().getSmoothingRadius());
+        assertEquals(0.6D, surface.getChannel().getOutlineMinimumRatio(), 0D);
+        assertEquals(1.4D, surface.getChannel().getOutlineMaximumRatio(), 0D);
+        assertEquals(1D, surface.getChannel().getSpringExtraDepth(), 0D);
         assertEquals(1.5D, surface.getBanks().getShoreWidth(), 0D);
         assertEquals(3D, surface.getBanks().getBlendSlope(), 0D);
         assertEquals(4, surface.getBanks().getMinimumBlendWidth());
         assertEquals(32, surface.getBanks().getMaximumBlendWidth());
         assertTrue(surface.getBanks().isExposeCutStrata());
+        assertEquals(0D, surface.getBanks().getShoreRise(), 0D);
+        assertEquals(0D, surface.getBanks().getBlendBaseWidth(), 0D);
+        assertDisabledMaterial(surface.getBanks().getShoreMaterial());
+        assertDisabledMaterial(surface.getBanks().getBankMaterial());
+        assertDisabledMaterial(surface.getBed().getMaterial());
         assertEquals(2, surface.getFlow().getCascadeRun());
         assertEquals(6, surface.getFlow().getWaterfallMinimumDrop());
+        assertEquals(0.65D, surface.getFlow().getWaterfallThalwegFraction(), 0D);
+        assertEquals(2, surface.getFlow().getPlungeBasinMinimumDrop());
+        assertEquals(2D, surface.getFlow().getPlungeBasinLengthRatio(), 0D);
+        assertEquals(1, surface.getFlow().getPlungeBasinDepth());
         assertEquals(1.6D, surface.getMouths().getFlareRatio(), 0D);
         assertEquals(8, surface.getMouths().getMaximumOceanApron());
-        IrisRiverDropShapeConfig drops = dimension.getHydrology().getRivers().getGeometry().getDrops();
+        assertEquals(0.5D, surface.getMouths().getInletCourseFraction(), 0D);
+        assertEquals(1D, surface.getMouths().getInletRampSlope(), 0D);
+        assertEquals(IrisRiverBlendStyle.SMOOTH, surface.getErosion().getStyle());
+        assertEquals(4, surface.getErosion().getTerraceSteps());
+        assertEquals(0.5D, surface.getErosion().getCliffFraction(), 0D);
+        assertEquals(IrisRiverBedProfile.BOWL, surface.getErosion().getBedProfile());
+        IrisRiverGeometryConfig geometry = dimension.getHydrology().getRivers().getGeometry();
+        IrisSurfaceRiverShapeConfig surfaceShape = geometry.getSurface();
+        assertEquals(2D, surfaceShape.getBedRoundness(), 0D);
+        assertNull(surfaceShape.getBedRoughness());
+        assertNull(surfaceShape.getWallRoughness());
+        assertNull(surfaceShape.getRoughnessWavelength());
+        assertSharedShapeDefaults(surfaceShape.getRadialBase(), surfaceShape.getRadialMinimum(),
+                surfaceShape.getRadialMaximum(), surfaceShape.getPrimaryLobeStrength(),
+                surfaceShape.getDetailLobeStrength(), surfaceShape.getCeilingRoughness(),
+                surfaceShape.getAspectMinimum(), surfaceShape.getAspectRange());
+        assertSharedShapeDefaults(geometry.getUnderground());
+        assertSharedShapeDefaults(geometry.getGrottos());
+        IrisRiverDropShapeConfig drops = geometry.getDrops();
         assertEquals(2, drops.getCascadeRunPerBlock());
         assertEquals(1.4D, drops.getCascadeExponent(), 0D);
         assertEquals(2, drops.getMaximumCascadeStep());
@@ -71,6 +102,7 @@ public class IrisRiverConfigurationTest {
         assertEquals(2, drops.getMaximumFlowDepth());
         assertEquals(1.8D, drops.getBasinWidthRatio(), 0D);
         assertEquals(8, drops.getMaximumBasinDepth());
+        assertEquals(0, drops.getUndergroundCascadeRunPerBlock());
 
         IrisUndergroundRiverConfig underground = dimension.getHydrology().getRivers().getUnderground();
         assertTrue(underground.isEnabled());
@@ -83,6 +115,10 @@ public class IrisRiverConfigurationTest {
         assertEquals(8D, underground.getChannelWidth().getMax(), 0D);
         assertTrue(underground.isConnectToExistingCaves());
         assertEquals(64, underground.getMouthLevelingDistance());
+        assertEquals(1, underground.getMinimumRockCover());
+        assertEquals(1, underground.getMinimumFloorCover());
+        assertEquals(8, underground.getWideningSources());
+        assertDisabledMaterial(underground.getBedMaterial());
 
         IrisCoastalRiverGrottoConfig coastal = dimension.getHydrology().getRivers().getGrottos().getCoastal();
         IrisInlandRiverGrottoConfig inland = dimension.getHydrology().getRivers().getGrottos().getInland();
@@ -90,6 +126,9 @@ public class IrisRiverConfigurationTest {
         assertEquals(7, coastal.getVerticalRadius());
         assertEquals(10, coastal.getHeadroom());
         assertEquals(8192, coastal.getMaximumVolume());
+        assertNull(coastal.getCliffMinimumHeight());
+        assertEquals(0.5D, coastal.getCliffSlopeFactor(), 0D);
+        assertEquals(25D, coastal.getSeaCaves().getSweepJitterDegrees(), 0D);
         assertEquals(10, inland.getHorizontalRadius());
         assertEquals(6, inland.getVerticalRadius());
         assertEquals(10, inland.getHeadroom());
@@ -110,8 +149,36 @@ public class IrisRiverConfigurationTest {
         assertNull(dimension.getRiverPolicy().getRouting());
         assertNull(dimension.getRiverPolicy().getOutletAdmission());
         assertNull(dimension.getRiverPolicy().getBankMultiplier());
+        assertNull(dimension.getRiverPolicy().getShoreWidth());
+        assertNull(dimension.getRiverPolicy().getErosion());
         assertNull(new IrisRegion().getRiverPolicy());
         assertNull(new IrisBiome().getRiverPolicy());
+    }
+
+    private static void assertDisabledMaterial(IrisRiverMaterialConfig material) {
+        assertNotNull(material);
+        assertFalse(material.isEnabled());
+        assertEquals(1, material.getDepth());
+        assertEquals(1, material.getPalette().getPalette().size());
+    }
+
+    private static void assertSharedShapeDefaults(IrisRiverChannelShapeConfig shape) {
+        assertSharedShapeDefaults(shape.getRadialBase(), shape.getRadialMinimum(), shape.getRadialMaximum(),
+                shape.getPrimaryLobeStrength(), shape.getDetailLobeStrength(), shape.getCeilingRoughness(),
+                shape.getAspectMinimum(), shape.getAspectRange());
+    }
+
+    private static void assertSharedShapeDefaults(double radialBase, double radialMinimum, double radialMaximum,
+                                                  double primaryLobeStrength, double detailLobeStrength,
+                                                  double ceilingRoughness, double aspectMinimum, double aspectRange) {
+        assertEquals(0.86D, radialBase, 0D);
+        assertEquals(0.58D, radialMinimum, 0D);
+        assertEquals(1.18D, radialMaximum, 0D);
+        assertEquals(0.08D, primaryLobeStrength, 0D);
+        assertEquals(0.06D, detailLobeStrength, 0D);
+        assertEquals(0D, ceilingRoughness, 0D);
+        assertEquals(0.62D, aspectMinimum, 0D);
+        assertEquals(0.2D, aspectRange, 0D);
     }
 
     @Test
@@ -137,6 +204,32 @@ public class IrisRiverConfigurationTest {
                         "confluenceAttraction": 0.4
                       },
                       "geometry": {
+                        "surface": {
+                          "bedRoundness": 3.5,
+                          "bedRoughness": 0.3,
+                          "wallRoughness": 0.35,
+                          "roughnessWavelength": 20,
+                          "radialBase": 0.9,
+                          "radialMinimum": 0.5,
+                          "radialMaximum": 1.5,
+                          "primaryLobeStrength": 0.1,
+                          "detailLobeStrength": 0.05,
+                          "ceilingRoughness": 0.2,
+                          "aspectMinimum": 0.7,
+                          "aspectRange": 0.3
+                        },
+                        "underground": {
+                          "bedRoundness": 3,
+                          "radialBase": 1.0,
+                          "radialMinimum": 0.6,
+                          "radialMaximum": 1.3,
+                          "primaryLobeStrength": 0.12,
+                          "detailLobeStrength": 0.04,
+                          "ceilingRoughness": 0.4,
+                          "aspectMinimum": 0.8,
+                          "aspectRange": 0.1
+                        },
+                        "grottos": {"aspectMinimum": 0.5, "aspectRange": 0.6, "ceilingRoughness": 0.9},
                         "drops": {
                           "cascadeRunPerBlock": 5,
                           "cascadeExponent": 2.4,
@@ -144,7 +237,8 @@ public class IrisRiverConfigurationTest {
                           "flowWidthRatio": 0.6,
                           "maximumFlowDepth": 4,
                           "basinWidthRatio": 2.2,
-                          "maximumBasinDepth": 11
+                          "maximumBasinDepth": 11,
+                          "undergroundCascadeRunPerBlock": 3
                         }
                       },
                       "surface": {
@@ -156,17 +250,36 @@ public class IrisRiverConfigurationTest {
                           "sink": 2,
                           "maximumIncision": 14,
                           "roughness": 0.4,
-                          "roughnessWavelength": 24
+                          "roughnessWavelength": 24,
+                          "smoothingRadius": 8,
+                          "outlineMinimumRatio": 0.8,
+                          "outlineMaximumRatio": 2,
+                          "springExtraDepth": 3
                         },
                         "banks": {
                           "shoreWidth": 2.5,
                           "blendSlope": 4,
                           "minimumBlendWidth": 6,
                           "maximumBlendWidth": 48,
-                          "exposeCutStrata": false
+                          "exposeCutStrata": false,
+                          "shoreRise": 1.5,
+                          "blendBaseWidth": 6,
+                          "shoreMaterial": {"enabled": true, "palette": {"palette": [{"block": "minecraft:sand"}]}, "depth": 2},
+                          "bankMaterial": {"enabled": true, "palette": {"palette": [{"block": "minecraft:coarse_dirt"}]}, "depth": 3}
                         },
-                        "flow": {"cascadeRun": 3, "waterfallMinimumDrop": 8},
-                        "mouths": {"flareRatio": 2.2, "maximumOceanApron": 1}
+                        "bed": {
+                          "material": {"enabled": true, "palette": {"palette": [{"block": "minecraft:gravel"}]}, "depth": 4}
+                        },
+                        "flow": {
+                          "cascadeRun": 3,
+                          "waterfallMinimumDrop": 8,
+                          "waterfallThalwegFraction": 0.4,
+                          "plungeBasinMinimumDrop": 3,
+                          "plungeBasinLengthRatio": 1.5,
+                          "plungeBasinDepth": 2
+                        },
+                        "mouths": {"flareRatio": 2.2, "maximumOceanApron": 1, "inletCourseFraction": 0.25, "inletRampSlope": 2},
+                        "erosion": {"style": "TERRACED", "terraceSteps": 6, "cliffFraction": 0.3, "bedProfile": "V"}
                       },
                       "underground": {
                         "sources": {"density": 0.4, "minimumPerTile": 3, "minimumSpacing": 896},
@@ -175,7 +288,11 @@ public class IrisRiverConfigurationTest {
                         "depth": {"min": 2, "max": 4},
                         "headroom": {"min": 7, "max": 15},
                         "connectToExistingCaves": false,
-                        "mouthLevelingDistance": 80
+                        "mouthLevelingDistance": 80,
+                        "minimumRockCover": 4,
+                        "minimumFloorCover": 2,
+                        "wideningSources": 16,
+                        "bedMaterial": {"enabled": true, "palette": {"palette": [{"block": "minecraft:mud"}]}, "depth": 2}
                       },
                       "grottos": {
                         "coastal": {
@@ -184,7 +301,10 @@ public class IrisRiverConfigurationTest {
                           "horizontalRadius": 40,
                           "verticalRadius": 18,
                           "headroom": 9,
-                          "maximumVolume": 70000
+                          "maximumVolume": 70000,
+                          "cliffMinimumHeight": 9,
+                          "cliffSlopeFactor": 1.25,
+                          "seaCaves": {"sweepJitterDegrees": 40}
                         },
                         "inland": {
                           "enabled": true,
@@ -225,7 +345,9 @@ public class IrisRiverConfigurationTest {
                     "bankBiomes": ["river/bank"],
                     "widthMultiplier": 1.5,
                     "incisionMultiplier": 0.75,
-                    "bankMultiplier": 2
+                    "bankMultiplier": 2,
+                    "shoreWidth": 3,
+                    "erosion": false
                   }
                 }
                 """, IrisDimension.class);
@@ -234,7 +356,8 @@ public class IrisRiverConfigurationTest {
                   "placement": "TRANSIT_ONLY",
                   "routing": "AVOID",
                   "mouthBiomes": ["river/mouth"],
-                  "routingMultiplier": 2.5
+                  "routingMultiplier": 2.5,
+                  "erosion": true
                 }}
                 """, IrisRegion.class);
         IrisBiome biome = gson.fromJson("""
@@ -242,7 +365,8 @@ public class IrisRiverConfigurationTest {
                   "placement": "REQUIRED_HEADWATER",
                   "routing": "BLOCK",
                   "floodedCaveBiomes": [],
-                  "depthMultiplier": 0.8
+                  "depthMultiplier": 0.8,
+                  "shoreWidth": 0
                 }}
                 """, IrisBiome.class);
 
@@ -264,16 +388,62 @@ public class IrisRiverConfigurationTest {
         assertEquals(14, rivers.getSurface().getChannel().getMaximumIncision());
         assertEquals(0.4D, rivers.getSurface().getChannel().getRoughness(), 0D);
         assertEquals(24, rivers.getSurface().getChannel().getRoughnessWavelength());
+        assertEquals(8, rivers.getSurface().getChannel().getSmoothingRadius());
+        assertEquals(0.8D, rivers.getSurface().getChannel().getOutlineMinimumRatio(), 0D);
+        assertEquals(2D, rivers.getSurface().getChannel().getOutlineMaximumRatio(), 0D);
+        assertEquals(3D, rivers.getSurface().getChannel().getSpringExtraDepth(), 0D);
         assertEquals(2.5D, rivers.getSurface().getBanks().getShoreWidth(), 0D);
         assertEquals(4D, rivers.getSurface().getBanks().getBlendSlope(), 0D);
         assertEquals(6, rivers.getSurface().getBanks().getMinimumBlendWidth());
         assertEquals(48, rivers.getSurface().getBanks().getMaximumBlendWidth());
         assertFalse(rivers.getSurface().getBanks().isExposeCutStrata());
+        assertEquals(1.5D, rivers.getSurface().getBanks().getShoreRise(), 0D);
+        assertEquals(6D, rivers.getSurface().getBanks().getBlendBaseWidth(), 0D);
+        assertMaterial(rivers.getSurface().getBanks().getShoreMaterial(), "minecraft:sand", 2);
+        assertMaterial(rivers.getSurface().getBanks().getBankMaterial(), "minecraft:coarse_dirt", 3);
+        assertMaterial(rivers.getSurface().getBed().getMaterial(), "minecraft:gravel", 4);
         assertEquals(3, rivers.getSurface().getFlow().getCascadeRun());
         assertEquals(8, rivers.getSurface().getFlow().getWaterfallMinimumDrop());
+        assertEquals(0.4D, rivers.getSurface().getFlow().getWaterfallThalwegFraction(), 0D);
+        assertEquals(3, rivers.getSurface().getFlow().getPlungeBasinMinimumDrop());
+        assertEquals(1.5D, rivers.getSurface().getFlow().getPlungeBasinLengthRatio(), 0D);
+        assertEquals(2, rivers.getSurface().getFlow().getPlungeBasinDepth());
         assertEquals(2.2D, rivers.getSurface().getMouths().getFlareRatio(), 0D);
         assertEquals(1, rivers.getSurface().getMouths().getMaximumOceanApron());
+        assertEquals(0.25D, rivers.getSurface().getMouths().getInletCourseFraction(), 0D);
+        assertEquals(2D, rivers.getSurface().getMouths().getInletRampSlope(), 0D);
+        assertEquals(IrisRiverBlendStyle.TERRACED, rivers.getSurface().getErosion().getStyle());
+        assertEquals(6, rivers.getSurface().getErosion().getTerraceSteps());
+        assertEquals(0.3D, rivers.getSurface().getErosion().getCliffFraction(), 0D);
+        assertEquals(IrisRiverBedProfile.V, rivers.getSurface().getErosion().getBedProfile());
         assertEquals(768, rivers.getSurface().getSources().getMinimumSpacing());
+        IrisSurfaceRiverShapeConfig surfaceShape = rivers.getGeometry().getSurface();
+        assertEquals(3.5D, surfaceShape.getBedRoundness(), 0D);
+        assertEquals(0.3D, surfaceShape.getBedRoughness(), 0D);
+        assertEquals(0.35D, surfaceShape.getWallRoughness(), 0D);
+        assertEquals(Integer.valueOf(20), surfaceShape.getRoughnessWavelength());
+        assertEquals(0.9D, surfaceShape.getRadialBase(), 0D);
+        assertEquals(0.5D, surfaceShape.getRadialMinimum(), 0D);
+        assertEquals(1.5D, surfaceShape.getRadialMaximum(), 0D);
+        assertEquals(0.1D, surfaceShape.getPrimaryLobeStrength(), 0D);
+        assertEquals(0.05D, surfaceShape.getDetailLobeStrength(), 0D);
+        assertEquals(0.2D, surfaceShape.getCeilingRoughness(), 0D);
+        assertEquals(0.7D, surfaceShape.getAspectMinimum(), 0D);
+        assertEquals(0.3D, surfaceShape.getAspectRange(), 0D);
+        IrisRiverChannelShapeConfig undergroundShape = rivers.getGeometry().getUnderground();
+        assertEquals(3D, undergroundShape.getBedRoundness(), 0D);
+        assertEquals(1D, undergroundShape.getRadialBase(), 0D);
+        assertEquals(0.6D, undergroundShape.getRadialMinimum(), 0D);
+        assertEquals(1.3D, undergroundShape.getRadialMaximum(), 0D);
+        assertEquals(0.12D, undergroundShape.getPrimaryLobeStrength(), 0D);
+        assertEquals(0.04D, undergroundShape.getDetailLobeStrength(), 0D);
+        assertEquals(0.4D, undergroundShape.getCeilingRoughness(), 0D);
+        assertEquals(0.8D, undergroundShape.getAspectMinimum(), 0D);
+        assertEquals(0.1D, undergroundShape.getAspectRange(), 0D);
+        assertEquals(0.5D, rivers.getGeometry().getGrottos().getAspectMinimum(), 0D);
+        assertEquals(0.6D, rivers.getGeometry().getGrottos().getAspectRange(), 0D);
+        assertEquals(0.9D, rivers.getGeometry().getGrottos().getCeilingRoughness(), 0D);
+        assertEquals(0.86D, rivers.getGeometry().getGrottos().getRadialBase(), 0D);
         assertEquals(5, rivers.getGeometry().getDrops().getCascadeRunPerBlock());
         assertEquals(2.4D, rivers.getGeometry().getDrops().getCascadeExponent(), 0D);
         assertEquals(3, rivers.getGeometry().getDrops().getMaximumCascadeStep());
@@ -281,11 +451,19 @@ public class IrisRiverConfigurationTest {
         assertEquals(4, rivers.getGeometry().getDrops().getMaximumFlowDepth());
         assertEquals(2.2D, rivers.getGeometry().getDrops().getBasinWidthRatio(), 0D);
         assertEquals(11, rivers.getGeometry().getDrops().getMaximumBasinDepth());
+        assertEquals(3, rivers.getGeometry().getDrops().getUndergroundCascadeRunPerBlock());
         assertEquals(-96D, rivers.getUnderground().getFluidLevel().getMin(), 0D);
         assertEquals(896, rivers.getUnderground().getSources().getMinimumSpacing());
         assertFalse(rivers.getUnderground().isConnectToExistingCaves());
         assertEquals(80, rivers.getUnderground().getMouthLevelingDistance());
+        assertEquals(4, rivers.getUnderground().getMinimumRockCover());
+        assertEquals(2, rivers.getUnderground().getMinimumFloorCover());
+        assertEquals(16, rivers.getUnderground().getWideningSources());
+        assertMaterial(rivers.getUnderground().getBedMaterial(), "minecraft:mud", 2);
         assertEquals(40, rivers.getGrottos().getCoastal().getHorizontalRadius());
+        assertEquals(Integer.valueOf(9), rivers.getGrottos().getCoastal().getCliffMinimumHeight());
+        assertEquals(1.25D, rivers.getGrottos().getCoastal().getCliffSlopeFactor(), 0D);
+        assertEquals(40D, rivers.getGrottos().getCoastal().getSeaCaves().getSweepJitterDegrees(), 0D);
         assertTrue(rivers.getGrottos().getInland().isEnabled());
         assertTrue(rivers.getGrottos().getInland().isConnectSurfaceRivers());
         assertEquals("underworld", rivers.getProfiles().getFirst().getId());
@@ -303,10 +481,23 @@ public class IrisRiverConfigurationTest {
         assertEquals(IrisRiverRoutingMode.PREFER, dimension.getRiverPolicy().getRouting());
         assertFalse(dimension.getRiverPolicy().getOutletAdmission());
         assertEquals(2D, dimension.getRiverPolicy().getBankMultiplier(), 0D);
+        assertEquals(3D, dimension.getRiverPolicy().getShoreWidth(), 0D);
+        assertFalse(dimension.getRiverPolicy().getErosion());
         assertEquals(Set.of("river/surface", "river/shore", "river/bank"), dimension.getRiverPolicy().getAllBiomeIds());
         assertEquals(IrisRiverPlacementMode.TRANSIT_ONLY, region.getRiverPolicy().getPlacement());
         assertEquals(new KList<>("river/mouth"), region.getRiverPolicy().getMouthBiomes());
+        assertNull(region.getRiverPolicy().getShoreWidth());
+        assertTrue(region.getRiverPolicy().getErosion());
         assertEquals(IrisRiverPlacementMode.REQUIRED_HEADWATER, biome.getRiverPolicy().getPlacement());
         assertTrue(biome.getRiverPolicy().getFloodedCaveBiomes().isEmpty());
+        assertEquals(0D, biome.getRiverPolicy().getShoreWidth(), 0D);
+        assertNull(biome.getRiverPolicy().getErosion());
+    }
+
+    private static void assertMaterial(IrisRiverMaterialConfig material, String block, int depth) {
+        assertTrue(material.isEnabled());
+        assertEquals(depth, material.getDepth());
+        assertEquals(1, material.getPalette().getPalette().size());
+        assertEquals(block, material.getPalette().getPalette().getFirst().getBlock());
     }
 }

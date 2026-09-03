@@ -101,21 +101,21 @@ public class HydrologyPlannerConfinementTest {
                 !ocean, !ocean, !ocean, false, false, false,
                 0D, ocean ? 0D : 1D, 0D, 1D, 1D, 1D, 1D, 1D,
                 "land", "land", "land", "land", "land", "land",
-                List.of("default"), List.of(), Double.NaN, confines
+                List.of("default"), List.of(), Double.NaN, confines, Double.NaN, true
         );
     }
 
     private static HydrologyPlannerSettings settings() {
         HydrologyPlannerSettings.Source surfaceSources = new HydrologyPlannerSettings.Source(true, 4D, 80, 1, 6, 32);
         HydrologyPlannerSettings.Source undergroundSources = new HydrologyPlannerSettings.Source(false, 0D, Integer.MIN_VALUE, 0, 1, 48);
-        HydrologyPlannerSettings.ChannelShape stableChannel = new HydrologyPlannerSettings.ChannelShape(2D, 0D, 0D, 11);
+        HydrologyPlannerSettings.ChannelShape stableChannel = HydrologyPlannerSettings.ChannelShape.of(2D, 0D, 0D, 11);
         return new HydrologyPlannerSettings(
                 63,
                 new HydrologyPlannerSettings.Routing(256, 16, 1_089, 256, 16, 8, 0.5D, 12D, 0.5D, 0.2D, 1D, 0),
                 new HydrologyPlannerSettings.Surface(true, surfaceSources, 4, 12, 2, 4, 12, 1.5D, HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(false, undergroundSources, 68, 82, 4, 14, 2, 5, 6, 12, false, 0),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Underground.of(false, undergroundSources, 68, 82, 4, 14, 2, 5, 6, 12, false, 0),
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),

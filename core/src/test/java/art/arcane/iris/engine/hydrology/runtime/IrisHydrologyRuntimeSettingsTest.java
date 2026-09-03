@@ -1,17 +1,30 @@
 package art.arcane.iris.engine.hydrology.runtime;
 
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.hydrology.HydrologyPlannerSettings;
+import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisCoastalRiverGrottoConfig;
 import art.arcane.iris.engine.object.IrisDeepFluidConfig;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.engine.object.IrisRiverBedProfile;
+import art.arcane.iris.engine.object.IrisRiverBlendStyle;
+import art.arcane.iris.engine.object.IrisRiverGeometryConfig;
 import art.arcane.iris.engine.object.IrisRiverHydrology;
 import art.arcane.iris.engine.object.IrisRiverInlandOutlet;
+import art.arcane.iris.engine.object.IrisRiverPolicy;
 import art.arcane.iris.engine.object.IrisRiverRoutingConfig;
+import art.arcane.iris.engine.object.IrisSurfaceRiverShapeConfig;
+import art.arcane.volmlib.util.collection.KList;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class IrisHydrologyRuntimeSettingsTest {
     @Test
@@ -128,7 +141,7 @@ public class IrisHydrologyRuntimeSettingsTest {
         assertEquals(3, banks.cascadeRun());
         assertEquals(8, banks.waterfallMinimumDrop());
         assertEquals(2.2D, banks.mouthFlareRatio(), 0D);
-        assertEquals(new HydrologyPlannerSettings.Inlet(96, 5, 40), banks.inlet());
+        assertEquals(HydrologyPlannerSettings.Inlet.of(96, 5, 40), banks.inlet());
         assertFalse(banks.exposeCutStrata());
         assertEquals(12, settings.surface().maximumIncision());
         assertEquals(2.5D, settings.surface().shoreWidth(), 0D);
@@ -218,7 +231,7 @@ public class IrisHydrologyRuntimeSettingsTest {
 
         HydrologyPlannerSettings.SeaCaves mapped = IrisHydrologyRuntime.createSettings(dimension, dimension.getHydrology(), () -> null)
                 .seaCaves();
-        assertEquals(new HydrologyPlannerSettings.SeaCaves(true, 5, 200, 9, 20), mapped);
+        assertEquals(HydrologyPlannerSettings.SeaCaves.of(true, 5, 200, 9, 20), mapped);
 
         coastal.setEnabled(false);
         HydrologyPlannerSettings.SeaCaves withoutCoastalGrottos = IrisHydrologyRuntime.createSettings(dimension, dimension.getHydrology(), () -> null)
@@ -230,5 +243,245 @@ public class IrisHydrologyRuntimeSettingsTest {
         coastal.setEnabled(true);
         coastal.getSeaCaves().setEnabled(false);
         assertFalse(IrisHydrologyRuntime.createSettings(dimension, dimension.getHydrology(), () -> null).seaCaves().enabled());
+    }
+
+    @Test
+    public void surfaceShapingKnobsMapIntoErosionChannelFlowAndInlet() {
+        IrisDimension dimension = new IrisDimension();
+        IrisRiverHydrology rivers = dimension.getHydrology().getRivers();
+        rivers.getSurface().getBanks().setShoreRise(1.5D).setBlendBaseWidth(3D);
+        rivers.getSurface().getErosion()
+                .setEnabled(true)
+                .setSmoothingRadius(7)
+                .setThalwegFraction(0.35D)
+                .setBlendCurve(1.25D)
+                .setBedNoise(0.4D)
+                .setStyle(IrisRiverBlendStyle.TERRACED)
+                .setTerraceSteps(6)
+                .setCliffFraction(0.3D)
+                .setBedProfile(IrisRiverBedProfile.V);
+        rivers.getSurface().getChannel()
+                .setSmoothingRadius(9)
+                .setOutlineMinimumRatio(0.5D)
+                .setOutlineMaximumRatio(1.9D)
+                .setSpringExtraDepth(2.5D);
+        rivers.getSurface().getFlow()
+                .setWaterfallThalwegFraction(0.4D)
+                .setPlungeBasinMinimumDrop(3)
+                .setPlungeBasinLengthRatio(1.5D)
+                .setPlungeBasinDepth(2);
+        rivers.getSurface().getMouths()
+                .setInletLength(80)
+                .setInletDepth(4)
+                .setMaximumIncision(36)
+                .setInletCourseFraction(0.3D)
+                .setInletRampSlope(1.75D);
+
+        HydrologyPlannerSettings.Banks banks = settings(dimension).surface().banks();
+
+        assertEquals(new HydrologyPlannerSettings.Erosion(true, 7, 0.35D, 1.25D, 0.4D,
+                IrisRiverBlendStyle.TERRACED, 6, 0.3D, IrisRiverBedProfile.V, 1.5D, 3D), banks.erosion());
+        assertEquals(new HydrologyPlannerSettings.Channel(9, 0.5D, 1.9D, 2.5D), banks.channel());
+        assertEquals(new HydrologyPlannerSettings.Flow(0.4D, 3, 1.5D, 2), banks.flow());
+        assertEquals(new HydrologyPlannerSettings.Inlet(80, 4, 36, 0.3D, 1.75D), banks.inlet());
+    }
+
+    @Test
+    public void surfaceShapeRoughnessFallsBackToTheChannelRoughnessWhenUnset() {
+        IrisDimension dimension = new IrisDimension();
+        IrisRiverHydrology rivers = dimension.getHydrology().getRivers();
+        rivers.getSurface().getChannel().setRoughness(0.37D).setRoughnessWavelength(13);
+        IrisSurfaceRiverShapeConfig shape = rivers.getGeometry().getSurface();
+        shape.setBedRoughness(null).setWallRoughness(null).setRoughnessWavelength(null);
+
+        assertEquals(
+                new HydrologyPlannerSettings.ChannelShape(2D, 0.37D, 0.37D, 13, 0.86D, 0.58D, 1.18D, 0.08D, 0.06D, 0D, 0.62D, 0.2D),
+                settings(dimension).geometry().surface());
+
+        shape.setBedRoughness(0.11D);
+        assertEquals(
+                new HydrologyPlannerSettings.ChannelShape(2D, 0.11D, 0.37D, 13, 0.86D, 0.58D, 1.18D, 0.08D, 0.06D, 0D, 0.62D, 0.2D),
+                settings(dimension).geometry().surface());
+
+        shape.setBedRoundness(3.5D)
+                .setWallRoughness(0.22D)
+                .setRoughnessWavelength(21)
+                .setRadialBase(0.9D)
+                .setRadialMinimum(0.5D)
+                .setRadialMaximum(1.3D)
+                .setPrimaryLobeStrength(0.12D)
+                .setDetailLobeStrength(0.04D)
+                .setCeilingRoughness(0.3D)
+                .setAspectMinimum(0.7D)
+                .setAspectRange(0.25D);
+        assertEquals(
+                new HydrologyPlannerSettings.ChannelShape(3.5D, 0.11D, 0.22D, 21, 0.9D, 0.5D, 1.3D, 0.12D, 0.04D, 0.3D, 0.7D, 0.25D),
+                settings(dimension).geometry().surface());
+    }
+
+    @Test
+    public void undergroundAndGrottoShapeKnobsMapIntoTheirChannelShapes() {
+        IrisDimension dimension = new IrisDimension();
+        IrisRiverGeometryConfig geometry = dimension.getHydrology().getRivers().getGeometry();
+        geometry.getUnderground()
+                .setBedRoundness(3.1D)
+                .setBedRoughness(0.31D)
+                .setWallRoughness(0.29D)
+                .setRoughnessWavelength(17)
+                .setRadialBase(0.7D)
+                .setRadialMinimum(0.4D)
+                .setRadialMaximum(1.5D)
+                .setPrimaryLobeStrength(0.2D)
+                .setDetailLobeStrength(0.1D)
+                .setCeilingRoughness(0.45D)
+                .setAspectMinimum(0.8D)
+                .setAspectRange(0.1D);
+        geometry.getGrottos()
+                .setBedRoundness(1.5D)
+                .setBedRoughness(0.15D)
+                .setWallRoughness(0.35D)
+                .setRoughnessWavelength(7)
+                .setRadialBase(1.1D)
+                .setRadialMinimum(0.9D)
+                .setRadialMaximum(1.9D)
+                .setPrimaryLobeStrength(0.3D)
+                .setDetailLobeStrength(0.25D)
+                .setCeilingRoughness(0.6D)
+                .setAspectMinimum(0.5D)
+                .setAspectRange(0.4D);
+
+        HydrologyPlannerSettings.Geometry mapped = settings(dimension).geometry();
+
+        assertEquals(new HydrologyPlannerSettings.ChannelShape(3.1D, 0.31D, 0.29D, 17, 0.7D, 0.4D, 1.5D, 0.2D, 0.1D, 0.45D, 0.8D, 0.1D),
+                mapped.underground());
+        assertEquals(new HydrologyPlannerSettings.ChannelShape(1.5D, 0.15D, 0.35D, 7, 1.1D, 0.9D, 1.9D, 0.3D, 0.25D, 0.6D, 0.5D, 0.4D),
+                mapped.grottos());
+    }
+
+    @Test
+    public void undergroundRockCoverFloorCoverAndWideningSourcesMap() {
+        IrisDimension dimension = new IrisDimension();
+        dimension.getHydrology().getRivers().getUnderground()
+                .setMinimumRockCover(3)
+                .setMinimumFloorCover(2)
+                .setWideningSources(20);
+
+        HydrologyPlannerSettings.Underground mapped = settings(dimension).underground();
+
+        assertEquals(3, mapped.minimumRockCover());
+        assertEquals(2, mapped.minimumFloorCover());
+        assertEquals(20, mapped.wideningSources());
+    }
+
+    @Test
+    public void coastalCliffKnobsMapWithTheVerticalRadiusFallback() {
+        IrisDimension dimension = new IrisDimension();
+        IrisCoastalRiverGrottoConfig coastal = dimension.getHydrology().getRivers().getGrottos().getCoastal();
+        coastal.setVerticalRadius(7).setCliffMinimumHeight(null).setCliffSlopeFactor(1.25D);
+
+        HydrologyPlannerSettings.Outlets fallback = settings(dimension).outlets();
+        assertEquals(7, fallback.coastalCliffMinimumHeight());
+        assertEquals(1.25D, fallback.coastalCliffSlopeFactor(), 0D);
+
+        coastal.setVerticalRadius(2);
+        assertEquals(4, settings(dimension).outlets().coastalCliffMinimumHeight());
+
+        coastal.setCliffMinimumHeight(2);
+        assertEquals(2, settings(dimension).outlets().coastalCliffMinimumHeight());
+    }
+
+    @Test
+    public void seaCaveSweepJitterMapsIntoPlannerSettings() {
+        IrisDimension dimension = new IrisDimension();
+        IrisRiverHydrology rivers = dimension.getHydrology().getRivers();
+        rivers.setEnabled(true);
+        IrisCoastalRiverGrottoConfig coastal = rivers.getGrottos().getCoastal();
+        coastal.setEnabled(true);
+        coastal.getSeaCaves()
+                .setEnabled(true)
+                .setMaximumPerTile(5)
+                .setMinimumSpacing(200)
+                .setMinimumCoastHeight(9)
+                .setDepth(20)
+                .setSweepJitterDegrees(40D);
+
+        assertEquals(new HydrologyPlannerSettings.SeaCaves(true, 5, 200, 9, 20, 40D), settings(dimension).seaCaves());
+
+        coastal.setEnabled(false);
+        assertEquals(new HydrologyPlannerSettings.SeaCaves(false, 5, 200, 9, 20, 40D), settings(dimension).seaCaves());
+    }
+
+    @Test
+    public void undergroundCascadeRunPerBlockMapsIntoDrops() {
+        IrisDimension dimension = new IrisDimension();
+        dimension.getHydrology().getRivers().getGeometry().getDrops()
+                .setCascadeRunPerBlock(4)
+                .setCascadeExponent(2.2D)
+                .setMaximumCascadeStep(1)
+                .setFlowWidthRatio(0.81D)
+                .setMaximumFlowDepth(3)
+                .setBasinWidthRatio(2.1D)
+                .setMaximumBasinDepth(9)
+                .setUndergroundCascadeRunPerBlock(3);
+
+        assertEquals(new HydrologyPlannerSettings.Drops(4, 2.2D, 1, 0.81D, 3, 2.1D, 9, 3), settings(dimension).geometry().drops());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void widestShoreBiomeWidthCoversPolicyShoreWidthAcrossDimensionRegionsAndBiomes() {
+        IrisDimension dimension = new IrisDimension().setRegions(new KList<>("valley"));
+        dimension.getRiverPolicy().setShoreWidth(4D);
+
+        assertEquals(4D, IrisHydrologyRuntime.widestShoreBiomeWidth(dimension, () -> null, 1.5D), 0D);
+        assertEquals(4D, settings(dimension).widestShoreBiomeWidth(), 0D);
+
+        IrisRegion valley = new IrisRegion().setRiverPolicy(new IrisRiverPolicy().setShoreBiomeWidth(6D));
+        IrisBiome beach = new IrisBiome().setRiverPolicy(new IrisRiverPolicy().setShoreWidth(9D));
+        IrisBiome plain = new IrisBiome();
+        IrisData data = mock(IrisData.class);
+        ResourceLoader<IrisRegion> regionLoader = mock(ResourceLoader.class);
+        ResourceLoader<IrisBiome> biomeLoader = mock(ResourceLoader.class);
+        when(data.getRegionLoader()).thenReturn(regionLoader);
+        when(data.getBiomeLoader()).thenReturn(biomeLoader);
+        when(regionLoader.load("valley")).thenReturn(valley);
+        when(biomeLoader.getPossibleKeys()).thenReturn(new String[]{"beach", "plain"});
+        when(biomeLoader.loadAll(any(String[].class))).thenReturn(new KList<>(beach, plain));
+
+        assertEquals(9D, IrisHydrologyRuntime.widestShoreBiomeWidth(dimension, () -> data, 1.5D), 0D);
+
+        beach.getRiverPolicy().setShoreWidth(null).setShoreBiomeWidth(11D);
+        assertEquals(11D, IrisHydrologyRuntime.widestShoreBiomeWidth(dimension, () -> data, 1.5D), 0D);
+
+        valley.getRiverPolicy().setShoreWidth(12D);
+        assertEquals(12D, IrisHydrologyRuntime.widestShoreBiomeWidth(dimension, () -> data, 1.5D), 0D);
+
+        dimension.getRiverPolicy().setShoreWidth(null);
+        valley.getRiverPolicy().setShoreWidth(null).setShoreBiomeWidth(null);
+        beach.getRiverPolicy().setShoreBiomeWidth(null);
+        assertEquals(1.5D, IrisHydrologyRuntime.widestShoreBiomeWidth(dimension, () -> data, 1.5D), 0D);
+    }
+
+    @Test
+    public void defaultConfigurationMapsToTheDefaultShapingRecords() {
+        IrisDimension dimension = new IrisDimension();
+        HydrologyPlannerSettings settings = settings(dimension);
+
+        assertEquals(HydrologyPlannerSettings.Banks.defaults(), settings.surface().banks());
+        assertEquals(HydrologyPlannerSettings.ChannelShape.of(2D, 0.25D, 0.25D, 16), settings.geometry().surface());
+        assertEquals(HydrologyPlannerSettings.ChannelShape.of(2.4D, 0.28D, 0.24D, 11), settings.geometry().underground());
+        assertEquals(HydrologyPlannerSettings.ChannelShape.of(2.4D, 0.28D, 0.24D, 11), settings.geometry().grottos());
+        assertEquals(HydrologyPlannerSettings.Drops.of(2, 1.4D, 2, 0.45D, 2, 1.8D, 8), settings.geometry().drops());
+        assertEquals(1, settings.underground().minimumRockCover());
+        assertEquals(1, settings.underground().minimumFloorCover());
+        assertEquals(8, settings.underground().wideningSources());
+        assertEquals(7, settings.outlets().coastalCliffMinimumHeight());
+        assertEquals(0.5D, settings.outlets().coastalCliffSlopeFactor(), 0D);
+        assertEquals(25D, settings.seaCaves().sweepJitterDegrees(), 0D);
+        assertEquals(1.5D, settings.widestShoreBiomeWidth(), 0D);
+    }
+
+    private static HydrologyPlannerSettings settings(IrisDimension dimension) {
+        return IrisHydrologyRuntime.createSettings(dimension, dimension.getHydrology(), () -> null);
     }
 }

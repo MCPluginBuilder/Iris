@@ -48,6 +48,26 @@ public class IrisSurfaceRiverChannelConfig {
     @Desc("Blocks over which the spring pool narrows back to the channel width.")
     private int springLength = 24;
 
+    @MinNumber(0)
+    @MaxNumber(64)
+    @Desc("Stations along the course the sampled width and depth are averaged over, so the channel changes size gradually; 0 follows the sampled values exactly at every station.")
+    private int smoothingRadius = 16;
+
+    @MinNumber(0.2)
+    @MaxNumber(1)
+    @Desc("Narrowest the roughened waterline may pinch, as a fraction of the channel half-width; 1 stops the outline from ever narrowing below the nominal width.")
+    private double outlineMinimumRatio = 0.6D;
+
+    @MinNumber(1)
+    @MaxNumber(3)
+    @Desc("Widest the roughened waterline may bulge, as a fraction of the channel half-width; 1 stops the outline from ever widening beyond the nominal width.")
+    private double outlineMaximumRatio = 1.4D;
+
+    @MinNumber(0)
+    @MaxNumber(8)
+    @Desc("Extra bed depth in blocks at the headwater spring, fading to nothing over springLength; 0 keeps the spring pool as deep as the channel.")
+    private double springExtraDepth = 1D;
+
     private static IrisStyledRange range(double min, double max, double zoom) {
         IrisGeneratorStyle style = new IrisGeneratorStyle(NoiseStyle.IRIS).zoomed(zoom);
         return new IrisStyledRange(min, max, style);

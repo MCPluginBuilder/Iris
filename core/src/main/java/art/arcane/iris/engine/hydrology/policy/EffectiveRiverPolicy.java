@@ -23,7 +23,9 @@ public record EffectiveRiverPolicy(
         double routingMultiplier,
         double bankMultiplier,
         Double shoreBiomeWidth,
-        RiverConfinement confinement
+        RiverConfinement confinement,
+        Double shoreWidth,
+        Boolean erosion
 ) {
     public EffectiveRiverPolicy {
         placement = Objects.requireNonNull(placement);
@@ -31,6 +33,9 @@ public record EffectiveRiverPolicy(
         confinement = Objects.requireNonNull(confinement);
         if (shoreBiomeWidth != null && (!Double.isFinite(shoreBiomeWidth) || shoreBiomeWidth < 0D)) {
             throw new IllegalArgumentException("shoreBiomeWidth must be finite and non-negative.");
+        }
+        if (shoreWidth != null && (!Double.isFinite(shoreWidth) || shoreWidth < 0D)) {
+            throw new IllegalArgumentException("shoreWidth must be finite and non-negative.");
         }
         profiles = List.copyOf(profiles);
         surfaceBiomes = List.copyOf(surfaceBiomes);

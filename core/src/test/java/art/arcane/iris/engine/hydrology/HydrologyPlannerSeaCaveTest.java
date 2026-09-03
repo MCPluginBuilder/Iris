@@ -19,7 +19,7 @@ public class HydrologyPlannerSeaCaveTest {
 
     @Test
     public void seaCavesOpenFromTheSeaIntoTheCliffWithoutARiver() {
-        HydrologyPlannerSettings.SeaCaves seaCaves = new HydrologyPlannerSettings.SeaCaves(true, 2, 64, 8, 12);
+        HydrologyPlannerSettings.SeaCaves seaCaves = HydrologyPlannerSettings.SeaCaves.of(true, 2, 64, 8, 12);
         HydrologyPlannerSettings settings = settings(128, 0D, CHAMBER, 12, seaCaves);
         HydrologyTerrainSampler cliffCoast = cliffCoast(112, 92);
 
@@ -98,7 +98,7 @@ public class HydrologyPlannerSeaCaveTest {
     @Test
     public void seaCavesAreDeterministicAndOwnedByExactlyOneTile() {
         HydrologyPlannerSettings settings = settings(128, 0D, CHAMBER, 12,
-                new HydrologyPlannerSettings.SeaCaves(true, 2, 64, 8, 12));
+                HydrologyPlannerSettings.SeaCaves.of(true, 2, 64, 8, 12));
         HydrologyTerrainSampler cliffCoast = cliffCoast(112, 92);
         List<HydrologyTileKey> keys = List.of(
                 TILE,
@@ -137,7 +137,7 @@ public class HydrologyPlannerSeaCaveTest {
     @Test
     public void seaCavesPreferTheSteeperCoastAndKeepTheirSpacing() {
         // The high stretch is 128 blocks of coast; the spacing leaves room for a second cave wherever the first lands.
-        HydrologyPlannerSettings.SeaCaves seaCaves = new HydrologyPlannerSettings.SeaCaves(true, 2, 32, 4, 12);
+        HydrologyPlannerSettings.SeaCaves seaCaves = HydrologyPlannerSettings.SeaCaves.of(true, 2, 32, 4, 12);
         HydrologyPlannerSettings settings = settings(256, 0D, CHAMBER, 12, seaCaves);
         HydrologyTerrainSampler coast = (int x, int z) -> x >= 240
                 ? HydrologyTerrainSample.ocean(54, "ocean")
@@ -172,7 +172,7 @@ public class HydrologyPlannerSeaCaveTest {
     @Test
     public void seaCavesKeepClearOfRiverMouthsAndLowCoasts() {
         HydrologyPlannerSettings settings = settings(128, 2D, CHAMBER, 12,
-                new HydrologyPlannerSettings.SeaCaves(true, 4, 32, 8, 12));
+                HydrologyPlannerSettings.SeaCaves.of(true, 4, 32, 8, 12));
         HydrologyTerrainSampler riverCoast = (int x, int z) -> x >= 112
                 ? HydrologyTerrainSample.ocean(54, "ocean")
                 : land(92, x <= 16);
@@ -207,7 +207,7 @@ public class HydrologyPlannerSeaCaveTest {
 
         HydrologyTile lowCoast = new HydrologyPlanner(
                 994L,
-                settings(128, 0D, CHAMBER, 12, new HydrologyPlannerSettings.SeaCaves(true, 4, 32, 8, 12)),
+                settings(128, 0D, CHAMBER, 12, HydrologyPlannerSettings.SeaCaves.of(true, 4, 32, 8, 12)),
                 cliffCoast(112, 66)
         ).plan(TILE);
         assertTrue(courses(lowCoast, RiverCourseType.SEA_CAVE).isEmpty());
@@ -219,7 +219,7 @@ public class HydrologyPlannerSeaCaveTest {
     public void seaCaveChamberFitsTheVolumeCap() {
         HydrologyPlannerSettings settings = settings(128, 0D,
                 new HydrologyPlannerSettings.Grotto(true, 12, 7, 10, 1000), 12,
-                new HydrologyPlannerSettings.SeaCaves(true, 2, 64, 8, 12));
+                HydrologyPlannerSettings.SeaCaves.of(true, 2, 64, 8, 12));
 
         HydrologyTile tile = new HydrologyPlanner(994L, settings, cliffCoast(112, 92)).plan(TILE);
 
@@ -286,7 +286,9 @@ public class HydrologyPlannerSeaCaveTest {
                 List.of("beta", "alpha"),
                 List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -308,9 +310,9 @@ public class HydrologyPlannerSeaCaveTest {
                 new HydrologyPlannerSettings.Routing(tileSize, 16, 512, 256, 0, 0, 0.5D, 12D, 0.5D, 0.1D, 1D, 0),
                 surface,
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         false, undergroundSources, 68, 82, 4, 12, 2, 4, 5, 9, true, 0),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         coastal,
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),

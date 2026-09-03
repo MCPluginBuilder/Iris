@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.modifier;
 
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.actuator.IrisDecorantActuator;
 import art.arcane.iris.engine.framework.Engine;
@@ -27,7 +28,9 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDecorationPart;
 import art.arcane.iris.engine.object.IrisDecorator;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
+import art.arcane.iris.engine.object.IrisHydrology;
 import art.arcane.iris.engine.object.IrisProceduralBlocks;
+import art.arcane.iris.engine.object.IrisRiverMaterialConfig;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.util.project.context.ChunkContext;
@@ -690,6 +693,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
         if (floorBiome != null) {
             HydrologyCaveCell floorHydrology = dataIfPresent(
                     mantleChunk, rx, zoneFloor, rz, HydrologyCaveCell.class);
+            IrisRiverMaterialConfig bedMaterial = undergroundBedMaterial();
             KList<PlatformBlockState> floorLayers = floorBiome.generateLayers(
                     getDimension(), worldX, worldZ, rng, 3, zoneFloor, getData(), getComplex());
             for (int i = 0; i < zoneFloor - 1; i++) {
@@ -709,7 +713,11 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 }
                 PlatformBlockState existing = output.getRaw(rx, floorY, rz);
                 PlatformBlockState layer = resolveSubmergedCaveFloorLayer(
-                        output, rx, floorY, rz, floorLayers.get(i), floorHydrology);
+                        output, rx, floorY, rz,
+                        paintUndergroundBedMaterial(
+                                floorLayers.get(i), bedMaterial, floorHydrology, i,
+                                rng, worldX, floorY, worldZ, getData()),
+                        floorHydrology);
                 if (!B.isSolid(existing)
                         || !canReplaceHydrologyGuard(hydrology, layer, false)
                         || !canReplaceCaveFloorLayer(output, rx, floorY, rz, layer)) {
@@ -804,6 +812,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
         if (floorBiome != null) {
             HydrologyCaveCell floorHydrology = dataIfPresent(
                     mc, rx, zone.floor, rz, HydrologyCaveCell.class);
+            IrisRiverMaterialConfig bedMaterial = undergroundBedMaterial();
             KList<PlatformBlockState> floorBlocks = floorBiome.generateLayers(getDimension(), xx, zz, rng, 3, zone.floor, getData(), getComplex());
             for (int i = 0; i < zone.floor - 1; i++) {
                 if (!floorBlocks.hasIndex(i)) {
@@ -817,7 +826,11 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                     continue;
                 }
                 PlatformBlockState block = resolveSubmergedCaveFloorLayer(
-                        output, rx, y, rz, floorBlocks.get(i), floorHydrology);
+                        output, rx, y, rz,
+                        paintUndergroundBedMaterial(
+                                floorBlocks.get(i), bedMaterial, floorHydrology, i,
+                                rng, xx, y, zz, getData()),
+                        floorHydrology);
                 PlatformBlockState existing = output.getRaw(rx, y, rz);
                 if (!B.isSolid(existing)
                         || !canReplaceHydrologyGuard(hydrology, block, false)
@@ -923,6 +936,44 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             return resolveCustomBiome(customBiomeCache, cavern.getCustomBiome());
         }
         return resolveCaveBiome(caveBiomeCache, worldX, y, worldZ, resolverState);
+    }
+
+    /** The dimension's underground river bed palette, or null when nothing paints. */
+    private IrisRiverMaterialConfig undergroundBedMaterial() {
+        IrisHydrology hydrology = getDimension().getHydrology();
+        if (hydrology == null) {
+            return null;
+        }
+
+        IrisRiverMaterialConfig material = hydrology.getRivers().getUnderground().getBedMaterial();
+        return material != null && material.isEnabled() ? material : null;
+    }
+
+    /**
+     * Replaces a cave-floor biome layer with the underground bed palette for the top
+     * {@code index} layers under a hydrology cell. Seal guards keep their biome layers.
+     */
+    static PlatformBlockState paintUndergroundBedMaterial(
+            PlatformBlockState layer,
+            IrisRiverMaterialConfig material,
+            HydrologyCaveCell floorHydrology,
+            int index,
+            RNG rng,
+            int x,
+            int y,
+            int z,
+            IrisData data
+    ) {
+        if (material == null
+                || !material.isEnabled()
+                || floorHydrology == null
+                || floorHydrology.action() == HydrologyCaveAction.SEAL_GUARD
+                || index >= material.getDepth()) {
+            return layer;
+        }
+
+        PlatformBlockState painted = material.getPalette().get(rng, x, y, z, data);
+        return painted == null ? layer : painted;
     }
 
     static boolean canReplaceHydrologyGuard(

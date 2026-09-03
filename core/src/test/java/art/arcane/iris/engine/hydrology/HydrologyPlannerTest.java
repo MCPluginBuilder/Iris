@@ -117,7 +117,7 @@ public class HydrologyPlannerTest {
     public void zeroMouthLevelingDistanceKeepsAcceptedCoursesHydraulicallyNonRising() {
         HydrologyPlannerSettings base = standardSettings(4D, 0D, true, false, List.of());
         HydrologyPlannerSettings.Outlets configured = base.outlets();
-        HydrologyPlannerSettings settings = withOutlets(base, new HydrologyPlannerSettings.Outlets(
+        HydrologyPlannerSettings settings = withOutlets(base, HydrologyPlannerSettings.Outlets.of(
                 configured.oceanEnabled(),
                 configured.coastalGrotto(),
                 configured.inlandGrotto(),
@@ -517,7 +517,9 @@ public class HydrologyPlannerTest {
                     "flooded",
                     List.of("alpha"), List.of(),
                     Double.NaN,
-                    null
+                    null,
+                    Double.NaN,
+                    true
             );
         };
         HydrologyTile tile = new HydrologyPlanner(812L, settings, terrain, solidCaveView()).plan(TILE);
@@ -753,7 +755,7 @@ public class HydrologyPlannerTest {
                 62
         );
         HydrologyPlannerSettings.Outlets configured = base.outlets();
-        HydrologyPlannerSettings settings = withOutlets(base, new HydrologyPlannerSettings.Outlets(
+        HydrologyPlannerSettings settings = withOutlets(base, HydrologyPlannerSettings.Outlets.of(
                 configured.oceanEnabled(),
                 configured.coastalGrotto(),
                 configured.inlandGrotto(),
@@ -1132,7 +1134,7 @@ public class HydrologyPlannerTest {
                 0D,
                 HydrologyPlannerSettings.SeaCaves.disabled()
         );
-        HydrologyPlannerSettings settings = withOutlets(shaped, new HydrologyPlannerSettings.Outlets(
+        HydrologyPlannerSettings settings = withOutlets(shaped, HydrologyPlannerSettings.Outlets.of(
                 true,
                 base.outlets().coastalGrotto(),
                 base.outlets().inlandGrotto(),
@@ -1237,7 +1239,7 @@ public class HydrologyPlannerTest {
     @Test
     public void coastalGrottoIsASeaLevelEllipsoidWithADirectOceanConnection() {
         HydrologyPlannerSettings base = standardSettings(2D, 0D, true, true, List.of());
-        HydrologyPlannerSettings settings = withOutlets(base, new HydrologyPlannerSettings.Outlets(
+        HydrologyPlannerSettings settings = withOutlets(base, HydrologyPlannerSettings.Outlets.of(
                 true,
                 new HydrologyPlannerSettings.Grotto(true, 4, 3, 3, 4096),
                 base.outlets().inlandGrotto(),
@@ -1298,7 +1300,7 @@ public class HydrologyPlannerTest {
     @Test
     public void coastalAndInlandOutletsAreBudgetedSeparately() {
         HydrologyPlannerSettings base = standardSettings(2D, 0D, true, true, List.of());
-        HydrologyPlannerSettings settings = withOutlets(base, new HydrologyPlannerSettings.Outlets(
+        HydrologyPlannerSettings settings = withOutlets(base, HydrologyPlannerSettings.Outlets.of(
                 true,
                 base.outlets().coastalGrotto(),
                 base.outlets().inlandGrotto(),
@@ -1389,7 +1391,7 @@ public class HydrologyPlannerTest {
                 base.routing(),
                 base.surface(),
                 base.hydraulics(),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         true,
                         base.underground().sources(),
                         40,
@@ -1468,7 +1470,7 @@ public class HydrologyPlannerTest {
 
     private HydrologyPlannerSettings mixedCoastSettings(int maximumCoastalPerTile) {
         HydrologyPlannerSettings base = standardSettings(2D, 0D, true, false, List.of());
-        return withOutlets(base, new HydrologyPlannerSettings.Outlets(
+        return withOutlets(base, HydrologyPlannerSettings.Outlets.of(
                 true,
                 new HydrologyPlannerSettings.Grotto(true, 4, 3, 3, 4096),
                 base.outlets().inlandGrotto(),
@@ -1543,7 +1545,7 @@ public class HydrologyPlannerTest {
     public void disabledSurfaceSinkholesRejectSurfaceSourcesButKeepUndergroundSourcesEligible() {
         HydrologyPlannerSettings base = standardSettings(0D, 1D, false, true, List.of());
         HydrologyPlannerSettings.Outlets configured = base.outlets();
-        HydrologyPlannerSettings settings = withOutlets(base, new HydrologyPlannerSettings.Outlets(
+        HydrologyPlannerSettings settings = withOutlets(base, HydrologyPlannerSettings.Outlets.of(
                 configured.oceanEnabled(),
                 configured.coastalGrotto(),
                 configured.inlandGrotto(),
@@ -1944,7 +1946,7 @@ public class HydrologyPlannerTest {
                         1.5D,
                         HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         undergroundDensity > 0D,
                         undergroundSources,
                         68,
@@ -1958,7 +1960,7 @@ public class HydrologyPlannerTest {
                         true,
                         0
                 ),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         oceanEnabled,
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),
                         new HydrologyPlannerSettings.Grotto(inlandEnabled, 4, 3, 3, 4096),
@@ -1978,7 +1980,7 @@ public class HydrologyPlannerTest {
 
     private HydrologyPlannerSettings.Geometry stableGeometry() {
         HydrologyPlannerSettings.ChannelShape stableChannel =
-                new HydrologyPlannerSettings.ChannelShape(2D, 0D, 0D, 11);
+                HydrologyPlannerSettings.ChannelShape.of(2D, 0D, 0D, 11);
         return new HydrologyPlannerSettings.Geometry(
                 new HydrologyPlannerSettings.Meanders(224, 72, 0D, 0D, 0D, 0, 75D),
                 stableChannel,
@@ -2018,7 +2020,7 @@ public class HydrologyPlannerTest {
                         HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(5),
                 base.underground(),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         outlets.coastalGrotto(),
                         outlets.inlandGrotto(),
@@ -2103,7 +2105,9 @@ public class HydrologyPlannerTest {
                     "flooded",
                     List.of("alpha"), List.of(),
                     Double.NaN,
-                    null
+                    null,
+                    Double.NaN,
+                    true
             );
         };
     }
@@ -2170,7 +2174,9 @@ public class HydrologyPlannerTest {
                 "flooded",
                 List.of("alpha", "beta"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -2204,7 +2210,9 @@ public class HydrologyPlannerTest {
                 "flooded",
                 List.of("alpha"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -2247,7 +2255,9 @@ public class HydrologyPlannerTest {
                 "flooded",
                 List.of("beta", "alpha"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -2281,7 +2291,9 @@ public class HydrologyPlannerTest {
                 "flooded",
                 List.of("alpha"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -2315,7 +2327,9 @@ public class HydrologyPlannerTest {
                 "flooded",
                 List.of("alpha", "beta"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -2357,7 +2371,7 @@ public class HydrologyPlannerTest {
                 settings.routing(),
                 settings.surface(),
                 settings.hydraulics(),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         true,
                         sources,
                         underground.minimumFluidY(),
@@ -2390,7 +2404,7 @@ public class HydrologyPlannerTest {
                 settings.routing(),
                 settings.surface(),
                 settings.hydraulics(),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         underground.enabled(),
                         underground.sources(),
                         minimumFluidY,
@@ -2422,7 +2436,7 @@ public class HydrologyPlannerTest {
                 settings.routing(),
                 settings.surface(),
                 settings.hydraulics(),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         underground.enabled(),
                         underground.sources(),
                         underground.minimumFluidY(),

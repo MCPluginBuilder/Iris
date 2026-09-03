@@ -207,7 +207,7 @@ public class HydrologyStyledGeometryTest {
                         1.5D,
                         HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         undergroundDensity > 0D,
                         undergroundSources,
                         68,
@@ -221,7 +221,7 @@ public class HydrologyStyledGeometryTest {
                         true,
                         0
                 ),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),
                         new HydrologyPlannerSettings.Grotto(false, 4, 3, 3, 4096),
@@ -270,7 +270,9 @@ public class HydrologyStyledGeometryTest {
                     "flooded",
                     List.of("water"), List.of(),
                     Double.NaN,
-                    null
+                    null,
+                    Double.NaN,
+                    true
             );
         }
         int height = 118 - Math.floorDiv(x, 12) + (int) StrictMath.round(StrictMath.sin(z / 18D) * 2D);
@@ -304,7 +306,9 @@ public class HydrologyStyledGeometryTest {
                 "flooded",
                 List.of("water"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 

@@ -34,4 +34,9 @@ public class IrisSeaCaveConfig {
     @MaxNumber(128)
     @Desc("How far inland from the shoreline the chamber is swept. 0 leaves a single chamber at the shore.")
     private int depth = 12;
+
+    @MinNumber(0)
+    @MaxNumber(90)
+    @Desc("Largest angle in degrees the inland sweep may turn away from straight inland, chosen per cave; 0 sweeps every sea cave straight in from the shore.")
+    private double sweepJitterDegrees = 25D;
 }

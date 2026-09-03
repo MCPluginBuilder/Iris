@@ -62,7 +62,6 @@ public final class HydrologyPlanner {
     private static final long DEEP_FLUID_SALT = 0x44454550464cL;
     private static final long SURFACE_POOL_SALT = 0x504f4f4cL;
     private static final long SEA_CAVE_SALT = 0x534541434156L;
-    private static final double SEA_CAVE_JITTER_DEGREES = 25D;
     private static final long DEEP_FLUID_X_OFFSET_SALT = 0x44454550584fL;
     private static final long DEEP_FLUID_Z_OFFSET_SALT = 0x444545505a4fL;
     private static final long DEEP_CHANNEL_HEADING_SALT = 0x44454550484447L;
@@ -2262,9 +2261,11 @@ public final class HydrologyPlanner {
 
     private HydrologyFeatureType coastalOutletType(HydrologyTerrainSample land) {
         HydrologyPlannerSettings.Outlets outlets = settings.outlets();
+        // A zero slope factor turns the slope rule off, so only the coast's height over the sea decides.
         boolean cliff = land.naturalHeight() - settingsSeaLevel(land)
                 >= outlets.coastalCliffMinimumHeight()
-                || land.slope() >= outlets.coastalCliffMinimumHeight() * 0.5D;
+                || outlets.coastalCliffSlopeFactor() > 0D
+                && land.slope() >= outlets.coastalCliffMinimumHeight() * outlets.coastalCliffSlopeFactor();
         if (cliff && outlets.coastalGrotto().enabled()) {
             return HydrologyFeatureType.COASTAL_GROTTO;
         }
@@ -5374,7 +5375,7 @@ public final class HydrologyPlanner {
         HydrologyTerrainSample terrain = sampleLandBasis(point.x(), point.z());
         return terrain == null || terrain.ocean()
                 ? Integer.MAX_VALUE
-                : terrain.naturalHeight() - minimumHeadroom - 1;
+                : terrain.naturalHeight() - minimumHeadroom - settings.underground().minimumRockCover();
     }
 
     private int undergroundSegmentCap(
@@ -5418,7 +5419,7 @@ public final class HydrologyPlanner {
             );
             int minimumLandHeight = minimumLandHeightWithinRadius(point.x(), point.z(), radius);
             if (minimumLandHeight != Integer.MAX_VALUE) {
-                segmentCap = Math.min(segmentCap, minimumLandHeight - headroom - 1);
+                segmentCap = Math.min(segmentCap, minimumLandHeight - headroom - settings.underground().minimumRockCover());
             }
         }
         if (samples != null) {
@@ -5484,7 +5485,7 @@ public final class HydrologyPlanner {
                     ? depths[0]
                     : index == depths.length ? depths[depths.length - 1] : Math.max(depths[index - 1], depths[index]);
             depth = Math.max(depth, settings.geometry().drops().maximumBasinDepth());
-            long worldFloorHead = (long) minimumY + depth + 1L;
+            long worldFloorHead = (long) minimumY + depth + settings.underground().minimumFloorCover();
             int boundedWorldFloor = worldFloorHead < Integer.MIN_VALUE
                     ? Integer.MIN_VALUE
                     : worldFloorHead > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) worldFloorHead;
@@ -5707,8 +5708,14 @@ public final class HydrologyPlanner {
             return false;
         }
         int preferredRun = Math.addExact(Math.multiplyExact(drop, drops.cascadeRunPerBlock()), 1);
+        int undergroundRun = drops.undergroundCascadeRunPerBlock();
         int desiredRun = type.isUnderground()
-                ? minimumRun
+                ? (undergroundRun == 0
+                        ? minimumRun
+                        : Math.min(
+                                Math.max(minimumRun, Math.addExact(Math.multiplyExact(drop, undergroundRun), 1)),
+                                maximumGeneratedRun
+                        ))
                 : Math.min(preferredRun, maximumGeneratedRun);
         List<HydrologyPoint> raster = continuousSurfaceBore
                 ? directRaster
@@ -7125,7 +7132,7 @@ public final class HydrologyPlanner {
 
     // The chamber runs inland along the coast normal, turned by a stable jitter so caves do not all
     // face the same way along a straight shore.
-    private static HydrologyPoint seaCaveInnerPoint(
+    private HydrologyPoint seaCaveInnerPoint(
             GridNode land,
             GridNode ocean,
             HydrologyPoint landward,
@@ -7136,7 +7143,8 @@ public final class HydrologyPlanner {
         double normalZ = land.z() - ocean.z();
         double length = StrictMath.hypot(normalX, normalZ);
         double jitter = StrictMath.toRadians(
-                (HydrologyHash.unit(HydrologyHash.mix(stableId, 7)) * 2D - 1D) * SEA_CAVE_JITTER_DEGREES
+                (HydrologyHash.unit(HydrologyHash.mix(stableId, 7)) * 2D - 1D)
+                        * settings.seaCaves().sweepJitterDegrees()
         );
         double cos = StrictMath.cos(jitter);
         double sin = StrictMath.sin(jitter);
@@ -7605,7 +7613,10 @@ public final class HydrologyPlanner {
             int discharge,
             double multiplier
     ) {
-        double flowScale = Math.min(1D, StrictMath.log(discharge + 1D) / StrictMath.log(9D));
+        double flowScale = Math.min(
+                1D,
+                StrictMath.log(discharge + 1D) / StrictMath.log(settings.underground().wideningSources() + 1D)
+        );
         int base = styledBase + (int) StrictMath.round((maximum - styledBase) * flowScale);
         return clamp((int) StrictMath.round(base * multiplier), minimum, maximum);
     }

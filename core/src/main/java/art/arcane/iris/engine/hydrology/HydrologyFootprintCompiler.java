@@ -24,10 +24,10 @@ final class HydrologyFootprintCompiler {
     private static final int[][] HORIZONTAL_NEIGHBORS = {
             {1, 0}, {-1, 0}, {0, 1}, {0, -1}
     };
-    private static final double SURFACE_THALWEG_RATIO = 0.65D;
     private static final long ORGANIC_SHAPE_FIRST_PHASE_SALT = 0x4f5247414e31L;
     private static final long ORGANIC_SHAPE_SECOND_PHASE_SALT = 0x4f5247414e32L;
     private static final long ORGANIC_BED_VARIATION_SALT = 0x424544564152L;
+    private static final long ORGANIC_CEILING_VARIATION_SALT = 0x4345494c564152L;
 
     private final HydrologyPlannerSettings settings;
     private final HydrologyTerrainSampler sampler;
@@ -1169,7 +1169,7 @@ final class HydrologyFootprintCompiler {
                 ellipsoidScale
         );
         int fluidHead = channel ? shape.fluidHead() : bed;
-        int ceiling = channel ? localCeiling(shape, ellipsoidScale) : fluidHead;
+        int ceiling = channel ? localCeiling(shape, ellipsoidScale, segment, channelShape, worldX, worldZ) : fluidHead;
         if (channel && terrainRoofedLayer(course, segment)) {
             ceiling = Math.max(fluidHead, Math.min(ceiling, terrain.naturalHeight() - 1));
         }
@@ -1346,9 +1346,10 @@ final class HydrologyFootprintCompiler {
             resolved = channel ? shape.bed() : gradedBed(shape, terrain, distance);
         } else if (channel) {
             double normalized = Math.min(1D, distance / Math.max(1D, shape.channelRadius()));
+            double thalwegFraction = settings.surface().banks().flow().waterfallThalwegFraction();
             double shoulder = Math.max(
                     0D,
-                    (normalized - SURFACE_THALWEG_RATIO) / (1D - SURFACE_THALWEG_RATIO)
+                    (normalized - thalwegFraction) / (1D - thalwegFraction)
             );
             int maximumDepth = Math.max(1, shape.fluidHead() - shape.bed());
             double roughness = signedOrganicNoise(
@@ -1407,12 +1408,29 @@ final class HydrologyFootprintCompiler {
         return shape.fluidHead() - localExtent;
     }
 
-    private int localCeiling(LayerShape shape, double scale) {
+    private int localCeiling(
+            LayerShape shape,
+            double scale,
+            HydraulicSegment segment,
+            HydrologyPlannerSettings.ChannelShape channelShape,
+            int worldX,
+            int worldZ
+    ) {
         if (!shape.ellipsoid() && !shape.archedChannel()) {
             return shape.ceiling();
         }
         int upperExtent = shape.ceiling() - shape.fluidHead();
-        int localExtent = (int) StrictMath.floor(upperExtent * scale);
+        double extent = upperExtent * scale;
+        if (channelShape.ceilingRoughness() > 0D) {
+            double roughness = signedOrganicNoise(
+                    HydrologyHash.mix(segment.id(), ORGANIC_CEILING_VARIATION_SALT),
+                    worldX,
+                    worldZ,
+                    channelShape.roughnessWavelength()
+            ) * channelShape.ceilingRoughness();
+            extent *= Math.max(0.55D, 1D + roughness);
+        }
+        int localExtent = (int) StrictMath.floor(extent);
         if (shape.archedChannel()) {
             localExtent = Math.max(1, localExtent);
         }
@@ -1473,6 +1491,7 @@ final class HydrologyFootprintCompiler {
         if (!shape.organicBoundary()) {
             return distance;
         }
+        HydrologyPlannerSettings.ChannelShape channelShape = channelShape(segment.type());
         if (segment.type() == HydrologyFeatureType.COASTAL_GROTTO
                 || segment.type() == HydrologyFeatureType.INLAND_GROTTO) {
             double orientation = HydrologyHash.unit(HydrologyHash.mix(
@@ -1483,10 +1502,10 @@ final class HydrologyFootprintCompiler {
             double sine = StrictMath.sin(orientation);
             double rotatedX = deltaX * cosine + deltaZ * sine;
             double rotatedZ = -deltaX * sine + deltaZ * cosine;
-            double aspect = 0.62D + HydrologyHash.unit(HydrologyHash.mix(
+            double aspect = channelShape.aspectMinimum() + HydrologyHash.unit(HydrologyHash.mix(
                     segment.courseId(),
                     ORGANIC_SHAPE_SECOND_PHASE_SALT
-            )) * 0.2D;
+            )) * channelShape.aspectRange();
             distance = StrictMath.hypot(rotatedX, rotatedZ / aspect);
         }
         double angle = StrictMath.atan2(deltaZ, deltaX);
@@ -1500,7 +1519,6 @@ final class HydrologyFootprintCompiler {
         )) * StrictMath.PI * 2D;
         double firstLobe = 0.5D + 0.5D * StrictMath.sin(angle * 3D + firstPhase);
         double secondLobe = 0.5D + 0.5D * StrictMath.sin(angle * 5D + secondPhase);
-        HydrologyPlannerSettings.ChannelShape channelShape = channelShape(segment.type());
         double coherent = signedOrganicNoise(
                 segment.courseId(),
                 worldX,
@@ -1513,12 +1531,12 @@ final class HydrologyFootprintCompiler {
                 worldZ,
                 Math.max(3, channelShape.roughnessWavelength() / 2)
         );
-        double radialScale = 0.86D
-                + (firstLobe - 0.5D) * 0.08D
-                + (secondLobe - 0.5D) * 0.06D
+        double radialScale = channelShape.radialBase()
+                + (firstLobe - 0.5D) * channelShape.primaryLobeStrength()
+                + (secondLobe - 0.5D) * channelShape.detailLobeStrength()
                 + coherent * channelShape.wallRoughness() * 0.7D
                 + detail * channelShape.wallRoughness() * 0.3D;
-        radialScale = Math.max(0.58D, Math.min(1.18D, radialScale));
+        radialScale = Math.max(channelShape.radialMinimum(), Math.min(channelShape.radialMaximum(), radialScale));
         return distance / radialScale;
     }
 

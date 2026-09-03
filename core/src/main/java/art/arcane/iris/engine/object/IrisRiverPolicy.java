@@ -89,6 +89,14 @@ public class IrisRiverPolicy {
     @Desc("Width in blocks of the shore biome band beside a surface river in this area. Null inherits, and without any value the band is the surface banks shore width. Zero gives the area no shore biome band; the geometric shore and erosion are unchanged.")
     private Double shoreBiomeWidth = null;
 
+    @MinNumber(0)
+    @MaxNumber(16)
+    @Desc("Width in blocks of the flattened shore bench beside the water in this area, the geometric beach that is cut level with the bank top. Null inherits, and without any value the bench is the surface banks shoreWidth. Zero gives the area no bench, so the eroded valley side begins at the waterline.")
+    private Double shoreWidth = null;
+
+    @Desc("Whether surface rivers erode the ground beyond the shore bench into a valley in this area. Null inherits, and without any value erosion follows surface.erosion.enabled. False keeps only the wet channel and the shore bench here, so a river crosses the area in a bare cut.")
+    private Boolean erosion = null;
+
     @Desc("Rivers that start in this area stay inside it: their whole course and their outlet lie in this region (when set on a region) or this biome (when set on a biome), and a river that flows into the area never leaves it. A source with no reachable outlet inside the area is rejected. Null inherits, false releases the area.")
     private Boolean confined = null;
 

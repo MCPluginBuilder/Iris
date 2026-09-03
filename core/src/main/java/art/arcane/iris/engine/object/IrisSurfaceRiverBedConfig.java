@@ -22,4 +22,7 @@ public class IrisSurfaceRiverBedConfig {
 
     @Desc("Blocks used in place of falling blocks in the bed, padding, shore and banks.")
     private IrisMaterialPalette paddingPalette = new IrisMaterialPalette().qclear().qadd("clay").qadd("dirt");
+
+    @Desc("Optional palette painted over the wet channel bed under the water instead of the biome's own layers. Disabled by default, which keeps the surface biome's layers.")
+    private IrisRiverMaterialConfig material = new IrisRiverMaterialConfig();
 }

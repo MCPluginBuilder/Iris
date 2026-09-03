@@ -682,7 +682,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                         1D,
                         HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         undergroundEnabled,
                         undergroundSources,
                         64,
@@ -696,7 +696,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                         false,
                         0
                 ),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         new HydrologyPlannerSettings.Grotto(false, 2, 2, 2, 512),
                         new HydrologyPlannerSettings.Grotto(false, 2, 2, 2, 512),
@@ -743,7 +743,7 @@ public class HydrologyPlannerGlobalInvariantTest {
                         surface.shoreWidth(),
                         HydrologyPlannerSettings.Banks.defaults()),
                 base.hydraulics(),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         underground.enabled(),
                         underground.sources(),
                         underground.minimumFluidY(),
@@ -956,7 +956,9 @@ public class HydrologyPlannerGlobalInvariantTest {
                 "flooded",
                 List.of("default"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -1009,7 +1011,9 @@ public class HydrologyPlannerGlobalInvariantTest {
                 "flooded",
                 List.of("default"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -1060,7 +1064,9 @@ public class HydrologyPlannerGlobalInvariantTest {
                 "flooded",
                 List.of("default"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 

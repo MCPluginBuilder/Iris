@@ -32,13 +32,17 @@ public record HydrologyTerrainSample(
         List<String> preferredProfileKeys,
         List<String> surfacePoolKeys,
         double shoreBiomeWidth,
-        String confinesKey
+        String confinesKey,
+        double shoreWidth,
+        boolean erosion
 ) {
     /**
      * {@code shoreBiomeWidth} is the width in blocks of the shore biome band beside a surface river at this
      * column; {@code NaN} means the column has no policy value and the geometric shore width applies.
      * {@code confinesKey} names the region or biome a river passing this column must stay inside, or is
-     * null where rivers may flow anywhere.
+     * null where rivers may flow anywhere. {@code shoreWidth} is the width in blocks of the level shore
+     * bench beside the water at this column, {@code NaN} where no policy set one and the dimension's bank
+     * shore width applies; {@code erosion} is whether the ground beyond that bench is eroded into a valley here.
      */
     public HydrologyTerrainSample {
         requireFiniteNonNegative(slope, "slope");
@@ -64,12 +68,20 @@ public record HydrologyTerrainSample(
         if (!Double.isNaN(shoreBiomeWidth) && (!Double.isFinite(shoreBiomeWidth) || shoreBiomeWidth < 0D)) {
             throw new IllegalArgumentException("shoreBiomeWidth must be NaN, or finite and non-negative.");
         }
+        if (!Double.isNaN(shoreWidth) && (!Double.isFinite(shoreWidth) || shoreWidth < 0D)) {
+            throw new IllegalArgumentException("shoreWidth must be NaN, or finite and non-negative.");
+        }
         confinesKey = confinesKey == null || confinesKey.isBlank() ? null : confinesKey;
     }
 
     /** The shore biome band width at this column, or {@code fallback} when no policy set one. */
     public double shoreBiomeWidth(double fallback) {
         return Double.isNaN(shoreBiomeWidth) ? fallback : shoreBiomeWidth;
+    }
+
+    /** The level shore bench width at this column, or {@code fallback} when no policy set one. */
+    public double shoreWidth(double fallback) {
+        return Double.isNaN(shoreWidth) ? fallback : shoreWidth;
     }
 
     /** Whether a river at {@code upstream} may drain into this column without leaving its confines. */
@@ -108,7 +120,9 @@ public record HydrologyTerrainSample(
                 List.of("default"),
                 List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -143,7 +157,9 @@ public record HydrologyTerrainSample(
                 List.of("default"),
                 List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
@@ -178,7 +194,9 @@ public record HydrologyTerrainSample(
                 preferredProfileKeys,
                 replacementPoolKeys,
                 shoreBiomeWidth,
-                confinesKey
+                confinesKey,
+                shoreWidth,
+                erosion
         );
     }
 
@@ -213,7 +231,83 @@ public record HydrologyTerrainSample(
                 preferredProfileKeys,
                 surfacePoolKeys,
                 shoreBiomeWidth,
-                confinesKey
+                confinesKey,
+                shoreWidth,
+                erosion
+        );
+    }
+
+    public HydrologyTerrainSample withShoreWidth(double replacementShoreWidth) {
+        return new HydrologyTerrainSample(
+                naturalHeight,
+                slope,
+                ocean,
+                caveAvailable,
+                caveFloorY,
+                caveFluidY,
+                transitAllowed,
+                outletAllowed,
+                surfaceSourceAllowed,
+                surfaceSourceRequired,
+                undergroundSourceAllowed,
+                undergroundSourceRequired,
+                routingCost,
+                surfaceSourceWeight,
+                undergroundSourceWeight,
+                widthMultiplier,
+                depthMultiplier,
+                incisionMultiplier,
+                routingMultiplier,
+                bankMultiplier,
+                parentBiomeKey,
+                surfaceBiomeKey,
+                mouthBiomeKey,
+                shoreBiomeKey,
+                bankBiomeKey,
+                floodedCaveBiomeKey,
+                preferredProfileKeys,
+                surfacePoolKeys,
+                shoreBiomeWidth,
+                confinesKey,
+                replacementShoreWidth,
+                erosion
+        );
+    }
+
+    public HydrologyTerrainSample withErosion(boolean replacementErosion) {
+        return new HydrologyTerrainSample(
+                naturalHeight,
+                slope,
+                ocean,
+                caveAvailable,
+                caveFloorY,
+                caveFluidY,
+                transitAllowed,
+                outletAllowed,
+                surfaceSourceAllowed,
+                surfaceSourceRequired,
+                undergroundSourceAllowed,
+                undergroundSourceRequired,
+                routingCost,
+                surfaceSourceWeight,
+                undergroundSourceWeight,
+                widthMultiplier,
+                depthMultiplier,
+                incisionMultiplier,
+                routingMultiplier,
+                bankMultiplier,
+                parentBiomeKey,
+                surfaceBiomeKey,
+                mouthBiomeKey,
+                shoreBiomeKey,
+                bankBiomeKey,
+                floodedCaveBiomeKey,
+                preferredProfileKeys,
+                surfacePoolKeys,
+                shoreBiomeWidth,
+                confinesKey,
+                shoreWidth,
+                replacementErosion
         );
     }
 

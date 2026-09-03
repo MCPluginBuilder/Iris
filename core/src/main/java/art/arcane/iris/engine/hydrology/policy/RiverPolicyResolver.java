@@ -77,6 +77,8 @@ public final class RiverPolicyResolver {
         private double bankMultiplier = 1D;
         private Double shoreBiomeWidth = null;
         private RiverConfinement confinement = RiverConfinement.NONE;
+        private Double shoreWidth = null;
+        private Boolean erosion = null;
 
         /**
          * {@code scope} is the confinement a {@code confined: true} at this level binds courses to; {@code data} is the
@@ -88,6 +90,12 @@ public final class RiverPolicyResolver {
             }
             if (policy.getShoreBiomeWidth() != null) {
                 shoreBiomeWidth = policy.getShoreBiomeWidth();
+            }
+            if (policy.getShoreWidth() != null) {
+                shoreWidth = policy.getShoreWidth();
+            }
+            if (policy.getErosion() != null) {
+                erosion = policy.getErosion();
             }
             if (policy.getConfined() != null) {
                 confinement = policy.getConfined() ? scope : RiverConfinement.NONE;
@@ -157,7 +165,9 @@ public final class RiverPolicyResolver {
                     routingMultiplier,
                     bankMultiplier,
                     shoreBiomeWidth,
-                    confinement
+                    confinement,
+                    shoreWidth,
+                    erosion
             );
         }
     }

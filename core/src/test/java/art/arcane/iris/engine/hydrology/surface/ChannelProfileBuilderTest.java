@@ -108,6 +108,60 @@ public class ChannelProfileBuilderTest {
         assertEquals(3D, sloped.halfWidth()[24], 1.0E-9D);
     }
 
+    @Test
+    public void smoothingRadiusZeroFollowsTheSampledWidthExactly() {
+        HydrologyGeometrySampler stepped = request -> switch (request.field()) {
+            case SURFACE_WIDTH -> request.x() < 200 ? 4 : 8;
+            case SURFACE_DEPTH -> 3;
+            default -> request.minimum();
+        };
+        SurfaceCenterline centerline = straight(400);
+        ChannelProfile sharp = builder(new HydrologyPlannerSettings.Channel(0, 0.6D, 1.4D, 1D), stepped)
+                .build(centerline, "water", false);
+        ChannelProfile smoothed = builder(HydrologyPlannerSettings.Channel.defaults(), stepped)
+                .build(centerline, "water", false);
+
+        assertEquals(2D, sharp.halfWidth()[199], 1.0E-9D);
+        assertEquals(4D, sharp.halfWidth()[200], 1.0E-9D);
+        assertEquals(2D, sharp.halfWidth()[100], 1.0E-9D);
+        assertEquals(4D, sharp.halfWidth()[300], 1.0E-9D);
+        assertTrue(smoothed.halfWidth()[199] > 2D);
+        assertTrue(smoothed.halfWidth()[200] < 4D);
+        assertEquals(2D, smoothed.halfWidth()[100], 1.0E-9D);
+    }
+
+    @Test
+    public void springExtraDepthDeepensTheSpringPool() {
+        SurfaceCenterline centerline = straight(400);
+        ChannelProfile flat = builder(new HydrologyPlannerSettings.Channel(16, 0.6D, 1.4D, 0D), CONSTANT_GEOMETRY)
+                .build(centerline, "water", false);
+        ChannelProfile deep = builder(new HydrologyPlannerSettings.Channel(16, 0.6D, 1.4D, 3D), CONSTANT_GEOMETRY)
+                .build(centerline, "water", false);
+
+        assertEquals(3D, flat.depth()[0], 1.0E-9D);
+        assertEquals(3D, flat.depth()[200], 1.0E-9D);
+        assertEquals(6D, deep.depth()[0], 1.0E-9D);
+        assertEquals(3D, deep.depth()[24], 1.0E-9D);
+        assertEquals(3D, deep.depth()[200], 1.0E-9D);
+    }
+
+    private static ChannelProfileBuilder builder(
+            HydrologyPlannerSettings.Channel channel,
+            HydrologyGeometrySampler geometry
+    ) {
+        HydrologyPlannerSettings.Banks banks = HydrologyPlannerSettings.defaults().surface().banks();
+        HydrologyPlannerSettings.Banks tuned = new HydrologyPlannerSettings.Banks(
+                banks.sink(), banks.blendSlope(), banks.minimumBlendWidth(), banks.maximumBlendWidth(),
+                banks.roughness(), banks.roughnessWavelength(), banks.cascadeRun(), banks.waterfallMinimumDrop(),
+                banks.mouthFlareRatio(), banks.inlet(), banks.springWidthRatio(), banks.springLength(),
+                banks.exposeCutStrata(), banks.erosion(), banks.ponds(), channel, banks.flow());
+        HydrologyPlannerSettings.Surface defaults = HydrologyPlannerSettings.defaults().surface();
+        HydrologyPlannerSettings.Surface surface = new HydrologyPlannerSettings.Surface(
+                defaults.enabled(), defaults.sources(), defaults.minimumWidth(), defaults.maximumWidth(),
+                defaults.minimumDepth(), defaults.maximumDepth(), defaults.maximumIncision(), defaults.shoreWidth(), tuned);
+        return new ChannelProfileBuilder(surface, (int x, int z) -> HydrologyTerrainSample.openLand(80, 0D, "land"), geometry);
+    }
+
     private static ChannelProfileBuilder builder(double widthMultiplier, double depthMultiplier) {
         return builder(widthMultiplier, depthMultiplier, (int x, int z) -> 80);
     }
@@ -150,7 +204,9 @@ public class ChannelProfileBuilderTest {
                 "parent",
                 List.of("water"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
         return new ChannelProfileBuilder(HydrologyPlannerSettings.defaults().surface(), sampler, CONSTANT_GEOMETRY);
     }

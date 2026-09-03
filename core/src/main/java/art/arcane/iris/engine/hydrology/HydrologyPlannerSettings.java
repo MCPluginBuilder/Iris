@@ -1,6 +1,10 @@
 package art.arcane.iris.engine.hydrology;
 
+import art.arcane.iris.engine.object.IrisRiverBedProfile;
+import art.arcane.iris.engine.object.IrisRiverBlendStyle;
+
 import java.util.List;
+import java.util.Objects;
 
 public record HydrologyPlannerSettings(
         int seaLevel,
@@ -48,8 +52,8 @@ public record HydrologyPlannerSettings(
                 new Routing(2048, 64, 8192, 8192, 384, 192, 1.5D, 24D, 2D, 0.2D, 1D, 0),
                 new Surface(true, surfaceSources, 4, 8, 2, 4, 10, 1.5D, Banks.defaults()),
                 new Hydraulics(8),
-                new Underground(true, undergroundSources, -48, 72, 3, 8, 1, 3, 6, 14, true, 1),
-                new Outlets(
+                Underground.of(true, undergroundSources, -48, 72, 3, 8, 1, 3, 6, 14, true, 1),
+                Outlets.of(
                         true,
                         new Grotto(true, 18, 8, 8, 32768),
                         new Grotto(true, 18, 8, 8, 32768),
@@ -286,6 +290,7 @@ public record HydrologyPlannerSettings(
     /**
      * {@code sink} is how many blocks the water surface sits below the lowest natural ground beside
      * the channel; zero keeps the water flush with the bank and the bank top always meets the water.
+     * {@code channel} shapes the wet outline and {@code flow} the waterfalls and plunge basins.
      */
     public record Banks(
             int sink,
@@ -302,12 +307,14 @@ public record HydrologyPlannerSettings(
             int springLength,
             boolean exposeCutStrata,
             Erosion erosion,
-            Ponds ponds
+            Ponds ponds,
+            Channel channel,
+            Flow flow
     ) {
         // Structural invariants only; authoring bounds live in the pack validator.
         public Banks {
-            if (erosion == null || ponds == null || inlet == null) {
-                throw new IllegalArgumentException("Surface erosion, inlet and pond settings are required.");
+            if (erosion == null || ponds == null || inlet == null || channel == null || flow == null) {
+                throw new IllegalArgumentException("Surface erosion, inlet, pond, channel and flow settings are required.");
             }
             if (sink < 0
                     || !Double.isFinite(blendSlope) || blendSlope <= 0D
@@ -324,42 +331,78 @@ public record HydrologyPlannerSettings(
         }
 
         public static Banks defaults() {
-            return new Banks(0, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, Inlet.defaults(), 2.5D, 24, true, Erosion.defaults(), Ponds.defaults());
+            return new Banks(0, 3D, 4, 32, 0.25D, 16, 2, 6, 1.6D, Inlet.defaults(), 2.5D, 24, true, Erosion.defaults(),
+                    Ponds.defaults(), Channel.defaults(), Flow.defaults());
+        }
+
+        /** The bank settings before channel and flow shaping existed; both take their defaults. */
+        public static Banks of(
+                int sink,
+                double blendSlope,
+                int minimumBlendWidth,
+                int maximumBlendWidth,
+                double roughness,
+                int roughnessWavelength,
+                int cascadeRun,
+                int waterfallMinimumDrop,
+                double mouthFlareRatio,
+                Inlet inlet,
+                double springWidthRatio,
+                int springLength,
+                boolean exposeCutStrata,
+                Erosion erosion,
+                Ponds ponds
+        ) {
+            return new Banks(sink, blendSlope, minimumBlendWidth, maximumBlendWidth, roughness, roughnessWavelength,
+                    cascadeRun, waterfallMinimumDrop, mouthFlareRatio, inlet, springWidthRatio, springLength,
+                    exposeCutStrata, erosion, ponds, Channel.defaults(), Flow.defaults());
         }
 
         public Banks withInlet(Inlet inlet) {
             return new Banks(sink, blendSlope, minimumBlendWidth, maximumBlendWidth, roughness, roughnessWavelength,
                     cascadeRun, waterfallMinimumDrop, mouthFlareRatio, inlet, springWidthRatio, springLength,
-                    exposeCutStrata, erosion, ponds);
+                    exposeCutStrata, erosion, ponds, channel, flow);
         }
     }
 
     /**
      * The drowned reach where a surface river meets the sea. Over the last {@code length} blocks before
      * the coast the water is held at sea level, the channel widens toward the mouth flare and its bed
-     * deepens by {@code depth}; the stations above it grade down one block per station into the inlet.
-     * The inlet and its approach may be cut up to {@code maximumIncision} deep instead of the channel
-     * cap, so a coastal rise no longer rejects the course; a rise the cap cannot pass ends the inlet
-     * there, and the inlet never takes more than half the exposed course. A zero length is the plain
-     * crossing: the head drops to sea level at the coast, the channel neither widens nor deepens.
+     * deepens by {@code depth}; the stations above it grade down {@code rampSlope} blocks per station into
+     * the inlet. The inlet and its approach may be cut up to {@code maximumIncision} deep instead of the
+     * channel cap, so a coastal rise no longer rejects the course; a rise the cap cannot pass ends the
+     * inlet there, and the inlet never takes more than {@code courseFraction} of the exposed course. A
+     * zero length is the plain crossing: the head drops to sea level at the coast, the channel neither
+     * widens nor deepens.
      */
     public record Inlet(
             int length,
             int depth,
-            int maximumIncision
+            int maximumIncision,
+            double courseFraction,
+            double rampSlope
     ) {
         public Inlet {
             if (length < 0 || length > 1024 || depth < 0 || depth > 64 || maximumIncision < 0 || maximumIncision > 512) {
                 throw new IllegalArgumentException("Surface inlet settings are invalid.");
             }
+            if (!Double.isFinite(courseFraction) || courseFraction <= 0D || courseFraction > 1D
+                    || !Double.isFinite(rampSlope) || rampSlope <= 0D) {
+                throw new IllegalArgumentException("Surface inlet course fraction and ramp slope are invalid.");
+            }
         }
 
         public static Inlet none() {
-            return new Inlet(0, 0, 0);
+            return new Inlet(0, 0, 0, 0.5D, 1D);
         }
 
         public static Inlet defaults() {
-            return new Inlet(64, 3, 32);
+            return new Inlet(64, 3, 32, 0.5D, 1D);
+        }
+
+        /** The inlet reach with the default course fraction and ramp slope. */
+        public static Inlet of(int length, int depth, int maximumIncision) {
+            return new Inlet(length, depth, maximumIncision, 0.5D, 1D);
         }
     }
 
@@ -369,14 +412,24 @@ public record HydrologyPlannerSettings(
      * half-width that stays at full bed depth, {@code blendCurve} the exponent on the blend progress
      * (below one hollows the valley sides, above one steepens them near the shore), and
      * {@code bedNoise} the share of the channel roughness applied to the bed. Disabled erosion keeps
-     * only the wet channel, the shore band and the containing lip.
+     * only the wet channel, the shore band and the containing lip. {@code style} is the curve of the
+     * valley side ({@code terraceSteps} and {@code cliffFraction} shape only the terraced and cliff
+     * styles), {@code bedProfile} the wet bed cross-section, {@code shoreRise} how many blocks the shore
+     * bench climbs from the water to the valley foot, and {@code blendBaseWidth} a width added to every
+     * valley blend before its bounds apply.
      */
     public record Erosion(
             boolean enabled,
             int smoothingRadius,
             double thalwegFraction,
             double blendCurve,
-            double bedNoise
+            double bedNoise,
+            IrisRiverBlendStyle style,
+            int terraceSteps,
+            double cliffFraction,
+            IrisRiverBedProfile bedProfile,
+            double shoreRise,
+            double blendBaseWidth
     ) {
         public Erosion {
             if (smoothingRadius < 0
@@ -385,10 +438,82 @@ public record HydrologyPlannerSettings(
                     || !Double.isFinite(bedNoise) || bedNoise < 0D) {
                 throw new IllegalArgumentException("Surface erosion settings are invalid.");
             }
+            if (style == null || bedProfile == null
+                    || terraceSteps < 2
+                    || !Double.isFinite(cliffFraction) || cliffFraction < 0D || cliffFraction > 1D
+                    || !Double.isFinite(shoreRise) || shoreRise < 0D
+                    || !Double.isFinite(blendBaseWidth) || blendBaseWidth < 0D) {
+                throw new IllegalArgumentException("Surface erosion style settings are invalid.");
+            }
         }
 
         public static Erosion defaults() {
-            return new Erosion(true, 12, 0.45D, 1D, 0.5D);
+            return new Erosion(true, 12, 0.45D, 1D, 0.5D, IrisRiverBlendStyle.SMOOTH, 4, 0.5D, IrisRiverBedProfile.BOWL, 0D, 0D);
+        }
+
+        /** The erosion amounts with the smooth valley side, bowl bed and flat shore bench they always had. */
+        public static Erosion of(boolean enabled, int smoothingRadius, double thalwegFraction, double blendCurve, double bedNoise) {
+            return new Erosion(enabled, smoothingRadius, thalwegFraction, blendCurve, bedNoise,
+                    IrisRiverBlendStyle.SMOOTH, 4, 0.5D, IrisRiverBedProfile.BOWL, 0D, 0D);
+        }
+
+        // Enum hash codes are identity based and change between runs; the plan fingerprint mixes this hash in.
+        @Override
+        public int hashCode() {
+            return Objects.hash(enabled, smoothingRadius, thalwegFraction, blendCurve, bedNoise, style.name(),
+                    terraceSteps, cliffFraction, bedProfile.name(), shoreRise, blendBaseWidth);
+        }
+    }
+
+    /**
+     * The wet outline of a surface channel. {@code smoothingRadius} is the run of stations the profile is
+     * averaged over, {@code outlineMinimumRatio} and {@code outlineMaximumRatio} bound the outline against
+     * the planned half-width, and {@code springExtraDepth} is how much of the remaining spring taper is
+     * added to the bed depth at a spring.
+     */
+    public record Channel(
+            int smoothingRadius,
+            double outlineMinimumRatio,
+            double outlineMaximumRatio,
+            double springExtraDepth
+    ) {
+        public Channel {
+            if (smoothingRadius < 0
+                    || !Double.isFinite(outlineMinimumRatio) || outlineMinimumRatio <= 0D || outlineMinimumRatio > 1D
+                    || !Double.isFinite(outlineMaximumRatio) || outlineMaximumRatio < 1D
+                    || !Double.isFinite(springExtraDepth) || springExtraDepth < 0D) {
+                throw new IllegalArgumentException("Surface channel settings are invalid.");
+            }
+        }
+
+        public static Channel defaults() {
+            return new Channel(16, 0.6D, 1.4D, 1D);
+        }
+    }
+
+    /**
+     * Waterfalls and plunge basins on a surface river. {@code waterfallThalwegFraction} is the share of the
+     * half-width kept at full depth over a fall; a drop of at least {@code plungeBasinMinimumDrop} blocks
+     * scours a basin {@code plungeBasinLengthRatio} half-widths long and {@code plungeBasinDepth} blocks
+     * deeper than the bed.
+     */
+    public record Flow(
+            double waterfallThalwegFraction,
+            int plungeBasinMinimumDrop,
+            double plungeBasinLengthRatio,
+            int plungeBasinDepth
+    ) {
+        public Flow {
+            if (!Double.isFinite(waterfallThalwegFraction) || waterfallThalwegFraction < 0D || waterfallThalwegFraction >= 1D
+                    || plungeBasinMinimumDrop < 1
+                    || !Double.isFinite(plungeBasinLengthRatio) || plungeBasinLengthRatio < 0D
+                    || plungeBasinDepth < 0) {
+                throw new IllegalArgumentException("Surface flow settings are invalid.");
+            }
+        }
+
+        public static Flow defaults() {
+            return new Flow(0.65D, 2, 2D, 1);
         }
     }
 
@@ -448,26 +573,34 @@ public record HydrologyPlannerSettings(
      * Sea caves: coastal grottos that open from the ocean into the coast without a river. A tile keeps at
      * most {@code maximumPerTile} of them, the steepest owned coast first, at least {@code minimumSpacing}
      * apart, only where the coast stands {@code minimumCoastHeight} above the sea, each chamber swept
-     * {@code depth} blocks inland from the shoreline. Chamber size and volume come from the coastal grotto.
+     * {@code depth} blocks inland from the shoreline, its sweep turned up to {@code sweepJitterDegrees}
+     * either side of the inland normal. Chamber size and volume come from the coastal grotto.
      */
     public record SeaCaves(
             boolean enabled,
             int maximumPerTile,
             int minimumSpacing,
             int minimumCoastHeight,
-            int depth
+            int depth,
+            double sweepJitterDegrees
     ) {
         public SeaCaves {
             if (maximumPerTile < 0 || maximumPerTile > 64
                     || minimumSpacing < 16 || minimumSpacing > 8192
                     || minimumCoastHeight < 1 || minimumCoastHeight > 128
-                    || depth < 0 || depth > 128) {
+                    || depth < 0 || depth > 128
+                    || !Double.isFinite(sweepJitterDegrees) || sweepJitterDegrees < 0D || sweepJitterDegrees > 180D) {
                 throw new IllegalArgumentException("Sea cave bounds are invalid.");
             }
         }
 
         public static SeaCaves disabled() {
-            return new SeaCaves(false, 0, 16, 1, 0);
+            return new SeaCaves(false, 0, 16, 1, 0, 25D);
+        }
+
+        /** The chamber budget with the default sweep jitter. */
+        public static SeaCaves of(boolean enabled, int maximumPerTile, int minimumSpacing, int minimumCoastHeight, int depth) {
+            return new SeaCaves(enabled, maximumPerTile, minimumSpacing, minimumCoastHeight, depth, 25D);
         }
     }
 
@@ -492,7 +625,10 @@ public record HydrologyPlannerSettings(
             int minimumHeadroom,
             int maximumHeadroom,
             boolean connectToExistingCaves,
-            int tributaries
+            int tributaries,
+            int minimumRockCover,
+            int minimumFloorCover,
+            int wideningSources
     ) {
         public Underground {
             if (sources == null || minimumFluidY > maximumFluidY) {
@@ -504,6 +640,30 @@ public record HydrologyPlannerSettings(
             if (tributaries < 0 || tributaries > 4) {
                 throw new IllegalArgumentException("underground tributaries must be between 0 and 4.");
             }
+            if (minimumRockCover < 1 || minimumRockCover > 256
+                    || minimumFloorCover < 1 || minimumFloorCover > 256
+                    || wideningSources < 1 || wideningSources > 1024) {
+                throw new IllegalArgumentException("Underground rock cover and widening settings are invalid.");
+            }
+        }
+
+        /** One block of rock above and below a tunnel, and widening that saturates at eight sources. */
+        public static Underground of(
+                boolean enabled,
+                Source sources,
+                int minimumFluidY,
+                int maximumFluidY,
+                int minimumWidth,
+                int maximumWidth,
+                int minimumDepth,
+                int maximumDepth,
+                int minimumHeadroom,
+                int maximumHeadroom,
+                boolean connectToExistingCaves,
+                int tributaries
+        ) {
+            return new Underground(enabled, sources, minimumFluidY, maximumFluidY, minimumWidth, maximumWidth, minimumDepth,
+                    maximumDepth, minimumHeadroom, maximumHeadroom, connectToExistingCaves, tributaries, 1, 1, 8);
         }
     }
 
@@ -516,7 +676,8 @@ public record HydrologyPlannerSettings(
             int mouthLevelingDistance,
             int maximumOceanApron,
             int maximumPerTile,
-            int maximumCoastalPerTile
+            int maximumCoastalPerTile,
+            double coastalCliffSlopeFactor
     ) {
         public Outlets {
             if (coastalGrotto == null || inlandGrotto == null) {
@@ -530,6 +691,23 @@ public record HydrologyPlannerSettings(
                     || maximumCoastalPerTile < 0 || maximumCoastalPerTile > 256) {
                 throw new IllegalArgumentException("Outlet bounds are invalid.");
             }
+            requireFiniteNonNegative(coastalCliffSlopeFactor, "coastalCliffSlopeFactor");
+        }
+
+        /** The outlet budget with the default coastal cliff slope factor. */
+        public static Outlets of(
+                boolean oceanEnabled,
+                Grotto coastalGrotto,
+                Grotto inlandGrotto,
+                boolean surfaceSinkholesEnabled,
+                int coastalCliffMinimumHeight,
+                int mouthLevelingDistance,
+                int maximumOceanApron,
+                int maximumPerTile,
+                int maximumCoastalPerTile
+        ) {
+            return new Outlets(oceanEnabled, coastalGrotto, inlandGrotto, surfaceSinkholesEnabled, coastalCliffMinimumHeight,
+                    mouthLevelingDistance, maximumOceanApron, maximumPerTile, maximumCoastalPerTile, 0.5D);
         }
     }
 
@@ -562,13 +740,13 @@ public record HydrologyPlannerSettings(
         }
 
         public static Geometry defaults() {
-            ChannelShape channel = new ChannelShape(2.4D, 0.28D, 0.24D, 11);
+            ChannelShape channel = ChannelShape.of(2.4D, 0.28D, 0.24D, 11);
             return new Geometry(
                     new Meanders(64, 12, 0.34D, 0.42D, 0.48D, 1, 82D),
                     channel,
                     channel,
                     channel,
-                    new Drops(2, 1.4D, 2, 0.45D, 2, 1.8D, 8)
+                    Drops.of(2, 1.4D, 2, 0.45D, 2, 1.8D, 8)
             );
         }
     }
@@ -597,11 +775,25 @@ public record HydrologyPlannerSettings(
         }
     }
 
+    /**
+     * The cross-section of a carved channel. The bed and wall roughness shape every channel; the radial
+     * and lobe terms shape the organic wall outline of an underground channel or grotto around
+     * {@code radialBase}, clamped to {@code [radialMinimum, radialMaximum]}; {@code ceilingRoughness}
+     * roughens a tunnel ceiling; {@code aspectMinimum} and {@code aspectRange} bound a grotto's plan aspect.
+     */
     public record ChannelShape(
             double bedRoundness,
             double bedRoughness,
             double wallRoughness,
-            int roughnessWavelength
+            int roughnessWavelength,
+            double radialBase,
+            double radialMinimum,
+            double radialMaximum,
+            double primaryLobeStrength,
+            double detailLobeStrength,
+            double ceilingRoughness,
+            double aspectMinimum,
+            double aspectRange
     ) {
         public ChannelShape {
             if (!Double.isFinite(bedRoundness) || bedRoundness < 1D || bedRoundness > 6D
@@ -610,6 +802,22 @@ public record HydrologyPlannerSettings(
                     || roughnessWavelength < 3 || roughnessWavelength > 128) {
                 throw new IllegalArgumentException("Hydrology channel shape is invalid.");
             }
+            if (!Double.isFinite(radialBase) || radialBase < 0.1D || radialBase > 4D
+                    || !Double.isFinite(radialMinimum) || radialMinimum <= 0D
+                    || !Double.isFinite(radialMaximum) || radialMaximum < radialMinimum || radialMaximum > 4D
+                    || !Double.isFinite(primaryLobeStrength) || primaryLobeStrength < 0D || primaryLobeStrength > 1D
+                    || !Double.isFinite(detailLobeStrength) || detailLobeStrength < 0D || detailLobeStrength > 1D
+                    || !Double.isFinite(ceilingRoughness) || ceilingRoughness < 0D || ceilingRoughness > 1D
+                    || !Double.isFinite(aspectMinimum) || aspectMinimum <= 0D || aspectMinimum > 1D
+                    || !Double.isFinite(aspectRange) || aspectRange < 0D || aspectRange > 1D) {
+                throw new IllegalArgumentException("Hydrology channel wall shape is invalid.");
+            }
+        }
+
+        /** The bed and wall roughness with the organic wall outline every channel had before it was configurable. */
+        public static ChannelShape of(double bedRoundness, double bedRoughness, double wallRoughness, int roughnessWavelength) {
+            return new ChannelShape(bedRoundness, bedRoughness, wallRoughness, roughnessWavelength,
+                    0.86D, 0.58D, 1.18D, 0.08D, 0.06D, 0D, 0.62D, 0.2D);
         }
     }
 
@@ -620,7 +828,8 @@ public record HydrologyPlannerSettings(
             double flowWidthRatio,
             int maximumFlowDepth,
             double basinWidthRatio,
-            int maximumBasinDepth
+            int maximumBasinDepth,
+            int undergroundCascadeRunPerBlock
     ) {
         public Drops {
             if (cascadeRunPerBlock < 1 || cascadeRunPerBlock > 16
@@ -632,6 +841,23 @@ public record HydrologyPlannerSettings(
                     || maximumBasinDepth < maximumFlowDepth || maximumBasinDepth > 32) {
                 throw new IllegalArgumentException("Hydrology drop geometry is invalid.");
             }
+            if (undergroundCascadeRunPerBlock < 0 || undergroundCascadeRunPerBlock > 64) {
+                throw new IllegalArgumentException("undergroundCascadeRunPerBlock must be between 0 and 64.");
+            }
+        }
+
+        /** The drop geometry with the underground cascade run left at the routing minimum. */
+        public static Drops of(
+                int cascadeRunPerBlock,
+                double cascadeExponent,
+                int maximumCascadeStep,
+                double flowWidthRatio,
+                int maximumFlowDepth,
+                double basinWidthRatio,
+                int maximumBasinDepth
+        ) {
+            return new Drops(cascadeRunPerBlock, cascadeExponent, maximumCascadeStep, flowWidthRatio, maximumFlowDepth,
+                    basinWidthRatio, maximumBasinDepth, 0);
         }
 
         public int flowWidth(int channelWidth) {

@@ -82,7 +82,9 @@ public final class HydrologyTerrainSampleTest {
                 "flooded",
                 profiles, List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
     @Test
@@ -111,11 +113,59 @@ public final class HydrologyTerrainSampleTest {
     }
 
     private static HydrologyTerrainSample sample(List<String> profiles, double shoreBiomeWidth, String confinesKey) {
+        return sample(profiles, shoreBiomeWidth, confinesKey, Double.NaN, true);
+    }
+
+    private static HydrologyTerrainSample sample(
+            List<String> profiles, double shoreBiomeWidth, String confinesKey, double shoreWidth, boolean erosion) {
         return new HydrologyTerrainSample(
                 80, 0D, false, false, 48, 50, true, true, true, false, false, false,
                 0D, 1D, 1D, 1D, 1D, 1D, 1D, 1D,
                 "parent", "parent", "parent", "parent", "parent", "parent",
-                profiles, List.of(), shoreBiomeWidth, confinesKey
+                profiles, List.of(), shoreBiomeWidth, confinesKey, shoreWidth, erosion
         );
+    }
+
+
+    @Test
+    public void shoreWidthInheritsWhenUnsetAndRejectsNegatives() {
+        HydrologyTerrainSample unset = HydrologyTerrainSample.openLand(80, 0D, "parent");
+        HydrologyTerrainSample ocean = HydrologyTerrainSample.ocean(50, "ocean");
+        assertTrue(Double.isNaN(unset.shoreWidth()));
+        assertTrue(unset.erosion());
+        assertTrue(Double.isNaN(ocean.shoreWidth()));
+        assertTrue(ocean.erosion());
+        assertEquals(1.5D, unset.shoreWidth(1.5D), 0D);
+
+        HydrologyTerrainSample beach = sample(List.of("default"), Double.NaN, null, 3D, true);
+        assertEquals(3D, beach.shoreWidth(1.5D), 0D);
+        assertEquals(0D, sample(List.of("default"), Double.NaN, null, 0D, true).shoreWidth(1.5D), 0D);
+        assertThrows(IllegalArgumentException.class, () -> sample(List.of("default"), Double.NaN, null, -1D, true));
+        assertThrows(IllegalArgumentException.class, () -> sample(List.of("default"), Double.NaN, null, Double.POSITIVE_INFINITY, true));
+        assertThrows(IllegalArgumentException.class, () -> sample(List.of("default"), Double.NaN, null, Double.NEGATIVE_INFINITY, true));
+    }
+
+    @Test
+    public void shoreWidthAndErosionCopiersReplaceOnlyTheirOwnComponent() {
+        HydrologyTerrainSample open = HydrologyTerrainSample.openLand(80, 0D, "parent");
+        HydrologyTerrainSample beach = open.withShoreWidth(3D);
+        HydrologyTerrainSample bare = open.withErosion(false);
+
+        assertEquals(3D, beach.shoreWidth(1.5D), 0D);
+        assertTrue(beach.erosion());
+        assertEquals(open.withShoreWidth(Double.NaN), open);
+        assertFalse(bare.erosion());
+        assertTrue(Double.isNaN(bare.shoreWidth()));
+        assertEquals(open.withErosion(true), open);
+        assertEquals(open.naturalHeight(), beach.naturalHeight());
+        assertEquals(open.preferredProfileKeys(), bare.preferredProfileKeys());
+        assertThrows(IllegalArgumentException.class, () -> open.withShoreWidth(-0.5D));
+
+        assertEquals(3D, beach.withSlope(2D).shoreWidth(1.5D), 0D);
+        assertEquals(3D, beach.withSurfacePoolKeys(List.of("pool")).shoreWidth(1.5D), 0D);
+        assertFalse(bare.withSlope(2D).erosion());
+        assertFalse(bare.withSurfacePoolKeys(List.of("pool")).erosion());
+        assertFalse(beach.withErosion(false).erosion());
+        assertEquals(3D, beach.withErosion(false).shoreWidth(1.5D), 0D);
     }
 }

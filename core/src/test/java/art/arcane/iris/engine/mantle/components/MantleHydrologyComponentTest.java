@@ -1542,7 +1542,7 @@ public class MantleHydrologyComponentTest {
                         0D,
                         HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(4),
-                new HydrologyPlannerSettings.Underground(
+                HydrologyPlannerSettings.Underground.of(
                         false,
                         disabledSources,
                         64,
@@ -1556,7 +1556,7 @@ public class MantleHydrologyComponentTest {
                         false,
                         0
                 ),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         new HydrologyPlannerSettings.Grotto(false, 2, 2, 2, 512),
                         new HydrologyPlannerSettings.Grotto(false, 2, 2, 2, 512),
@@ -1609,7 +1609,9 @@ public class MantleHydrologyComponentTest {
                 "flooded",
                 List.of("default"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 

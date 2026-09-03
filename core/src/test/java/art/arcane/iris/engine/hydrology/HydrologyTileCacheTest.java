@@ -248,8 +248,8 @@ public class HydrologyTileCacheTest {
                 new HydrologyPlannerSettings.Surface(false, disabled, 2, 4, 1, 2, 4, 1D,
                         HydrologyPlannerSettings.Banks.defaults()),
                 new HydrologyPlannerSettings.Hydraulics(3),
-                new HydrologyPlannerSettings.Underground(false, disabled, -32, 32, 2, 4, 1, 2, 3, 4, false, 0),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Underground.of(false, disabled, -32, 32, 2, 4, 1, 2, 3, 4, false, 0),
+                HydrologyPlannerSettings.Outlets.of(
                         false,
                         new HydrologyPlannerSettings.Grotto(false, 2, 2, 2, 512),
                         new HydrologyPlannerSettings.Grotto(false, 2, 2, 2, 512),
@@ -289,8 +289,8 @@ public class HydrologyTileCacheTest {
                 new HydrologyPlannerSettings.Routing(64, 16, 128, 96, 16, 8, 0.5D, 12D, 0.5D, 0.1D, 1D, 0),
                 new HydrologyPlannerSettings.Surface(true, surfaceSources, 4, 8, 2, 3, 20, 1.5D, tileBoundedBanks()),
                 new HydrologyPlannerSettings.Hydraulics(3),
-                new HydrologyPlannerSettings.Underground(false, disabled, -32, 32, 2, 4, 1, 2, 3, 4, false, 0),
-                new HydrologyPlannerSettings.Outlets(
+                HydrologyPlannerSettings.Underground.of(false, disabled, -32, 32, 2, 4, 1, 2, 3, 4, false, 0),
+                HydrologyPlannerSettings.Outlets.of(
                         true,
                         new HydrologyPlannerSettings.Grotto(false, 2, 2, 2, 512),
                         new HydrologyPlannerSettings.Grotto(false, 2, 2, 2, 512),
@@ -310,7 +310,7 @@ public class HydrologyTileCacheTest {
 
     // Small-tile settings need a blend envelope that fits inside the bounded cross-tile admission period.
     private static HydrologyPlannerSettings.Banks tileBoundedBanks() {
-        return new HydrologyPlannerSettings.Banks(0, 3D, 4, 4, 0.25D, 16, 2, 6, 1.6D, HydrologyPlannerSettings.Inlet.none(), 2.5D, 24, true,
+        return HydrologyPlannerSettings.Banks.of(0, 3D, 4, 4, 0.25D, 16, 2, 6, 1.6D, HydrologyPlannerSettings.Inlet.none(), 2.5D, 24, true,
                 HydrologyPlannerSettings.Erosion.defaults(), HydrologyPlannerSettings.Ponds.defaults());
     }
 
@@ -348,7 +348,9 @@ public class HydrologyTileCacheTest {
                 "flooded",
                 List.of("default"), List.of(),
                 Double.NaN,
-                null
+                null,
+                Double.NaN,
+                true
         );
     }
 
