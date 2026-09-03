@@ -137,6 +137,7 @@ public class IrisComplex implements DataProvider {
     private ProceduralStream<Double> overlayStream;
     private ProceduralStream<Double> heightFluidStream;
     private ProceduralStream<Double> slopeStream;
+    private ProceduralStream<Double> naturalSlopeStream;
     private ProceduralStream<Double> riverDistanceStream;
     private ProceduralStream<Double> riverFlowStream;
     private ProceduralStream<Double> riverCarveWeightStream;
@@ -316,7 +317,8 @@ public class IrisComplex implements DataProvider {
                     (x, z) -> naturalHeightStream.getDouble(x, z),
                     (x, z) -> describeNaturalHeight(engine, x, z),
                     this::sampleNaturalOcean,
-                    footprint -> new MantleHydrologyCaveVoxelView(engine, this, footprint)
+                    footprint -> new MantleHydrologyCaveVoxelView(engine, this, footprint),
+                    () -> engine.getPlatformHooks().isMainThread()
             ));
         }
         heightStream = ProceduralStream.ofDouble((x, z) -> resolveHydrologyTerrainHeight(x, z))
@@ -325,6 +327,7 @@ public class IrisComplex implements DataProvider {
                 .round();
         slopeStream = heightStream.contextInjecting(engine, (c, x, z) -> c.getHeight().getDouble(x, z))
                 .slope(3).cache2DDouble("slopeStream", engine, cacheSize);
+        naturalSlopeStream = naturalHeightStream.slope(3).cache2DDouble("naturalSlopeStream", engine, cacheSize);
         trueBiomeStream = focusBiome != null ? ProceduralStream.of((x, y) -> focusBiome, Interpolated.of(a -> 0D,
                         b -> focusBiome))
                 .cache2D("trueBiomeStream-focus", engine, cacheSize) : heightStream
@@ -702,6 +705,11 @@ public class IrisComplex implements DataProvider {
     /** The natural terrain height of a column, from the natural height stream only: never touches hydrology or its caches. */
     public int naturalTrueHeight(int x, int z) {
         return (int) Math.round(naturalHeightStream.getDouble(x, z));
+    }
+
+    /** The terrain slope of a column from the natural height stream only: never touches hydrology or its caches. */
+    public double naturalSlope(int x, int z) {
+        return naturalSlopeStream.getDouble(x, z);
     }
 
     /** The surface biome a column would have without any river content, from natural streams only. */

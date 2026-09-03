@@ -3,8 +3,12 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.data.B;
+import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
+import com.google.gson.Gson;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 
 import java.lang.reflect.Field;
 
@@ -12,8 +16,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
 public class IrisDepositTuningTest {
@@ -53,6 +59,100 @@ public class IrisDepositTuningTest {
 
         assertEquals(1D, biome.getOreDepositFrequencyMultiplier(), 0D);
         assertEquals(1D, biome.getOreDepositSizeMultiplier(), 0D);
+        assertNull(biome.getSurfaceOreReplaceableBlocks());
+    }
+
+    @Test
+    public void surfaceHostFilterDefaultsToUnrestricted() {
+        IrisDepositGenerator generator = new IrisDepositGenerator();
+
+        assertTrue(generator.getSurfaceReplaceableBlocks().isEmpty());
+        assertTrue(generator.canReplaceSurface(mock(PlatformBlockState.class)));
+    }
+
+    @Test
+    public void surfaceHostFilterAllowsOnlyConfiguredMaterials() {
+        IrisDepositGenerator generator = new IrisDepositGenerator();
+        generator.setSurfaceReplaceableBlocks(new KList<String>().qadd("minecraft:stone"));
+        PlatformBlockState stone = mock(PlatformBlockState.class);
+        PlatformBlockState dirt = mock(PlatformBlockState.class);
+        when(stone.key()).thenReturn("minecraft:stone");
+        when(dirt.key()).thenReturn("minecraft:dirt");
+
+        try (MockedStatic<B> blocks = mockStatic(B.class)) {
+            blocks.when(() -> B.getStateOrNull("minecraft:stone", false)).thenReturn(stone);
+            blocks.when(() -> B.getStateOrNull("minecraft:dirt", false)).thenReturn(dirt);
+
+            assertTrue(generator.canReplaceSurface(stone));
+            assertFalse(generator.canReplaceSurface(dirt));
+
+            generator.setSurfaceReplaceableBlocks(new KList<String>().qadd("minecraft:dirt"));
+            assertFalse(generator.canReplaceSurface(stone));
+            assertTrue(generator.canReplaceSurface(dirt));
+        }
+    }
+
+    @Test
+    public void biomeSurfaceHostPolicyOverridesDepositPolicy() {
+        IrisDepositGenerator generator = new IrisDepositGenerator();
+        generator.setSurfaceReplaceableBlocks(new KList<String>().qadd("minecraft:stone"));
+        IrisBiome inherited = new IrisBiome();
+        IrisBiome desert = new IrisBiome();
+        desert.setSurfaceOreReplaceableBlocks(
+                new KList<String>().qadd("minecraft:stone").qadd("minecraft:sand"));
+        IrisBiome disabled = new IrisBiome();
+        disabled.setSurfaceOreReplaceableBlocks(new KList<>());
+        PlatformBlockState stone = mock(PlatformBlockState.class);
+        PlatformBlockState sand = mock(PlatformBlockState.class);
+        when(stone.key()).thenReturn("minecraft:stone");
+        when(sand.key()).thenReturn("minecraft:sand");
+
+        try (MockedStatic<B> blocks = mockStatic(B.class)) {
+            blocks.when(() -> B.getStateOrNull("minecraft:stone", false)).thenReturn(stone);
+            blocks.when(() -> B.getStateOrNull("minecraft:sand", false)).thenReturn(sand);
+
+            assertTrue(generator.canReplaceSurface(stone, inherited));
+            assertFalse(generator.canReplaceSurface(sand, inherited));
+            assertTrue(generator.canReplaceSurface(sand, desert));
+            assertTrue(generator.hasSurfaceReplaceableBlocks(disabled));
+            assertFalse(generator.canReplaceSurface(stone, disabled));
+        }
+    }
+
+    @Test
+    public void biomeSurfaceHostPolicyDistinguishesOmittedAndEmptyJson() {
+        Gson gson = new Gson();
+        IrisBiome inherited = gson.fromJson("{\"name\":\"Inherited\"}", IrisBiome.class);
+        IrisBiome disabled = gson.fromJson(
+                "{\"name\":\"Disabled\",\"surfaceOreReplaceableBlocks\":[]}", IrisBiome.class);
+
+        assertNull(inherited.getSurfaceOreReplaceableBlocks());
+        assertNotNull(disabled.getSurfaceOreReplaceableBlocks());
+        assertTrue(disabled.getSurfaceOreReplaceableBlocks().isEmpty());
+        assertFalse(inherited.hasSurfaceOreReplaceableBlocks());
+        assertTrue(disabled.hasSurfaceOreReplaceableBlocks());
+    }
+
+    @Test
+    public void biomeSurfaceHostPolicySetterInvalidatesResolvedHosts() {
+        IrisBiome biome = new IrisBiome();
+        PlatformBlockState stone = mock(PlatformBlockState.class);
+        PlatformBlockState sand = mock(PlatformBlockState.class);
+        when(stone.key()).thenReturn("minecraft:stone");
+        when(sand.key()).thenReturn("minecraft:sand");
+
+        try (MockedStatic<B> blocks = mockStatic(B.class)) {
+            blocks.when(() -> B.getStateOrNull("minecraft:stone", false)).thenReturn(stone);
+            blocks.when(() -> B.getStateOrNull("minecraft:sand", false)).thenReturn(sand);
+
+            biome.setSurfaceOreReplaceableBlocks(new KList<String>().qadd("minecraft:stone"));
+            assertTrue(biome.canReplaceSurfaceOre(stone));
+            assertFalse(biome.canReplaceSurfaceOre(sand));
+
+            biome.setSurfaceOreReplaceableBlocks(new KList<String>().qadd("minecraft:sand"));
+            assertFalse(biome.canReplaceSurfaceOre(stone));
+            assertTrue(biome.canReplaceSurfaceOre(sand));
+        }
     }
 
     @Test

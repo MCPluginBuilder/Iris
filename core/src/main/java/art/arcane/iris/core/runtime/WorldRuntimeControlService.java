@@ -42,13 +42,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class WorldRuntimeControlService {
-    private static final int STUDIO_ENTRY_VIEW_DISTANCE = 2;
     private static final int MAX_SAFE_ENTRY_HORIZONTAL_RADIUS = 15;
     private static final int SAFE_ENTRY_UPWARD_ALLOWANCE = 32;
     private static final double BLOCK_CENTER = 0.5D;
     private static final double COLLISION_EPSILON = 0.000001D;
-    private static final Method PLAYER_GET_VIEW_DISTANCE_METHOD = findPlayerMethod("getViewDistance");
-    private static final Method PLAYER_SET_VIEW_DISTANCE_METHOD = findPlayerMethod("setViewDistance", int.class);
     private static final Set<Material> UNSAFE_ENTRY_MATERIALS = Set.of(
             Material.CACTUS,
             Material.CAMPFIRE,
@@ -370,7 +367,6 @@ public final class WorldRuntimeControlService {
 
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         GameModeRestore modeRestore = new GameModeRestore(player);
-        PlayerViewDistanceRestore viewDistanceRestore = new PlayerViewDistanceRestore(player);
         AtomicReference<CompletableFuture<Boolean>> activeTeleport = new AtomicReference<>();
         future.whenComplete((success, failure) -> {
             if (Boolean.TRUE.equals(success)) {
@@ -380,7 +376,6 @@ public final class WorldRuntimeControlService {
             if (teleport != null && !teleport.isDone()) {
                 teleport.cancel(false);
             }
-            viewDistanceRestore.restore();
             modeRestore.restore();
         });
         boolean scheduled = J.runEntity(player, () -> {
@@ -390,9 +385,7 @@ public final class WorldRuntimeControlService {
                 }
                 if (gameMode != null) {
                     modeRestore.apply(gameMode);
-                    viewDistanceRestore.apply();
                     if (future.isDone()) {
-                        viewDistanceRestore.restore();
                         modeRestore.restore();
                         return;
                     }
@@ -417,7 +410,6 @@ public final class WorldRuntimeControlService {
 
                     if (Boolean.TRUE.equals(success)) {
                         if (future.complete(true)) {
-                            viewDistanceRestore.restore();
                             J.runEntity(player, () -> IrisServices.get(BoardSVC.class).updatePlayer(player));
                         }
                         return;
@@ -804,14 +796,6 @@ public final class WorldRuntimeControlService {
         return method.invoke(instance);
     }
 
-    private static Method findPlayerMethod(String methodName, Class<?>... parameterTypes) {
-        try {
-            return Player.class.getMethod(methodName, parameterTypes);
-        } catch (NoSuchMethodException ignored) {
-            return null;
-        }
-    }
-
     @FunctionalInterface
     interface TeleportExecutor {
         CompletableFuture<Boolean> teleport(Player player, Location location);
@@ -854,58 +838,6 @@ public final class WorldRuntimeControlService {
                 IrisLogging.reportError(
                         "Failed to restore a player's game mode after an unsuccessful teleport.",
                         new IllegalStateException("The player entity scheduler rejected the game-mode restoration."));
-            }
-        }
-    }
-
-    private static final class PlayerViewDistanceRestore {
-        private final Player player;
-        private final AtomicBoolean changed;
-        private final AtomicBoolean restored;
-        private int previousViewDistance;
-
-        private PlayerViewDistanceRestore(Player player) {
-            this.player = player;
-            changed = new AtomicBoolean(false);
-            restored = new AtomicBoolean(false);
-        }
-
-        private void apply() {
-            if (PLAYER_GET_VIEW_DISTANCE_METHOD == null || PLAYER_SET_VIEW_DISTANCE_METHOD == null) {
-                return;
-            }
-            try {
-                Object currentValue = PLAYER_GET_VIEW_DISTANCE_METHOD.invoke(player);
-                if (!(currentValue instanceof Number)) {
-                    return;
-                }
-                int currentViewDistance = ((Number) currentValue).intValue();
-                if (currentViewDistance <= STUDIO_ENTRY_VIEW_DISTANCE) {
-                    return;
-                }
-                PLAYER_SET_VIEW_DISTANCE_METHOD.invoke(player, STUDIO_ENTRY_VIEW_DISTANCE);
-                previousViewDistance = currentViewDistance;
-                changed.set(true);
-            } catch (ReflectiveOperationException failure) {
-                IrisLogging.reportError("Failed to apply a temporary player view distance for a studio teleport.", failure);
-            }
-        }
-
-        private void restore() {
-            if (!changed.get() || !restored.compareAndSet(false, true)) {
-                return;
-            }
-            Runnable restoration = () -> {
-                try {
-                    PLAYER_SET_VIEW_DISTANCE_METHOD.invoke(player, previousViewDistance);
-                } catch (ReflectiveOperationException failure) {
-                    IrisLogging.reportError("Failed to restore a player's view distance after a studio teleport.", failure);
-                }
-            };
-            if (!J.runEntity(player, restoration)) {
-                IrisLogging.reportError(
-                        "Failed to restore a player's view distance after a studio teleport.",
-                        new IllegalStateException("The player entity scheduler rejected the view-distance restoration."));
             }
         }
     }

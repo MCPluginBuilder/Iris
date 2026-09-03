@@ -348,6 +348,15 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
         return getPlatformHooks().isMainThread() && !getComplex().isHydrologyPlanned(x, z);
     }
 
+    /** The terrain slope at a column, answered from natural terrain when the server thread may not wait. */
+    @BlockCoordinates
+    default double getSlope(int x, int z) {
+        if (answersFromNaturalTerrain(x, z)) {
+            return getComplex().naturalSlope(x, z);
+        }
+        return getComplex().getSlopeStream().getDouble(x, z);
+    }
+
     @BlockCoordinates
     default int getHeight(int x, int z) {
         return getHeight(x, z, true);

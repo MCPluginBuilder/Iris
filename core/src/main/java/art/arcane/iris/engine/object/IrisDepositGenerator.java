@@ -56,6 +56,7 @@ public class IrisDepositGenerator {
     private final transient AtomicCache<KList<PlatformBlockState>> blockData = new AtomicCache<>();
     private final transient AtomicCache<Boolean> ore = new AtomicCache<>();
     private final transient AtomicCache<KSet<String>> replaceableBlockData = new AtomicCache<>();
+    private final transient AtomicCache<KSet<String>> surfaceReplaceableBlockData = new AtomicCache<>();
     private final transient ConcurrentMap<ClumpCacheKey, KList<IrisObject>> scaledObjects = new ConcurrentHashMap<>();
     @Required
     @MinNumber(-8192)
@@ -120,6 +121,9 @@ public class IrisDepositGenerator {
     @ArrayType(min = 1, type = String.class)
     @Desc("Optional block ids this deposit may replace. An empty list retains Iris's any-solid behavior.")
     private KList<String> replaceableBlocks = new KList<>();
+    @ArrayType(min = 1, type = String.class)
+    @Desc("Optional exact host block ids required when an ore candidate occupies an exterior terrain surface. Cave-air walls are unaffected. An empty list retains the normal replaceableBlocks behavior.")
+    private KList<String> surfaceReplaceableBlocks = new KList<>();
     @Desc("Chooses whether includedBiomes and excludedBiomes inspect the surface biome or the cave biome at the deposit origin.")
     private IrisDepositBiomeScope biomeScope = IrisDepositBiomeScope.CAVE;
     @ArrayType(min = 1, type = String.class)
@@ -476,6 +480,36 @@ public class IrisDepositGenerator {
                 .contains(IrisProceduralBlocks.materialKey(state));
     }
 
+    public IrisDepositGenerator setSurfaceReplaceableBlocks(KList<String> surfaceReplaceableBlocks) {
+        this.surfaceReplaceableBlocks = surfaceReplaceableBlocks == null
+                ? new KList<>()
+                : surfaceReplaceableBlocks;
+        surfaceReplaceableBlockData.reset();
+        return this;
+    }
+
+    public boolean canReplaceSurface(PlatformBlockState state) {
+        if (surfaceReplaceableBlocks == null || surfaceReplaceableBlocks.isEmpty()) {
+            return true;
+        }
+        return surfaceReplaceableBlockData.aquire(this::resolveSurfaceReplaceableBlocks)
+                .contains(IrisProceduralBlocks.materialKey(state));
+    }
+
+    public boolean hasSurfaceReplaceableBlocks(IrisBiome surfaceBiome) {
+        if (surfaceBiome != null && surfaceBiome.hasSurfaceOreReplaceableBlocks()) {
+            return true;
+        }
+        return surfaceReplaceableBlocks != null && !surfaceReplaceableBlocks.isEmpty();
+    }
+
+    public boolean canReplaceSurface(PlatformBlockState state, IrisBiome surfaceBiome) {
+        if (surfaceBiome != null && surfaceBiome.hasSurfaceOreReplaceableBlocks()) {
+            return surfaceBiome.canReplaceSurfaceOre(state);
+        }
+        return canReplaceSurface(state);
+    }
+
     public boolean matchesBiome(IrisBiome surfaceBiome, IrisBiome caveBiome) {
         IrisBiome selected = biomeScope == IrisDepositBiomeScope.SURFACE ? surfaceBiome : caveBiome;
         if (includedBiomes != null && !includedBiomes.isEmpty() && !matchesAnyBiome(selected, includedBiomes)) {
@@ -491,8 +525,16 @@ public class IrisDepositGenerator {
     }
 
     private KSet<String> resolveReplaceableBlocks() {
+        return resolveBlockKeys(replaceableBlocks);
+    }
+
+    private KSet<String> resolveSurfaceReplaceableBlocks() {
+        return resolveBlockKeys(surfaceReplaceableBlocks);
+    }
+
+    private KSet<String> resolveBlockKeys(KList<String> keys) {
         KSet<String> resolved = new KSet<>();
-        for (String key : replaceableBlocks) {
+        for (String key : keys) {
             PlatformBlockState state = B.getStateOrNull(key, false);
             if (state != null) {
                 resolved.add(IrisProceduralBlocks.materialKey(state));

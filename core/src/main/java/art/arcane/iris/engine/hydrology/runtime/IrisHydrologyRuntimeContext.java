@@ -5,6 +5,7 @@ import art.arcane.iris.engine.hydrology.HydrologyCaveVoxelViewFactory;
 import art.arcane.iris.engine.object.IrisDimension;
 
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 
 public record IrisHydrologyRuntimeContext(
         long seed,
@@ -15,8 +16,14 @@ public record IrisHydrologyRuntimeContext(
         IrisHydrologyNaturalHeightProvider naturalHeightProvider,
         IrisHydrologyNaturalHeightDescriber naturalHeightDescriber,
         IrisHydrologyNaturalOceanClassifier naturalOceanClassifier,
-        HydrologyCaveVoxelViewFactory caveViewFactory
+        HydrologyCaveVoxelViewFactory caveViewFactory,
+        BooleanSupplier waitingForbidden
 ) {
+    /**
+     * {@code waitingForbidden} is true on a thread that must never wait for a cold hydrology plan,
+     * the server thread above all: a sample taken there is answered as "no hydrology here" while the
+     * tiles it needs are planned on the prefetch pool.
+     */
     public IrisHydrologyRuntimeContext {
         if (worldHeight < 3) {
             throw new IllegalArgumentException("worldHeight must be at least three");
@@ -28,5 +35,6 @@ public record IrisHydrologyRuntimeContext(
         Objects.requireNonNull(naturalHeightDescriber);
         Objects.requireNonNull(naturalOceanClassifier);
         Objects.requireNonNull(caveViewFactory);
+        Objects.requireNonNull(waitingForbidden);
     }
 }

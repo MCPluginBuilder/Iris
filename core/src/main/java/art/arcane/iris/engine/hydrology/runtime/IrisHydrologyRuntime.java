@@ -125,7 +125,12 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
                 0,
                 context.caveViewFactory()
         );
-        this.cache = new HydrologyTileCache(planner, MAXIMUM_CACHE_TILES, IrisPlatforms.isBound() ? MultiBurst.hydrology : null);
+        this.cache = new HydrologyTileCache(
+                planner,
+                MAXIMUM_CACHE_TILES,
+                IrisPlatforms.isBound() ? MultiBurst.hydrology : null,
+                context.waitingForbidden()
+        );
         IrisLogging.debug("Hydrology runtime: tileSize=%d publicationRadius=%d planningThreads=%d",
                 settings.routing().tileSize(), settings.publicationRadius(), MultiBurst.hydrology.parallelism());
     }

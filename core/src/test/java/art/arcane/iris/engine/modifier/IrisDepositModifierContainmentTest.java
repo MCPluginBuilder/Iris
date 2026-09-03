@@ -18,6 +18,8 @@
 
 package art.arcane.iris.engine.modifier;
 
+import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisDepositGenerator;
 import art.arcane.iris.engine.object.IrisDepositHeightDistribution;
 import art.arcane.iris.engine.object.IrisDepositPlacementScope;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -73,6 +75,24 @@ public class IrisDepositModifierContainmentTest {
         assertFalse(IrisDepositModifier.canReplaceDepositTarget(air));
         assertFalse(IrisDepositModifier.canReplaceDepositTarget(fluid));
         assertFalse(IrisDepositModifier.canReplaceDepositTarget(null));
+    }
+
+    @Test
+    public void surfacePolicyReplacesBuriedHostPolicyWithoutAffectingCaves() {
+        IrisDepositGenerator generator = mock(IrisDepositGenerator.class);
+        IrisBiome biome = mock(IrisBiome.class);
+        PlatformBlockState sand = mock(PlatformBlockState.class);
+        PlatformBlockState basalt = mock(PlatformBlockState.class);
+        when(generator.hasSurfaceReplaceableBlocks(biome)).thenReturn(true);
+        when(generator.canReplaceSurface(sand, biome)).thenReturn(true);
+        when(generator.canReplace(sand)).thenReturn(false);
+        when(generator.canReplaceSurface(basalt, biome)).thenReturn(false);
+        when(generator.canReplace(basalt)).thenReturn(true);
+
+        assertTrue(IrisDepositModifier.canReplaceDepositHost(generator, sand, biome, true));
+        assertFalse(IrisDepositModifier.canReplaceDepositHost(generator, sand, biome, false));
+        assertFalse(IrisDepositModifier.canReplaceDepositHost(generator, basalt, biome, true));
+        assertTrue(IrisDepositModifier.canReplaceDepositHost(generator, basalt, biome, false));
     }
 
     @Test
@@ -151,6 +171,33 @@ public class IrisDepositModifierContainmentTest {
         assertTrue(IrisDepositModifier.shouldDiscardExposed(0.5D, 0.499D, true));
         assertFalse(IrisDepositModifier.shouldDiscardExposed(0.5D, 0.5D, true));
         assertFalse(IrisDepositModifier.shouldDiscardExposed(0D, 0D, true));
+    }
+
+    @Test
+    public void terrainSurfaceIncludesExteriorAirButExcludesCaveAir() {
+        Hunk<PlatformBlockState> data = Hunk.newHunk(3, 3, 3);
+        PlatformBlockState solid = mock(PlatformBlockState.class);
+        PlatformBlockState exteriorAir = mock(PlatformBlockState.class);
+        PlatformBlockState caveAir = mock(PlatformBlockState.class);
+        when(exteriorAir.isAir()).thenReturn(true);
+        when(exteriorAir.key()).thenReturn("minecraft:air");
+        when(caveAir.isAir()).thenReturn(true);
+        when(caveAir.key()).thenReturn("minecraft:cave_air");
+        for (int x = 0; x < 3; x++) {
+            for (int y = 0; y < 3; y++) {
+                for (int z = 0; z < 3; z++) {
+                    data.setRaw(x, y, z, solid);
+                }
+            }
+        }
+
+        assertTrue(IrisDepositModifier.isTerrainSurface(data, 1, 1, 1, 1));
+        assertFalse(IrisDepositModifier.isTerrainSurface(data, 1, 1, 1, 2));
+        data.setRaw(2, 1, 1, exteriorAir);
+        assertTrue(IrisDepositModifier.isTerrainSurface(data, 1, 1, 1, 2));
+        data.setRaw(2, 1, 1, caveAir);
+        assertFalse(IrisDepositModifier.isTerrainSurface(data, 1, 1, 1, 2));
+        assertTrue(IrisDepositModifier.isAdjacentToAir(data, 1, 1, 1));
     }
 
     @Test

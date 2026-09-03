@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
@@ -659,6 +660,46 @@ public class HydrologyTileCacheTest {
 
         assertFalse(cache.isPlanned(40, 40));
         cache.columnAt(40, 40);
+        assertTrue(cache.isPlanned(40, 40));
+    }
+
+    @Test
+    public void aThreadThatMayNotWaitSamplesRiverlesslyAndAsksThePrefetchExecutorInstead() {
+        HydrologyPlanner planner = mock(HydrologyPlanner.class);
+        HydrologyTile tile = mock(HydrologyTile.class);
+        when(planner.settings()).thenReturn(emptySettings());
+        when(planner.plan(any(HydrologyTileKey.class))).thenReturn(tile);
+        when(tile.columnAt(anyInt(), anyInt())).thenReturn(Optional.empty());
+        List<Runnable> queued = new ArrayList<>();
+        AtomicBoolean forbidden = new AtomicBoolean(true);
+        HydrologyTileCache cache = new HydrologyTileCache(planner, 64, queued::add, forbidden::get);
+
+        assertTrue(cache.columnAt(40, 40).isEmpty());
+        verify(planner, org.mockito.Mockito.never()).plan(any(HydrologyTileKey.class));
+        assertFalse(queued.isEmpty());
+
+        for (Runnable task : List.copyOf(queued)) {
+            task.run();
+        }
+
+        // Once the plan lands the same thread composes the real columns instead of the empty answer.
+        assertTrue(cache.isPlanned(40, 40));
+        assertTrue(cache.columnAt(40, 40).isEmpty());
+        verify(tile, org.mockito.Mockito.atLeastOnce()).columnAt(anyInt(), anyInt());
+    }
+
+    @Test
+    public void aThreadThatMayWaitStillPlansTheTilesItNeeds() {
+        HydrologyPlanner planner = mock(HydrologyPlanner.class);
+        HydrologyTile tile = mock(HydrologyTile.class);
+        when(planner.settings()).thenReturn(emptySettings());
+        when(planner.plan(any(HydrologyTileKey.class))).thenReturn(tile);
+        when(tile.columnAt(anyInt(), anyInt())).thenReturn(Optional.empty());
+        AtomicBoolean forbidden = new AtomicBoolean(false);
+        HydrologyTileCache cache = new HydrologyTileCache(planner, 64, null, forbidden::get);
+
+        assertTrue(cache.columnAt(40, 40).isEmpty());
+        verify(planner, org.mockito.Mockito.atLeastOnce()).plan(any(HydrologyTileKey.class));
         assertTrue(cache.isPlanned(40, 40));
     }
 }

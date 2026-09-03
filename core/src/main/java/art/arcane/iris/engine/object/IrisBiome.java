@@ -96,6 +96,7 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     private final transient AtomicCache<KList<IrisOreGenerator>> undergroundOreCache = new AtomicCache<>();
     private final transient AtomicCache<IrisOreGeneratorBounds> surfaceOreBoundsCache = new AtomicCache<>();
     private final transient AtomicCache<IrisOreGeneratorBounds> undergroundOreBoundsCache = new AtomicCache<>();
+    private final transient AtomicCache<KSet<String>> surfaceOreReplaceableBlockData = new AtomicCache<>();
     private final transient AtomicCache<EnumMap<IrisDecorationPart, IrisDecorator[]>> decoratorBuckets = new AtomicCache<>();
     private final transient AtomicCache<Biome> derivativeResolved = new AtomicCache<>();
     private final transient AtomicCache<Biome> vanillaDerivativeResolved = new AtomicCache<>();
@@ -207,6 +208,9 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     @ArrayType(min = 1, type = IrisDepositGenerator.class)
     @Desc("Define biome deposit generators that add onto the existing regional and global deposit generators")
     private KList<IrisDepositGenerator> deposits = new KList<>();
+    @ArrayType(type = String.class)
+    @Desc("Optional exact host block ids that replace each ore deposit's surfaceReplaceableBlocks on exterior terrain inside this biome. Omit to inherit the deposit setting; an empty list forbids surface ore.")
+    private KList<String> surfaceOreReplaceableBlocks = null;
     @MinNumber(0)
     @MaxNumber(1)
     @Desc("Multiplier applied to the frequency of every ore deposit whose center is inside this biome. A value of 0.4 keeps 40% of ore veins while leaving non-ore deposits unchanged.")
@@ -225,6 +229,14 @@ public class IrisBiome extends IrisRegistrant implements IRare {
     @Desc("Collection of ores to be generated")
     @ArrayType(type = IrisOreGenerator.class, min = 1)
     private KList<IrisOreGenerator> ores = new KList<>();
+
+    public boolean hasSurfaceOreReplaceableBlocks() {
+        return IrisBiomeOres.hasSurfaceOreReplaceableBlocks(this);
+    }
+
+    public boolean canReplaceSurfaceOre(PlatformBlockState state) {
+        return IrisBiomeOres.canReplaceSurfaceOre(this, state);
+    }
 
     public PlatformBlockState generateOres(int x, int y, int z, RNG rng, IrisData data, boolean surface) {
         return IrisBiomeOres.generateOres(this, x, y, z, rng, data, surface);
@@ -297,6 +309,12 @@ public class IrisBiome extends IrisRegistrant implements IRare {
         undergroundOreCache.reset();
         surfaceOreBoundsCache.reset();
         undergroundOreBoundsCache.reset();
+    }
+
+    public IrisBiome setSurfaceOreReplaceableBlocks(KList<String> surfaceOreReplaceableBlocks) {
+        this.surfaceOreReplaceableBlocks = surfaceOreReplaceableBlocks;
+        surfaceOreReplaceableBlockData.reset();
+        return this;
     }
 
     public KList<IrisOreGenerator> getSurfaceOreGenerators() {

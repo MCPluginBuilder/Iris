@@ -99,6 +99,8 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
         if (k.getSpawnChance() < rng.d())
             return;
 
+        boolean oreDeposit = k.isOre(getData());
+
         for (int l = 0; l < rng.i(k.getMinPerChunk(), k.getMaxPerChunk() + 1); l++) {
             if (k.getPerClumpSpawnChance() < rng.d())
                 continue;
@@ -137,7 +139,6 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                 continue;
 
             int biomeY = Math.max(0, Math.min(getEngine().getHeight() - 1, y));
-            boolean oreDeposit = k.isOre(getData());
             IrisBiome surfaceBiome = context.getBiome().get(x, z);
             IrisBiome depositBiome = oreDeposit || k.usesCaveBiomeFilter()
                     ? getEngine().getCaveBiome(
@@ -189,14 +190,23 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                 if (!canReplaceDepositTarget(current)) {
                     continue;
                 }
-                if (!k.canReplace(current)) {
-                    continue;
-                }
                 if (!k.isReplaceBedrock() && IrisProceduralBlocks.materialKey(current).equals("minecraft:bedrock")) {
                     continue;
                 }
-                if (shouldDiscardExposed(
-                        k.getDiscardChanceOnAirExposure(), rng.d(), isAdjacentToAir(data, nx, ny, nz))) {
+
+                IrisBiome candidateSurfaceBiome = null;
+                boolean exteriorSurface = false;
+                if (oreDeposit) {
+                    candidateSurfaceBiome = context.getBiome().get(nx, nz);
+                    exteriorSurface = k.hasSurfaceReplaceableBlocks(candidateSurfaceBiome)
+                            && isTerrainSurface(data, nx, ny, nz, columnSurface);
+                }
+                if (!canReplaceDepositHost(k, current, candidateSurfaceBiome, exteriorSurface)) {
+                    continue;
+                }
+                boolean adjacentToAir = k.getDiscardChanceOnAirExposure() > 0D
+                        && isAdjacentToAir(data, nx, ny, nz);
+                if (shouldDiscardExposed(k.getDiscardChanceOnAirExposure(), rng.d(), adjacentToAir)) {
                     continue;
                 }
 
@@ -247,6 +257,15 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
         return state != null && !state.isAir() && !state.isFluid();
     }
 
+    static boolean canReplaceDepositHost(
+            IrisDepositGenerator generator, PlatformBlockState state,
+            IrisBiome surfaceBiome, boolean terrainSurface) {
+        if (terrainSurface && generator.hasSurfaceReplaceableBlocks(surfaceBiome)) {
+            return generator.canReplaceSurface(state, surfaceBiome);
+        }
+        return generator.canReplace(state);
+    }
+
     static int sampleHeight(
             IrisDepositHeightDistribution distribution, RNG rng,
             int configuredMinimum, int configuredMaximum, int clippedMaximum) {
@@ -276,6 +295,17 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
         return adjacentToAir && chance > 0D && sample < Math.min(1D, chance);
     }
 
+    static boolean isTerrainSurface(
+            Hunk<PlatformBlockState> data, int x, int y, int z, int columnSurface) {
+        return y == columnSurface
+                || isExteriorAirAt(data, x - 1, y, z)
+                || isExteriorAirAt(data, x + 1, y, z)
+                || isExteriorAirAt(data, x, y - 1, z)
+                || isExteriorAirAt(data, x, y + 1, z)
+                || isExteriorAirAt(data, x, y, z - 1)
+                || isExteriorAirAt(data, x, y, z + 1);
+    }
+
     static boolean isAdjacentToAir(Hunk<PlatformBlockState> data, int x, int y, int z) {
         return isAirAt(data, x - 1, y, z)
                 || isAirAt(data, x + 1, y, z)
@@ -293,6 +323,18 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
         }
         PlatformBlockState state = data.getRaw(x, y, z);
         return state == null || state.isAir();
+    }
+
+    private static boolean isExteriorAirAt(Hunk<PlatformBlockState> data, int x, int y, int z) {
+        if (x < 0 || x >= data.getWidth()
+                || y < 0 || y >= data.getHeight()
+                || z < 0 || z >= data.getDepth()) {
+            return false;
+        }
+        PlatformBlockState state = data.getRaw(x, y, z);
+        return state == null
+                || (state.isAir()
+                        && !"minecraft:cave_air".equals(IrisProceduralBlocks.materialKey(state)));
     }
 
     static boolean passesOreFrequency(double multiplier, double sample) {

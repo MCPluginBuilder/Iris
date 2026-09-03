@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 
 public final class HydrologyTileCache implements AutoCloseable {
     private static final int DEFAULT_MAXIMUM_ENTRIES = 64;
@@ -31,6 +32,7 @@ public final class HydrologyTileCache implements AutoCloseable {
     private final ThreadLocal<LocalChunkColumns> localChunkColumns;
     private final Executor prefetchExecutor;
     private final ConcurrentHashMap<HydrologyTileKey, CompletableFuture<HydrologyTile>> planning;
+    private final BooleanSupplier waitingForbidden;
 
     public HydrologyTileCache(HydrologyPlanner planner) {
         this(planner, DEFAULT_MAXIMUM_ENTRIES);
@@ -40,13 +42,26 @@ public final class HydrologyTileCache implements AutoCloseable {
         this(planner, maximumEntries, null);
     }
 
+    public HydrologyTileCache(HydrologyPlanner planner, int maximumEntries, Executor prefetchExecutor) {
+        this(planner, maximumEntries, prefetchExecutor, null);
+    }
+
     /**
      * @param prefetchExecutor runs neighbour tile planning ahead of generation, or null to plan
      *                         tiles only when a chunk needs them
+     * @param waitingForbidden true on a thread that must never wait for a cold plan, so a sample
+     *                         from it is answered as "no hydrology here" while the tiles it needs
+     *                         are handed to the prefetch executor; null lets every caller wait
      */
-    public HydrologyTileCache(HydrologyPlanner planner, int maximumEntries, Executor prefetchExecutor) {
+    public HydrologyTileCache(
+            HydrologyPlanner planner,
+            int maximumEntries,
+            Executor prefetchExecutor,
+            BooleanSupplier waitingForbidden
+    ) {
         this.planner = Objects.requireNonNull(planner, "planner");
         this.prefetchExecutor = prefetchExecutor;
+        this.waitingForbidden = waitingForbidden;
         this.planning = new ConcurrentHashMap<>();
         if (maximumEntries < 1) {
             throw new IllegalArgumentException("maximumEntries must be positive.");
@@ -149,17 +164,31 @@ public final class HydrologyTileCache implements AutoCloseable {
         if (composedChunks.getIfPresent(CacheKey.mix(RiverFootprint.pack(chunkX, chunkZ))) != null) {
             return true;
         }
-        boolean planned = true;
+        return !requestUnplanned(chunkX, chunkZ);
+    }
+
+    /**
+     * Hands every tile the chunk needs and does not have to the prefetch executor and says whether
+     * any was missing. Nothing is planned on the caller, so this is safe from a thread that must
+     * never wait for a cold plan.
+     */
+    private boolean requestUnplanned(int chunkX, int chunkZ) {
+        boolean missing = false;
         for (HydrologyTileKey key : relevantKeys(chunkX, chunkZ)) {
             if (tiles.getIfPresent(key) != null) {
                 continue;
             }
-            planned = false;
+            missing = true;
             if (prefetchExecutor != null) {
                 prefetch(key);
             }
         }
-        return planned;
+        return missing;
+    }
+
+    /** Whether the calling thread must never wait for a cold hydrology plan. */
+    private boolean waitsForbidden() {
+        return waitingForbidden != null && waitingForbidden.getAsBoolean();
     }
 
     public HydrologyRenderSample renderAt(int blockX, int blockZ) {
@@ -206,6 +235,14 @@ public final class HydrologyTileCache implements AutoCloseable {
             return local.columns();
         }
         long packedChunk = CacheKey.mix(RiverFootprint.pack(chunkX, chunkZ));
+        if (composedChunks.getIfPresent(packedChunk) == null
+                && waitsForbidden()
+                && requestUnplanned(chunkX, chunkZ)) {
+            // A thread that must never wait (the server thread answering a query) gets a riverless
+            // answer while the tiles it would have waited for are planned on the prefetch executor.
+            // The empty result is never cached, so the next query composes the real columns.
+            return ChunkColumns.empty(chunkX, chunkZ);
+        }
         ChunkColumns columns = composedChunks.get(
                 packedChunk,
                 ignored -> composeChunkColumns(chunkX, chunkZ)
@@ -467,6 +504,11 @@ public final class HydrologyTileCache implements AutoCloseable {
     }
 
     private record ChunkColumns(int chunkX, int chunkZ, HydrologyColumnSample[] columns) {
+        /** A chunk with no hydrology at all, the answer for a caller that may not wait for its plan. */
+        private static ChunkColumns empty(int chunkX, int chunkZ) {
+            return new ChunkColumns(chunkX, chunkZ, new HydrologyColumnSample[CHUNK_COLUMN_COUNT]);
+        }
+
         private Optional<HydrologyColumnSample> columnAt(int blockX, int blockZ) {
             int localX = Math.floorMod(blockX, CHUNK_SIZE);
             int localZ = Math.floorMod(blockZ, CHUNK_SIZE);

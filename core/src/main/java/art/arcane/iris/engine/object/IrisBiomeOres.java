@@ -21,7 +21,9 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.data.B;
 import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.volmlib.util.math.RNG;
 
 /**
@@ -52,6 +54,19 @@ final class IrisBiomeOres {
 
     static boolean hasUndergroundOres(IrisBiome biome) {
         return !getUndergroundOres(biome).isEmpty();
+    }
+
+    static boolean hasSurfaceOreReplaceableBlocks(IrisBiome biome) {
+        return biome.getSurfaceOreReplaceableBlocks() != null;
+    }
+
+    static boolean canReplaceSurfaceOre(IrisBiome biome, PlatformBlockState state) {
+        if (!hasSurfaceOreReplaceableBlocks(biome)) {
+            return true;
+        }
+        return biome.getSurfaceOreReplaceableBlockData()
+                .aquire(() -> resolveSurfaceOreReplaceableBlocks(biome))
+                .contains(IrisProceduralBlocks.materialKey(state));
     }
 
     static KList<IrisOreGenerator> getSurfaceOreGenerators(IrisBiome biome) {
@@ -125,5 +140,16 @@ final class IrisBiomeOres {
             }
         }
         return null;
+    }
+
+    private static KSet<String> resolveSurfaceOreReplaceableBlocks(IrisBiome biome) {
+        KSet<String> resolved = new KSet<>();
+        for (String key : biome.getSurfaceOreReplaceableBlocks()) {
+            PlatformBlockState state = B.getStateOrNull(key, false);
+            if (state != null) {
+                resolved.add(IrisProceduralBlocks.materialKey(state));
+            }
+        }
+        return resolved;
     }
 }
