@@ -57,7 +57,14 @@ public class PaperPluginMetadataTest {
         assertTrue(metadata.contains("folia-supported: true"));
         assertTrue(metadata.contains("load: STARTUP"));
         assertFalse(metadata.contains("commands:"));
-        assertTrue(metadata.contains("permissions:\n  iris.all:\n"
+        assertTrue(metadata.contains("permissions:\n"));
+        assertTrue(metadata.contains("  iris.debugdump:\n"
+                + "    description: Allows creating and optionally uploading diagnostic reports.\n"
+                + "    default: op"));
+        assertTrue(metadata.contains("  iris.language.self:\n"
+                + "    description: Allows choosing your own language for this plugin.\n"
+                + "    default: true"));
+        assertTrue(metadata.contains("  iris.all:\n"
                 + "    description: Allows use of the full /iris command tree (worlds, studio, pregen, packs, developer tools).\n"
                 + "    default: op\n"
                 + "  iris.treefeller:\n"

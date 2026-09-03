@@ -50,6 +50,7 @@ import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import art.arcane.iris.util.common.scheduling.J;
 import org.bukkit.Bukkit;
+import org.bukkit.command.CommandSender;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
@@ -94,6 +95,19 @@ public class CommandIris implements DirectorExecutor {
     private CommandFind find;
     private CommandDatapack datapack;
     VolmitSender sender = Iris.getSender();
+
+    @Director(name = "debugdump", sync = true, description = "Create and optionally upload a diagnostic report", descriptionKey = "iris.director.commandiris.director.debugdump")
+    public void debugdump(
+        @Param(name = "upload", defaultValue = "true", description = "Upload the report to mclo.gs", descriptionKey = "iris.director.commandiris.param.debugdump_upload") boolean upload,
+        @Param(name = "sender", contextual = true) CommandSender sender
+    ) {
+        Iris.instance.debugDump().request(sender, upload);
+    }
+
+    @Director(description = "Choose your language or the server default")
+    public void language() {
+        Iris.instance.selectLanguage(sender().getS(), new String[0]);
+    }
 
     @Director(description = "Create a new world", descriptionKey = "iris.director.commandiris.director.create_new_world", aliases = {"c"})
     public void create(

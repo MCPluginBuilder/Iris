@@ -18,6 +18,7 @@
 
 package art.arcane.iris;
 
+import art.arcane.volmlib.util.diagnostics.BukkitDebugDump;
 import art.arcane.iris.engine.IrisEngineEffects;
 import art.arcane.iris.engine.IrisWorldManager;
 
@@ -50,6 +51,8 @@ import art.arcane.iris.core.link.IrisPapiInstaller;
 import art.arcane.iris.core.link.IrisPapiListener;
 import art.arcane.iris.core.link.IrisPapiState;
 import art.arcane.iris.core.localization.IrisLanguage;
+import art.arcane.volmlib.util.director.help.DirectorMiniMenu;
+import art.arcane.volmlib.util.localization.BukkitLanguageSwitcher;
 import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.gui.BukkitGuiHost;
@@ -199,6 +202,8 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     private final BukkitWorldReconciler worldReconciler = new BukkitWorldReconciler(this);
     private final PendingWorldDeleteQueue pendingWorldDeletes = new PendingWorldDeleteQueue(this);
     private final PendingWorldReplacementManager pendingWorldReplacements = new PendingWorldReplacementManager(this);
+    private BukkitLanguageSwitcher languageSwitcher;
+    private BukkitDebugDump debugDump;
     private volatile SettingsHotloadWatch settingsHotloadWatch;
     private volatile Thread serverLifecycleThread;
 
@@ -602,6 +607,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         MultiBurst.burst.reopen();
         MultiBurst.ioBurst.reopen();
         IrisLanguage.initialize();
+        debugDump = BukkitDebugDump.create(this);
+        languageSwitcher = BukkitLanguageSwitcher.register(this, IrisLanguage.selections(),
+                new BukkitLanguageSwitcher.Options("iris", "iris.all",
+                        DirectorMiniMenu.Theme.irisGreen(), IrisLanguage.directorResolver(), IrisLanguage.editorOptions()));
         PaperLibBootstrap.install();
         SimdSupport.install();
         services = new KMap<>();
@@ -861,7 +870,32 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         }
     }
 
+    public BukkitDebugDump debugDump() {
+        return debugDump;
+    }
+
+    public void selectLanguage(CommandSender sender, String[] arguments) {
+        BukkitLanguageSwitcher current = languageSwitcher;
+        if (current != null) {
+            current.command(sender, arguments);
+        }
+    }
+
+    public List<String> completeLanguage(CommandSender sender, String[] arguments) {
+        BukkitLanguageSwitcher current = languageSwitcher;
+        return current == null ? List.of() : current.complete(sender, arguments);
+    }
+
     public void onDisable() {
+        if (debugDump != null) {
+            debugDump.close();
+            debugDump = null;
+        }
+        if (languageSwitcher != null) {
+            languageSwitcher.close();
+            languageSwitcher = null;
+        }
+        IrisLanguage.shutdown();
         teardownPapi();
         boolean serverStopping = IrisToolbelt.isServerStopping();
         boolean restartingAtStartupBoundary = startupBoundaryRestart.get();

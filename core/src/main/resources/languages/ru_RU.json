@@ -1,6 +1,8 @@
 {
   "locale": "ru_RU",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Создать диагностический отчёт и при желании загрузить его",
+    "iris.director.commandiris.param.debugdump_upload": "Загрузить отчёт на mclo.gs",
     "director.help.navigation.parent.hover": "Вернуться к родительской группе команд",
     "director.help.navigation.back": "Назад",
     "director.help.no_subcommands": "На этой странице нет подкоманд.",

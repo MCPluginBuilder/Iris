@@ -1,6 +1,8 @@
 {
   "locale": "tr_TR",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Tanılama raporu oluştur ve isteğe bağlı olarak yükle",
+    "iris.director.commandiris.param.debugdump_upload": "Raporu mclo.gs üzerine yükle",
     "director.help.navigation.parent.hover": "Üst komut grubuna dön",
     "director.help.navigation.back": "Geri",
     "director.help.no_subcommands": "Bu sayfada alt komut yok.",

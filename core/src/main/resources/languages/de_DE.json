@@ -1,6 +1,8 @@
 {
   "locale": "de_DE",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Einen Diagnosebericht erstellen und optional hochladen",
+    "iris.director.commandiris.param.debugdump_upload": "Den Bericht zu mclo.gs hochladen",
     "director.help.navigation.parent.hover": "Zur übergeordneten Befehlsgruppe zurückkehren",
     "director.help.navigation.back": "Zurück",
     "director.help.no_subcommands": "Auf dieser Seite gibt es keine Unterbefehle.",

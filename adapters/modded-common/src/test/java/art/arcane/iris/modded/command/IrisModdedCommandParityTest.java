@@ -30,6 +30,10 @@ public class IrisModdedCommandParityTest {
         IrisModdedCommands.register(dispatcher);
 
         CommandNode<CommandSourceStack> iris = child(dispatcher.getRoot(), "iris");
+        CommandNode<CommandSourceStack> language = child(iris, "language");
+        assertNotNull(language.getCommand());
+        child(child(language, "self"), "locale");
+        child(child(language, "server"), "locale");
         CommandNode<CommandSourceStack> what = child(iris, "what");
         child(what, "here");
         child(what, "biome");

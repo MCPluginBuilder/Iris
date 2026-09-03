@@ -1,6 +1,8 @@
 {
   "locale": "lt_LT",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Sukurti diagnostikos ataskaitą ir pasirinktinai ją įkelti",
+    "iris.director.commandiris.param.debugdump_upload": "Įkelti ataskaitą į mclo.gs",
     "director.help.navigation.parent.hover": "Grįžti į pirminę komandų grupę",
     "director.help.navigation.back": "Atgal",
     "director.help.no_subcommands": "Šiame puslapyje nėra antrinių komandų.",

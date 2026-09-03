@@ -55,6 +55,8 @@ import org.jetbrains.annotations.Nullable;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -62,10 +64,13 @@ import java.util.Optional;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.IrisMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
+import art.arcane.volmlib.util.localization.LanguageAudience;
 import art.arcane.volmlib.util.plugin.ComponentMessenger;
 public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, DirectorInvocationHook {
     private static final String ROOT_COMMAND = "iris";
     private static final String ROOT_PERMISSION = "iris.all";
+
+    private final ThreadLocal<Deque<LanguageAudience.Scope>> languageScopes = ThreadLocal.withInitial(ArrayDeque::new);
 
     private final transient AtomicCache<DirectorRuntimeEngine> directorCache = new AtomicCache<>();
     private final transient ThreadLocal<CommandSender> dispatchSenders = new ThreadLocal<>();
@@ -102,6 +107,12 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
 
     private DirectorContextRegistry buildDirectorContexts() {
         DirectorContextRegistry contexts = new DirectorContextRegistry();
+        contexts.register(CommandSender.class, (invocation, map) -> {
+            if (invocation.getSender() instanceof BukkitDirectorSender sender) {
+                return sender.sender();
+            }
+            return null;
+        });
 
         for (Map.Entry<Class<?>, DirectorContextHandler<?>> entry : DirectorContextHandler.contextHandlers.entrySet()) {
             registerContextHandler(contexts, entry.getKey(), entry.getValue());
@@ -139,6 +150,7 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     @Override
     public void beforeInvoke(DirectorInvocation invocation, DirectorRuntimeNode node) {
         if (invocation.getSender() instanceof BukkitDirectorSender sender) {
+            languageScopes.get().push(LanguageAudience.open(sender.sender() instanceof Player player ? player.getUniqueId() : null));
             DirectorContext.touch(new VolmitSender(sender.sender()));
         }
     }
@@ -146,6 +158,13 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     @Override
     public void afterInvoke(DirectorInvocation invocation, DirectorRuntimeNode node) {
         DirectorContext.remove();
+        Deque<LanguageAudience.Scope> scopes = languageScopes.get();
+        if (!scopes.isEmpty()) {
+            scopes.pop().close();
+        }
+        if (scopes.isEmpty()) {
+            languageScopes.remove();
+        }
     }
 
     @Nullable
@@ -169,7 +188,12 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     }
 
     public void executeRoot(CommandSender sender, String label, String[] args) {
-        if (!sender.hasPermission(ROOT_PERMISSION)) {
+        if (args.length > 0 && args[0].equalsIgnoreCase("language")) {
+            Iris.instance.selectLanguage(sender, Arrays.copyOfRange(args, 1, args.length));
+            return;
+        }
+        if (!(args.length > 0 && args[0].equalsIgnoreCase("debugdump"))
+            && !sender.hasPermission(ROOT_PERMISSION)) {
             ComponentMessenger.sendSection(sender, IrisLanguage.text(
                     IrisMessages.COMMAND_PERMISSION_DENIED,
                     MessageArgument.trusted("permission", ROOT_PERMISSION)
@@ -181,7 +205,9 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     }
 
     public List<String> tabCompleteRoot(CommandSender sender, String alias, String[] args) {
-        List<String> suggestions = runDirectorTab(sender, alias, args);
+        List<String> suggestions = args.length > 0 && args[0].equalsIgnoreCase("language")
+                ? Iris.instance.completeLanguage(sender, Arrays.copyOfRange(args, 1, args.length))
+                : runDirectorTab(sender, alias, args);
         if (sender instanceof Player player && IrisSettings.get().getGeneral().isCommandSounds()) {
             player.playSound(player.getLocation(), Sound.BLOCK_AMETHYST_BLOCK_CHIME, 0.25f, RNG.r.f(0.125f, 1.95f));
         }
@@ -235,23 +261,25 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
     }
 
     private boolean sendHelpIfRequested(CommandSender sender, String[] args) {
-        Optional<DirectorHelpPage> request = DirectorMiniMenu.resolveHelp(getDirector(), Arrays.asList(args));
-        if (request.isEmpty()) {
-            return false;
-        }
+        try (LanguageAudience.Scope audience = LanguageAudience.open(sender instanceof Player player ? player.getUniqueId() : null)) {
+            Optional<DirectorHelpPage> request = DirectorMiniMenu.resolveHelp(getDirector(), Arrays.asList(args));
+            if (request.isEmpty()) {
+                return false;
+            }
 
-        DirectorMiniMenu.deliver(
-                sender,
-                request.get(),
-                DirectorMiniMenu.Theme.irisGreen(),
-                IrisLanguage.directorResolver()
-        );
-        return true;
+            DirectorMiniMenu.deliver(
+                    sender,
+                    request.get(),
+                    DirectorMiniMenu.Theme.irisGreen(),
+                    IrisLanguage.directorResolver()
+            );
+            return true;
+        }
     }
 
     private DirectorExecutionResult runDirector(CommandSender sender, String label, String[] args) {
         dispatchSenders.set(sender);
-        try {
+        try (LanguageAudience.Scope audience = LanguageAudience.open(sender instanceof Player player ? player.getUniqueId() : null)) {
             return getDirector().execute(new DirectorInvocation(new BukkitDirectorSender(sender), label, Arrays.asList(args)));
         } catch (Throwable e) {
             Iris.warn("Director command execution failed: " + e.getClass().getSimpleName() + " " + e.getMessage());
@@ -263,7 +291,7 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
 
     private List<String> runDirectorTab(CommandSender sender, String alias, String[] args) {
         DirectorContext.touch(new VolmitSender(sender));
-        try {
+        try (LanguageAudience.Scope audience = LanguageAudience.open(sender instanceof Player player ? player.getUniqueId() : null)) {
             return getDirector().tabComplete(new DirectorInvocation(new BukkitDirectorSender(sender), alias, Arrays.asList(args)));
         } catch (Throwable e) {
             Iris.warn("Director tab completion failed: " + e.getClass().getSimpleName() + " " + e.getMessage());

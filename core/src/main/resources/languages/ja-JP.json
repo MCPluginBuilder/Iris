@@ -1,6 +1,8 @@
 {
   "locale": "ja-JP",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "診断レポートを作成し、必要に応じてアップロードする",
+    "iris.director.commandiris.param.debugdump_upload": "レポートを mclo.gs にアップロードする",
     "director.help.navigation.parent.hover": "親コマンドグループに戻る",
     "director.help.navigation.back": "戻る",
     "director.help.no_subcommands": "このページにサブコマンドはありません。",

@@ -1,6 +1,8 @@
 {
   "locale": "zh_CN",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "创建诊断报告并选择是否上传",
+    "iris.director.commandiris.param.debugdump_upload": "将报告上传到 mclo.gs",
     "director.help.navigation.parent.hover": "返回上级命令组",
     "director.help.navigation.back": "返回",
     "director.help.no_subcommands": "此页面没有子命令。",

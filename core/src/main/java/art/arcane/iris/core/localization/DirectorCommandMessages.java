@@ -6,6 +6,8 @@ import art.arcane.volmlib.util.localization.TextKey;
 import java.util.List;
 
 public final class DirectorCommandMessages {
+    public static final TextKey DEBUG_DUMP_DESCRIPTION = TextKey.of("iris.director.commandiris.director.debugdump", "Create and optionally upload a diagnostic report");
+    public static final TextKey DEBUG_DUMP_UPLOAD = TextKey.of("iris.director.commandiris.param.debugdump_upload", "Upload the report to mclo.gs");
     public static final TextKey COMMAND_DATAPACK_DIRECTOR_DOWNLOAD_MANAGE_EXTERNAL_DATAPACK_IMPORTS_MODRINTH = TextKey.of(
             "iris.director.commanddatapack.director.download_manage_external_datapack_imports_modrinth",
             "Download & manage external datapack imports"
@@ -864,6 +866,8 @@ public final class DirectorCommandMessages {
     );
 
     private static final List<MessageKey> KEYS = List.of(
+        DEBUG_DUMP_DESCRIPTION,
+        DEBUG_DUMP_UPLOAD,
             COMMAND_DATAPACK_DIRECTOR_DOWNLOAD_MANAGE_EXTERNAL_DATAPACK_IMPORTS_MODRINTH,
             COMMAND_DATAPACK_DIRECTOR_DOWNLOAD_UPDATE_EVERY_DATAPACK_LISTED_PACK_DIMENSION_S_DATAPACKIMPORTS_INSTALL_IT_INTO,
             COMMAND_DATAPACK_PARAM_RESTART_SERVER_WHEN_NEW_DATAPACKS_ARE_INSTALLED_REQUIRED_NEW_STRUCTURES_REGISTER_GENERATE,

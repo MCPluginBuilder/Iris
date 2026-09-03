@@ -1,6 +1,8 @@
 {
   "locale": "it_IT",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Crea un rapporto diagnostico e caricalo facoltativamente",
+    "iris.director.commandiris.param.debugdump_upload": "Carica il rapporto su mclo.gs",
     "director.help.navigation.parent.hover": "Torna al gruppo di comandi principale",
     "director.help.navigation.back": "Indietro",
     "director.help.no_subcommands": "Nessun sottocomando in questa pagina.",

@@ -92,30 +92,30 @@ public final class ModdedWhatCommands {
 
     public static LiteralArgumentBuilder<CommandSourceStack> tree() {
         return Commands.literal("what").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) ->
-                        inspectHere(context.getSource()))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                        inspectHere(context.getSource())))
                 .then(Commands.literal("here")
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                inspectHere(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                                inspectHere(context.getSource()))))
                 .then(Commands.literal("biome")
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                inspectBiome(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                                inspectBiome(context.getSource()))))
                 .then(Commands.literal("region")
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                inspectRegion(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                                inspectRegion(context.getSource()))))
                 .then(Commands.literal("block")
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                inspectBlock(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                                inspectBlock(context.getSource()))))
                 .then(Commands.literal("hand")
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                inspectHand(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                                inspectHand(context.getSource()))))
                 .then(Commands.literal("markers")
                         .then(Commands.argument("marker", StringArgumentType.greedyString())
                                 .suggests(MARKER_TYPES)
-                                .executes((CommandContext<CommandSourceStack> context) ->
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
                                         inspectMarkers(
                                                 context.getSource(),
-                                                StringArgumentType.getString(context, "marker")))));
+                                                StringArgumentType.getString(context, "marker"))))));
     }
 
     static void clear() {

@@ -1,6 +1,8 @@
 {
   "locale": "es_ES",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Crear y subir opcionalmente un informe de diagnóstico",
+    "iris.director.commandiris.param.debugdump_upload": "Subir el informe a mclo.gs",
     "director.help.navigation.parent.hover": "Volver al grupo de comandos superior",
     "director.help.navigation.back": "Atrás",
     "director.help.no_subcommands": "No hay subcomandos en esta página.",

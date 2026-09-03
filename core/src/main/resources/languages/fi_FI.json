@@ -1,6 +1,8 @@
 {
   "locale": "fi_FI",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Luo diagnostiikkaraportti ja lähetä se halutessasi",
+    "iris.director.commandiris.param.debugdump_upload": "Lähetä raportti mclo.gs-palveluun",
     "director.help.navigation.parent.hover": "Palaa ylempään komentoryhmään",
     "director.help.navigation.back": "Takaisin",
     "director.help.no_subcommands": "Tällä sivulla ei ole alikomentoja.",

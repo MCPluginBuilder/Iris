@@ -435,6 +435,7 @@ public final class ModdedEngineBootstrap {
     }
 
     private static void restorePlatform(IrisPlatform platform) {
+        IrisLanguage.shutdown();
         IrisPlatforms.unbind();
         if (platform != null) {
             IrisPlatforms.bind(platform);

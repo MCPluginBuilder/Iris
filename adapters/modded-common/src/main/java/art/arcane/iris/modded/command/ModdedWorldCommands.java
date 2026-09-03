@@ -67,14 +67,14 @@ public final class ModdedWorldCommands {
     public static LiteralArgumentBuilder<CommandSourceStack> tree(String name) {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal(name).requires(GATE);
 
-        root.executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name));
+        root.executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name)));
 
         root.then(Commands.literal("status")
-                .executes((CommandContext<CommandSourceStack> context) -> status(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> status(context.getSource()))));
         root.then(Commands.literal("list")
-                .executes((CommandContext<CommandSourceStack> context) -> list(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> list(context.getSource()))));
         root.then(Commands.literal("ls")
-                .executes((CommandContext<CommandSourceStack> context) -> list(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> list(context.getSource()))));
 
         root.then(enableTree("enable"));
         root.then(enableTree("create"));
@@ -93,53 +93,53 @@ public final class ModdedWorldCommands {
         return Commands.literal(name)
                 .then(Commands.argument("dimension", IdentifierArgument.id())
                         .then(Commands.argument("pack", StringArgumentType.string()).suggests(IrisModdedCommands.PACK_NAMES)
-                                .executes((CommandContext<CommandSourceStack> context) -> enable(context.getSource(),
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> enable(context.getSource(),
                                         dimensionArgument(context),
                                         StringArgumentType.getString(context, "pack"),
-                                        null))
+                                        null)))
                                 .then(Commands.argument("seed", StringArgumentType.word())
-                                        .executes((CommandContext<CommandSourceStack> context) -> enable(context.getSource(),
+                                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> enable(context.getSource(),
                                                 dimensionArgument(context),
                                                 StringArgumentType.getString(context, "pack"),
-                                                StringArgumentType.getString(context, "seed"))))));
+                                                StringArgumentType.getString(context, "seed")))))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> disableTree() {
         return Commands.literal("disable")
                 .then(Commands.argument("dimension", IdentifierArgument.id()).suggests(LOADED_DIMENSIONS)
-                        .executes((CommandContext<CommandSourceStack> context) -> disable(context.getSource(), dimensionArgument(context), false)));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> disable(context.getSource(), dimensionArgument(context), false))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> deleteTree(String name) {
         return Commands.literal(name)
                 .then(Commands.argument("dimension", IdentifierArgument.id()).suggests(LOADED_DIMENSIONS)
-                        .executes((CommandContext<CommandSourceStack> context) -> disable(context.getSource(), dimensionArgument(context), true)));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> disable(context.getSource(), dimensionArgument(context), true))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> replaceOverworldTree() {
         return Commands.literal("replace-overworld")
                 .then(Commands.argument("pack", StringArgumentType.string()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> replaceOverworld(context.getSource(),
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> replaceOverworld(context.getSource(),
                                 StringArgumentType.getString(context, "pack"),
-                                null))
+                                null)))
                         .then(Commands.argument("seed", StringArgumentType.word())
-                                .executes((CommandContext<CommandSourceStack> context) -> replaceOverworld(context.getSource(),
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> replaceOverworld(context.getSource(),
                                         StringArgumentType.getString(context, "pack"),
-                                        StringArgumentType.getString(context, "seed")))));
+                                        StringArgumentType.getString(context, "seed"))))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> mainWorldTree() {
         return Commands.literal("mainworld")
                 .then(Commands.literal("off")
-                        .executes((CommandContext<CommandSourceStack> context) -> clearMainWorld(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> clearMainWorld(context.getSource()))))
                 .then(Commands.argument("pack", StringArgumentType.string()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> mainWorld(context.getSource(),
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> mainWorld(context.getSource(),
                                 StringArgumentType.getString(context, "pack"),
-                                null))
+                                null)))
                         .then(Commands.argument("seed", StringArgumentType.word())
-                                .executes((CommandContext<CommandSourceStack> context) -> mainWorld(context.getSource(),
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> mainWorld(context.getSource(),
                                         StringArgumentType.getString(context, "pack"),
-                                        StringArgumentType.getString(context, "seed")))));
+                                        StringArgumentType.getString(context, "seed"))))));
     }
 
     public static int createWorld(CommandSourceStack source, String name, String pack, long seed) {

@@ -1,6 +1,8 @@
 {
   "locale": "ko_KR",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "진단 보고서를 생성하고 선택적으로 업로드",
+    "iris.director.commandiris.param.debugdump_upload": "보고서를 mclo.gs에 업로드",
     "director.help.navigation.parent.hover": "상위 명령어 그룹으로 돌아가기",
     "director.help.navigation.back": "뒤로",
     "director.help.no_subcommands": "이 페이지에는 하위 명령어가 없습니다.",

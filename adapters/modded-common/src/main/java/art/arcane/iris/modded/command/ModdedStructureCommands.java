@@ -63,23 +63,23 @@ public final class ModdedStructureCommands {
     public static LiteralArgumentBuilder<CommandSourceStack> tree(String name) {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal(name).requires(GATE);
 
-        root.executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name));
+        root.executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name)));
 
         root.then(Commands.literal("list")
-                .executes((CommandContext<CommandSourceStack> context) -> list(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> list(context.getSource()))));
         root.then(Commands.literal("ls")
-                .executes((CommandContext<CommandSourceStack> context) -> list(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> list(context.getSource()))));
 
         root.then(Commands.literal("info")
                 .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(IRIS_STRUCTURE_KEYS)
-                        .executes((CommandContext<CommandSourceStack> context) -> info(context.getSource(), StringArgumentType.getString(context, "key")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> info(context.getSource(), StringArgumentType.getString(context, "key"))))));
 
         root.then(Commands.literal("place")
                 .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(IRIS_STRUCTURE_KEYS)
-                        .executes((CommandContext<CommandSourceStack> context) -> place(context.getSource(), StringArgumentType.getString(context, "key")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> place(context.getSource(), StringArgumentType.getString(context, "key"))))));
         root.then(Commands.literal("p")
                 .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(IRIS_STRUCTURE_KEYS)
-                        .executes((CommandContext<CommandSourceStack> context) -> place(context.getSource(), StringArgumentType.getString(context, "key")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> place(context.getSource(), StringArgumentType.getString(context, "key"))))));
 
         root.then(message("import", "Structure import rebuilds vanilla & datapack structures as editable Iris resources through Bukkit/NMS template managers; run /iris structure import on a Bukkit server against this pack, then copy the pack folder over."));
         root.then(message("import-all", "Structure import rebuilds vanilla & datapack structures as editable Iris resources through Bukkit/NMS template managers; run /iris structure import on a Bukkit server against this pack, then copy the pack folder over."));
@@ -96,23 +96,23 @@ public final class ModdedStructureCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> verifyTree(String name) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.verifyStructures(context.getSource(), null))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.verifyStructures(context.getSource(), null)))
                 .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ALL_STRUCTURE_KEYS)
-                        .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.verifyStructures(
-                                context.getSource(), StringArgumentType.getString(context, "key"))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.verifyStructures(
+                                context.getSource(), StringArgumentType.getString(context, "key")))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> message(String name, String text) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> {
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> {
                     IrisModdedCommands.fail(context.getSource(), text);
                     return 0;
-                })
+                }))
                 .then(Commands.argument("args", StringArgumentType.greedyString())
-                        .executes((CommandContext<CommandSourceStack> context) -> {
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> {
                             IrisModdedCommands.fail(context.getSource(), text);
                             return 0;
-                        }));
+                        })));
     }
 
     private static IrisData dataFor(CommandSourceStack source) {

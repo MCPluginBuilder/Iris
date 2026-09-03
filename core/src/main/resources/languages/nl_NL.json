@@ -1,6 +1,8 @@
 {
   "locale": "nl_NL",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Maak een diagnostisch rapport en upload het desgewenst",
+    "iris.director.commandiris.param.debugdump_upload": "Upload het rapport naar mclo.gs",
     "director.help.navigation.parent.hover": "Terug naar de bovenliggende opdrachtgroep",
     "director.help.navigation.back": "Terug",
     "director.help.no_subcommands": "Geen subopdrachten op deze pagina.",

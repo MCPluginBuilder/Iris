@@ -82,12 +82,15 @@ public class IrisPapiLifecycleTest {
 
     @Test
     public void bothDisablePathsTearThePlaceholderSurfaceDown() throws Exception {
-        String source = source();
+        String disable = body("public void onDisable() {");
+        String preUnload = body("public void onPreUnload(ReloadAware.PreUnloadReason reason) {");
+        int disableTeardown = disable.indexOf("teardownPapi();");
+        int preUnloadTeardown = preUnload.indexOf("teardownPapi();");
 
-        assertTrue("onDisable must tear the expansion down",
-                source.contains("public void onDisable() {\n        teardownPapi();"));
-        assertTrue("the BileTools pre-unload hook must tear the expansion down",
-                source.contains("public void onPreUnload(ReloadAware.PreUnloadReason reason) {\n        teardownPapi();"));
+        assertTrue("onDisable must tear the expansion down before branching into runtime shutdown",
+                disableTeardown >= 0 && disableTeardown < disable.indexOf("IrisToolbelt.isServerStopping()"));
+        assertTrue("the BileTools pre-unload hook must tear the expansion down before any shutdown branch",
+                preUnloadTeardown >= 0 && preUnloadTeardown < preUnload.indexOf("IrisToolbelt.isServerStopping()"));
     }
 
     @Test

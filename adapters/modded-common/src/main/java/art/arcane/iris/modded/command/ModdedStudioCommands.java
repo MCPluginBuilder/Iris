@@ -118,7 +118,7 @@ public final class ModdedStudioCommands {
     public static LiteralArgumentBuilder<CommandSourceStack> tree(String name) {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal(name).requires(GATE);
 
-        root.executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name));
+        root.executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name)));
 
         root.then(createTree("create"));
         root.then(createTree("+"));
@@ -127,27 +127,27 @@ public final class ModdedStudioCommands {
         root.then(packageTree("pkg"));
 
         root.then(Commands.literal("version")
-                .executes((CommandContext<CommandSourceStack> context) -> version(context.getSource(), null))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> version(context.getSource(), null)))
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> version(context.getSource(), StringArgumentType.getString(context, "pack")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> version(context.getSource(), StringArgumentType.getString(context, "pack"))))));
 
         root.then(Commands.literal("regions")
-                .executes((CommandContext<CommandSourceStack> context) -> regions(context.getSource(), 500))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> regions(context.getSource(), 500)))
                 .then(Commands.argument("radius", IntegerArgumentType.integer(8, 1000))
-                        .executes((CommandContext<CommandSourceStack> context) -> regions(context.getSource(), IntegerArgumentType.getInteger(context, "radius")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> regions(context.getSource(), IntegerArgumentType.getInteger(context, "radius"))))));
 
         root.then(openTree("open"));
         root.then(openTree("o"));
         root.then(Commands.literal("close")
-                .executes((CommandContext<CommandSourceStack> context) -> close(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> close(context.getSource()))));
         root.then(Commands.literal("x")
-                .executes((CommandContext<CommandSourceStack> context) -> close(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> close(context.getSource()))));
         root.then(Commands.literal("tpstudio")
-                .executes((CommandContext<CommandSourceStack> context) -> tpStudio(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> tpStudio(context.getSource()))));
         root.then(Commands.literal("stp")
-                .executes((CommandContext<CommandSourceStack> context) -> tpStudio(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> tpStudio(context.getSource()))));
         root.then(Commands.literal("status")
-                .executes((CommandContext<CommandSourceStack> context) -> status(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> status(context.getSource()))));
         root.then(workspaceTree("vscode", true));
         root.then(workspaceTree("vsc", true));
         root.then(workspaceTree("update", false));
@@ -172,26 +172,26 @@ public final class ModdedStudioCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> createTree(String name) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) ->
-                        create(context.getSource(), "studio", DEFAULT_TEMPLATE))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                        create(context.getSource(), "studio", DEFAULT_TEMPLATE)))
                 .then(Commands.argument("name", StringArgumentType.word())
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                create(context.getSource(), StringArgumentType.getString(context, "name"), DEFAULT_TEMPLATE))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                                create(context.getSource(), StringArgumentType.getString(context, "name"), DEFAULT_TEMPLATE)))
                         .then(Commands.argument("template", StringArgumentType.word())
                                 .suggests(IrisModdedCommands.PACK_NAMES)
-                                .executes((CommandContext<CommandSourceStack> context) ->
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
                                         create(context.getSource(),
                                                 StringArgumentType.getString(context, "name"),
-                                                StringArgumentType.getString(context, "template")))));
+                                                StringArgumentType.getString(context, "template"))))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> packageTree(String name) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> pkg(context.getSource(), null))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> pkg(context.getSource(), null)))
                 .then(Commands.argument("pack", StringArgumentType.word())
                         .suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                pkg(context.getSource(), StringArgumentType.getString(context, "pack"))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                                pkg(context.getSource(), StringArgumentType.getString(context, "pack")))));
     }
 
     public static void clear() {
@@ -201,11 +201,11 @@ public final class ModdedStudioCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> openTree(String name) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> openHelp(context.getSource()))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> openHelp(context.getSource())))
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> open(context.getSource(), StringArgumentType.getString(context, "pack"), 1337L))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> open(context.getSource(), StringArgumentType.getString(context, "pack"), 1337L)))
                         .then(Commands.argument("seed", LongArgumentType.longArg())
-                                .executes((CommandContext<CommandSourceStack> context) -> open(context.getSource(), StringArgumentType.getString(context, "pack"), LongArgumentType.getLong(context, "seed")))));
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> open(context.getSource(), StringArgumentType.getString(context, "pack"), LongArgumentType.getLong(context, "seed"))))));
     }
 
     private static int openHelp(CommandSourceStack source) {
@@ -215,21 +215,21 @@ public final class ModdedStudioCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> noiseTree(String name) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> noise(context.getSource(), null, 12345L))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> noise(context.getSource(), null, 12345L)))
                 .then(Commands.argument("generator", StringArgumentType.word()).suggests(GENERATOR_KEYS)
-                        .executes((CommandContext<CommandSourceStack> context) -> noise(context.getSource(), StringArgumentType.getString(context, "generator"), 12345L))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> noise(context.getSource(), StringArgumentType.getString(context, "generator"), 12345L)))
                         .then(Commands.argument("seed", LongArgumentType.longArg())
-                                .executes((CommandContext<CommandSourceStack> context) -> noise(context.getSource(), StringArgumentType.getString(context, "generator"), LongArgumentType.getLong(context, "seed")))));
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> noise(context.getSource(), StringArgumentType.getString(context, "generator"), LongArgumentType.getLong(context, "seed"))))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> mapTree(String name) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> map(context.getSource()));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> map(context.getSource())));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> imageMapTree(String name) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> imageMap(context.getSource()));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> imageMap(context.getSource())));
     }
 
     private static int noise(CommandSourceStack source, String generatorKey, long seed) {
@@ -306,9 +306,9 @@ public final class ModdedStudioCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> workspaceTree(String name, boolean open) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> workspace(context.getSource(), null, open))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> workspace(context.getSource(), null, open)))
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> workspace(context.getSource(), StringArgumentType.getString(context, "pack"), open)));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> workspace(context.getSource(), StringArgumentType.getString(context, "pack"), open))));
     }
 
     private static int workspace(CommandSourceStack source, String pack, boolean open) {
@@ -355,15 +355,15 @@ public final class ModdedStudioCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> message(String name, String text) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> {
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> {
                     IrisModdedCommands.fail(context.getSource(), text);
                     return 0;
-                })
+                }))
                 .then(Commands.argument("args", StringArgumentType.greedyString())
-                        .executes((CommandContext<CommandSourceStack> context) -> {
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> {
                             IrisModdedCommands.fail(context.getSource(), text);
                             return 0;
-                        }));
+                        })));
     }
 
     private static File resolvePack(CommandSourceStack source, String pack) {
@@ -905,6 +905,7 @@ public final class ModdedStudioCommands {
         lootKeys.addAll(dimension.getLoot().getTables());
         spawnerKeys.addAll(dimension.getEntitySpawners());
         collectStructureKeys(structureKeys, dimension.getStructures());
+        objectKeys.addAll(PackExportClosure.collectStaticObjectKeys(dimension.getStaticObjects()));
 
         for (String regionKey : regionKeys) {
             IrisRegion region = dm.getRegionLoader().load(regionKey);

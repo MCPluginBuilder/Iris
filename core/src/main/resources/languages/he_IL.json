@@ -1,6 +1,8 @@
 {
   "locale": "he_IL",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "יצירת דוח אבחון והעלאתו לפי בחירה",
+    "iris.director.commandiris.param.debugdump_upload": "העלאת הדוח אל mclo.gs",
     "director.help.navigation.parent.hover": "חזרה לקבוצת פקודות האב",
     "director.help.navigation.back": "חזרה",
     "director.help.no_subcommands": "אין פקודות משנה בעמוד זה.",

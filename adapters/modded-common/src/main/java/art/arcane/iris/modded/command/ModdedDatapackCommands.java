@@ -64,18 +64,18 @@ public final class ModdedDatapackCommands {
     public static LiteralArgumentBuilder<CommandSourceStack> tree(String name) {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal(name).requires(GATE);
 
-        root.executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name));
+        root.executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name)));
 
         root.then(Commands.literal("status")
-                .executes((CommandContext<CommandSourceStack> context) -> status(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> status(context.getSource()))));
 
         root.then(Commands.literal("install")
-                .executes((CommandContext<CommandSourceStack> context) -> install(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> install(context.getSource()))));
 
         root.then(Commands.literal("list")
-                .executes((CommandContext<CommandSourceStack> context) -> list(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> list(context.getSource()))));
         root.then(Commands.literal("ls")
-                .executes((CommandContext<CommandSourceStack> context) -> list(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> list(context.getSource()))));
 
         root.then(message("ingest", "Managed Modrinth datapack ingest is Bukkit-only. On modded servers install the datapack folder or zip in world/datapacks, enable it, restart, then use /iris datapack list to confirm it is enabled. Registered structures generate natively in Iris dimensions."));
         root.then(message("pull", "Managed Modrinth datapack ingest is Bukkit-only. On modded servers install the datapack folder or zip in world/datapacks, enable it, restart, then use /iris datapack list to confirm it is enabled. Registered structures generate natively in Iris dimensions."));
@@ -88,15 +88,15 @@ public final class ModdedDatapackCommands {
 
     private static LiteralArgumentBuilder<CommandSourceStack> message(String name, String text) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> {
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> {
                     IrisModdedCommands.fail(context.getSource(), text);
                     return 0;
-                })
+                }))
                 .then(Commands.argument("args", StringArgumentType.greedyString())
-                        .executes((CommandContext<CommandSourceStack> context) -> {
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> {
                             IrisModdedCommands.fail(context.getSource(), text);
                             return 0;
-                        }));
+                        })));
     }
 
     private static File worldDatapacksFolder(MinecraftServer server) {

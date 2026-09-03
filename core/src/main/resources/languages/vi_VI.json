@@ -1,6 +1,8 @@
 {
   "locale": "vi_VI",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Tạo báo cáo chẩn đoán và tải lên nếu muốn",
+    "iris.director.commandiris.param.debugdump_upload": "Tải báo cáo lên mclo.gs",
     "director.help.navigation.parent.hover": "Quay lại nhóm lệnh cha",
     "director.help.navigation.back": "Quay lại",
     "director.help.no_subcommands": "Không có lệnh con trên trang này.",

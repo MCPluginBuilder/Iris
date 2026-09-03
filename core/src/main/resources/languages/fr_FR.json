@@ -1,6 +1,8 @@
 {
   "locale": "fr_FR",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Créer un rapport de diagnostic et le publier si souhaité",
+    "iris.director.commandiris.param.debugdump_upload": "Publier le rapport sur mclo.gs",
     "director.help.navigation.parent.hover": "Revenir au groupe de commandes parent",
     "director.help.navigation.back": "Retour",
     "director.help.no_subcommands": "Aucune sous-commande sur cette page.",

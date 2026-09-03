@@ -107,21 +107,21 @@ public final class ModdedObjectCommands {
         ModdedObjectUndo.init();
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal(name).requires(GATE);
 
-        root.executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name));
+        root.executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name)));
 
         root.then(Commands.literal("wand")
-                .executes((CommandContext<CommandSourceStack> context) -> giveWand(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> giveWand(context.getSource()))));
         root.then(Commands.literal("dust")
-                .executes((CommandContext<CommandSourceStack> context) -> giveDust(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> giveDust(context.getSource()))));
         root.then(Commands.literal("d")
-                .executes((CommandContext<CommandSourceStack> context) -> giveDust(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> giveDust(context.getSource()))));
 
         root.then(Commands.literal("save")
                 .then(Commands.literal("overwrite")
                         .then(Commands.argument("name", StringArgumentType.greedyString())
-                                .executes((CommandContext<CommandSourceStack> context) -> save(context.getSource(), StringArgumentType.getString(context, "name"), true))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> save(context.getSource(), StringArgumentType.getString(context, "name"), true)))))
                 .then(Commands.argument("name", StringArgumentType.greedyString())
-                        .executes((CommandContext<CommandSourceStack> context) -> save(context.getSource(), StringArgumentType.getString(context, "name"), false))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> save(context.getSource(), StringArgumentType.getString(context, "name"), false)))));
 
         root.then(pasteTree());
 
@@ -131,13 +131,13 @@ public final class ModdedObjectCommands {
         root.then(resizeTree("shift", ResizeOp.SHIFT));
 
         root.then(Commands.literal("xpy")
-                .executes((CommandContext<CommandSourceStack> context) -> autoSelect(context.getSource(), false)));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> autoSelect(context.getSource(), false))));
         root.then(Commands.literal("x+y")
-                .executes((CommandContext<CommandSourceStack> context) -> autoSelect(context.getSource(), false)));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> autoSelect(context.getSource(), false))));
         root.then(Commands.literal("xay")
-                .executes((CommandContext<CommandSourceStack> context) -> autoSelect(context.getSource(), true)));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> autoSelect(context.getSource(), true))));
         root.then(Commands.literal("x&y")
-                .executes((CommandContext<CommandSourceStack> context) -> autoSelect(context.getSource(), true)));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> autoSelect(context.getSource(), true))));
 
         root.then(positionTree("position1", true));
         root.then(positionTree("p1", true));
@@ -146,27 +146,27 @@ public final class ModdedObjectCommands {
 
         root.then(Commands.literal("analyze")
                 .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(OBJECT_KEYS)
-                        .executes((CommandContext<CommandSourceStack> context) -> analyze(context.getSource(), StringArgumentType.getString(context, "key")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> analyze(context.getSource(), StringArgumentType.getString(context, "key"))))));
 
         root.then(Commands.literal("shrink")
                 .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(OBJECT_KEYS)
-                        .executes((CommandContext<CommandSourceStack> context) -> shrink(context.getSource(), StringArgumentType.getString(context, "key")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> shrink(context.getSource(), StringArgumentType.getString(context, "key"))))));
 
         root.then(Commands.literal("undo")
-                .executes((CommandContext<CommandSourceStack> context) -> undo(context.getSource(), 1))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> undo(context.getSource(), 1)))
                 .then(Commands.argument("amount", IntegerArgumentType.integer(1, 32))
-                        .executes((CommandContext<CommandSourceStack> context) -> undo(context.getSource(), IntegerArgumentType.getInteger(context, "amount")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> undo(context.getSource(), IntegerArgumentType.getInteger(context, "amount"))))));
         root.then(Commands.literal("u")
-                .executes((CommandContext<CommandSourceStack> context) -> undo(context.getSource(), 1))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> undo(context.getSource(), 1)))
                 .then(Commands.argument("amount", IntegerArgumentType.integer(1, 32))
-                        .executes((CommandContext<CommandSourceStack> context) -> undo(context.getSource(), IntegerArgumentType.getInteger(context, "amount")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> undo(context.getSource(), IntegerArgumentType.getInteger(context, "amount"))))));
 
         root.then(bukkitOnly("we", "WorldEdit selection import requires the Bukkit plugin with WorldEdit installed."));
         root.then(bukkitOnly("studio", "The object studio world requires the Bukkit studio toolchain; it is not available on modded servers."));
         root.then(bukkitOnly("convert", "Schematic conversion (.schem -> .iob) requires the Bukkit plugin."));
         root.then(Commands.literal("plausibilize")
                 .then(Commands.argument("args", StringArgumentType.greedyString()).suggests(OBJECT_KEYS)
-                        .executes((CommandContext<CommandSourceStack> context) -> plausibilize(context.getSource(), StringArgumentType.getString(context, "args")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> plausibilize(context.getSource(), StringArgumentType.getString(context, "args"))))));
 
         return root;
     }
@@ -174,12 +174,12 @@ public final class ModdedObjectCommands {
     private static LiteralArgumentBuilder<CommandSourceStack> pasteTree() {
         LiteralArgumentBuilder<CommandSourceStack> paste = Commands.literal("paste");
         paste.then(Commands.argument("key", StringArgumentType.greedyString()).suggests(OBJECT_KEYS)
-                .executes((CommandContext<CommandSourceStack> context) -> paste(context.getSource(), StringArgumentType.getString(context, "key"), 0, null)));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> paste(context.getSource(), StringArgumentType.getString(context, "key"), 0, null))));
         paste.then(Commands.literal("rotate")
                 .then(Commands.argument("degrees", IntegerArgumentType.integer(-270, 270)).suggests(ROTATIONS)
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(OBJECT_KEYS)
-                                .executes((CommandContext<CommandSourceStack> context) -> paste(context.getSource(), StringArgumentType.getString(context, "key"),
-                                        IntegerArgumentType.getInteger(context, "degrees"), null)))));
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> paste(context.getSource(), StringArgumentType.getString(context, "key"),
+                                        IntegerArgumentType.getInteger(context, "degrees"), null))))));
         paste.then(Commands.literal("at")
                 .then(Commands.argument("x", IntegerArgumentType.integer())
                         .then(Commands.argument("y", IntegerArgumentType.integer())
@@ -187,35 +187,35 @@ public final class ModdedObjectCommands {
                                         .then(Commands.literal("rotate")
                                                 .then(Commands.argument("degrees", IntegerArgumentType.integer(-270, 270)).suggests(ROTATIONS)
                                                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(OBJECT_KEYS)
-                                                                .executes((CommandContext<CommandSourceStack> context) -> paste(context.getSource(), StringArgumentType.getString(context, "key"),
+                                                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> paste(context.getSource(), StringArgumentType.getString(context, "key"),
                                                                         IntegerArgumentType.getInteger(context, "degrees"),
-                                                                        new BlockPos(IntegerArgumentType.getInteger(context, "x"), IntegerArgumentType.getInteger(context, "y"), IntegerArgumentType.getInteger(context, "z")))))))
+                                                                        new BlockPos(IntegerArgumentType.getInteger(context, "x"), IntegerArgumentType.getInteger(context, "y"), IntegerArgumentType.getInteger(context, "z"))))))))
                                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(OBJECT_KEYS)
-                                                .executes((CommandContext<CommandSourceStack> context) -> paste(context.getSource(), StringArgumentType.getString(context, "key"), 0,
-                                                        new BlockPos(IntegerArgumentType.getInteger(context, "x"), IntegerArgumentType.getInteger(context, "y"), IntegerArgumentType.getInteger(context, "z")))))))));
+                                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> paste(context.getSource(), StringArgumentType.getString(context, "key"), 0,
+                                                        new BlockPos(IntegerArgumentType.getInteger(context, "x"), IntegerArgumentType.getInteger(context, "y"), IntegerArgumentType.getInteger(context, "z"))))))))));
         return paste;
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> resizeTree(String name, ResizeOp op) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> resize(context.getSource(), 1, op))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> resize(context.getSource(), 1, op)))
                 .then(Commands.argument("amount", IntegerArgumentType.integer(1, 256))
-                        .executes((CommandContext<CommandSourceStack> context) -> resize(context.getSource(), IntegerArgumentType.getInteger(context, "amount"), op)));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> resize(context.getSource(), IntegerArgumentType.getInteger(context, "amount"), op))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> positionTree(String name, boolean first) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> position(context.getSource(), first, false))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> position(context.getSource(), first, false)))
                 .then(Commands.literal("look")
-                        .executes((CommandContext<CommandSourceStack> context) -> position(context.getSource(), first, true)));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> position(context.getSource(), first, true))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> bukkitOnly(String name, String message) {
         return Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> {
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> {
                     IrisModdedCommands.fail(context.getSource(), message);
                     return 0;
-                });
+                }));
     }
 
     public static int giveWand(CommandSourceStack source) {

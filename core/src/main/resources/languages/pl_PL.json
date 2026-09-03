@@ -1,6 +1,8 @@
 {
   "locale": "pl_PL",
   "messages": {
+    "iris.director.commandiris.director.debugdump": "Utwórz raport diagnostyczny i opcjonalnie go prześlij",
+    "iris.director.commandiris.param.debugdump_upload": "Prześlij raport do mclo.gs",
     "director.help.navigation.parent.hover": "Wróć do nadrzędnej grupy poleceń",
     "director.help.navigation.back": "Wstecz",
     "director.help.no_subcommands": "Na tej stronie nie ma podpoleceń.",

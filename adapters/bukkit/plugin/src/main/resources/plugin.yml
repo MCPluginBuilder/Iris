@@ -26,6 +26,12 @@ commands:
   iris:
     aliases: [ ir, irs ]
 permissions:
+  iris.debugdump:
+    description: Allows creating and optionally uploading diagnostic reports.
+    default: op
+  iris.language.self:
+    description: Allows choosing your own language for this plugin.
+    default: true
   iris.all:
     description: Allows use of the full /iris command tree (worlds, studio, pregen, packs, developer tools).
     default: op

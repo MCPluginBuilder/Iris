@@ -42,11 +42,11 @@ final class ModdedDeveloperCommands {
 
     static LiteralArgumentBuilder<CommandSourceStack> tree(String name) {
         return Commands.literal(name).requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), "developer"))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), "developer")))
                 .then(Commands.literal("network")
-                        .executes((CommandContext<CommandSourceStack> context) -> network(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> network(context.getSource()))))
                 .then(Commands.literal("ip")
-                        .executes((CommandContext<CommandSourceStack> context) -> network(context.getSource())));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> network(context.getSource()))));
     }
 
     private static int network(CommandSourceStack source) {

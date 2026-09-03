@@ -51,47 +51,47 @@ public final class ModdedPackCommands {
     public static LiteralArgumentBuilder<CommandSourceStack> tree(String name) {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal(name).requires(GATE);
 
-        root.executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name));
+        root.executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name)));
 
         root.then(Commands.literal("validate")
-                .executes((CommandContext<CommandSourceStack> context) -> validate(context.getSource(), null))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> validate(context.getSource(), null)))
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> validate(context.getSource(), StringArgumentType.getString(context, "pack")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> validate(context.getSource(), StringArgumentType.getString(context, "pack"))))));
         root.then(Commands.literal("v")
-                .executes((CommandContext<CommandSourceStack> context) -> validate(context.getSource(), null))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> validate(context.getSource(), null)))
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> validate(context.getSource(), StringArgumentType.getString(context, "pack")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> validate(context.getSource(), StringArgumentType.getString(context, "pack"))))));
 
         root.then(Commands.literal("cleanup")
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> cleanup(context.getSource(), StringArgumentType.getString(context, "pack"), false))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> cleanup(context.getSource(), StringArgumentType.getString(context, "pack"), false)))
                         .then(Commands.literal("apply")
-                                .executes((CommandContext<CommandSourceStack> context) -> cleanup(context.getSource(), StringArgumentType.getString(context, "pack"), true)))));
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> cleanup(context.getSource(), StringArgumentType.getString(context, "pack"), true))))));
         root.then(Commands.literal("c")
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> cleanup(context.getSource(), StringArgumentType.getString(context, "pack"), false))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> cleanup(context.getSource(), StringArgumentType.getString(context, "pack"), false)))
                         .then(Commands.literal("apply")
-                                .executes((CommandContext<CommandSourceStack> context) -> cleanup(context.getSource(), StringArgumentType.getString(context, "pack"), true)))));
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> cleanup(context.getSource(), StringArgumentType.getString(context, "pack"), true))))));
 
         root.then(Commands.literal("restore")
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> restore(context.getSource(), StringArgumentType.getString(context, "pack"), false))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> restore(context.getSource(), StringArgumentType.getString(context, "pack"), false)))
                         .then(Commands.literal("apply")
-                                .executes((CommandContext<CommandSourceStack> context) -> restore(context.getSource(), StringArgumentType.getString(context, "pack"), true)))));
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> restore(context.getSource(), StringArgumentType.getString(context, "pack"), true))))));
         root.then(Commands.literal("r")
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> restore(context.getSource(), StringArgumentType.getString(context, "pack"), false))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> restore(context.getSource(), StringArgumentType.getString(context, "pack"), false)))
                         .then(Commands.literal("apply")
-                                .executes((CommandContext<CommandSourceStack> context) -> restore(context.getSource(), StringArgumentType.getString(context, "pack"), true)))));
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> restore(context.getSource(), StringArgumentType.getString(context, "pack"), true))))));
 
         root.then(Commands.literal("status")
-                .executes((CommandContext<CommandSourceStack> context) -> status(context.getSource(), null))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> status(context.getSource(), null)))
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> status(context.getSource(), StringArgumentType.getString(context, "pack")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> status(context.getSource(), StringArgumentType.getString(context, "pack"))))));
         root.then(Commands.literal("s")
-                .executes((CommandContext<CommandSourceStack> context) -> status(context.getSource(), null))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> status(context.getSource(), null)))
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> status(context.getSource(), StringArgumentType.getString(context, "pack")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> status(context.getSource(), StringArgumentType.getString(context, "pack"))))));
 
         return root;
     }

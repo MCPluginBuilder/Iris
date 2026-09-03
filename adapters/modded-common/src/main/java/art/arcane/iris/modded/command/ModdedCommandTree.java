@@ -18,7 +18,10 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.volmlib.util.localization.LanguageAudience;
+import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import net.minecraft.server.level.ServerPlayer;
 import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.ArgumentBuilder;
@@ -66,16 +69,17 @@ final class ModdedCommandTree {
     static LiteralArgumentBuilder<CommandSourceStack> rootTree() {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("iris");
 
-        root.executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), ""));
+        root.executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), "")));
         root.then(helpTree());
+        root.then(ModdedLanguageCommands.tree());
 
         root.then(Commands.literal("version").requires(READ_ONLY)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.version(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.version(context.getSource()))));
 
         root.then(Commands.literal("info").requires(READ_ONLY)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), null))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), null)))
                 .then(Commands.argument("dimension", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.DIMENSION_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), StringArgumentType.getString(context, "dimension")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), StringArgumentType.getString(context, "dimension"))))));
 
         // ModdedWhatCommands.tree() gates itself at LEVEL_GAMEMASTERS and keeps that gate:
         // "what markers" drives lease-gated 9x9 mantle scans, and the Bukkit twin puts the
@@ -86,27 +90,27 @@ final class ModdedCommandTree {
         root.then(teleportTree("tp"));
 
         root.then(Commands.literal("evacuate").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.evacuate(context.getSource(), null))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.evacuate(context.getSource(), null)))
                 .then(Commands.argument("dimension", DimensionArgument.dimension()).suggests(ModdedCommandSuggestions.DIMENSION_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.evacuate(context.getSource(), DimensionArgument.getDimension(context, "dimension")))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.evacuate(context.getSource(), DimensionArgument.getDimension(context, "dimension"))))));
 
         root.then(Commands.literal("debug").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.debug(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.debug(context.getSource()))));
 
         root.then(Commands.literal("reload").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.reload(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.reload(context.getSource()))));
         root.then(Commands.literal("height").requires(READ_ONLY)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.height(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.height(context.getSource()))));
         root.then(Commands.literal("worlds").requires(READ_ONLY)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), null)));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), null))));
         root.then(Commands.literal("accesslist").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), null)));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.info(context.getSource(), null))));
 
         root.then(gotoTree("goto"));
         root.then(gotoTree("find"));
 
         root.then(Commands.literal("seed").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.seed(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.seed(context.getSource()))));
 
         root.then(goldenhashTree("goldenhash"));
         root.then(goldenhashTree("gold"));
@@ -124,11 +128,11 @@ final class ModdedCommandTree {
         root.then(pregenTree("pregenerate"));
 
         root.then(Commands.literal("wand").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedObjectCommands.giveWand(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedObjectCommands.giveWand(context.getSource()))));
         root.then(Commands.literal("dust").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedObjectCommands.giveDust(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedObjectCommands.giveDust(context.getSource()))));
         root.then(Commands.literal("d").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedObjectCommands.giveDust(context.getSource())));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedObjectCommands.giveDust(context.getSource()))));
         root.then(ModdedObjectCommands.tree("object"));
         root.then(ModdedObjectCommands.tree("o"));
         root.then(editTree());
@@ -155,122 +159,131 @@ final class ModdedCommandTree {
         return root;
     }
 
+    static Command<CommandSourceStack> localized(Command<CommandSourceStack> command) {
+        return context -> {
+            ServerPlayer player = context.getSource().getPlayer();
+            try (LanguageAudience.Scope audience = LanguageAudience.open(player == null ? null : player.getUUID())) {
+                return command.run(context);
+            }
+        };
+    }
+
     private static LiteralArgumentBuilder<CommandSourceStack> createTree(String name) {
         return Commands.literal(name).requires(GATE)
                 .then(Commands.argument("name", StringArgumentType.word())
-                        .executes((CommandContext<CommandSourceStack> context) ->
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
                                 ModdedWorldCommands.createWorld(
                                         context.getSource(),
                                         StringArgumentType.getString(context, "name"),
                                         "overworld",
-                                        1337L))
+                                        1337L)))
                         .then(Commands.argument("pack", StringArgumentType.string()).suggests(ModdedCommandSuggestions.PACK_NAMES)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedWorldCommands.createWorld(context.getSource(),
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedWorldCommands.createWorld(context.getSource(),
                                         StringArgumentType.getString(context, "name"),
                                         StringArgumentType.getString(context, "pack"),
-                                        1337L))
+                                        1337L)))
                                 .then(Commands.argument("seed", LongArgumentType.longArg())
-                                        .executes((CommandContext<CommandSourceStack> context) -> ModdedWorldCommands.createWorld(context.getSource(),
+                                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedWorldCommands.createWorld(context.getSource(),
                                                 StringArgumentType.getString(context, "name"),
                                                 StringArgumentType.getString(context, "pack"),
-                                                LongArgumentType.getLong(context, "seed"))))));
+                                                LongArgumentType.getLong(context, "seed")))))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> teleportTree(String name) {
         return Commands.literal(name).requires(GATE)
                 .then(Commands.argument("dimension", DimensionArgument.dimension()).suggests(ModdedCommandSuggestions.DIMENSION_NAMES)
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                IrisModdedCommands.tp(context.getSource(), DimensionArgument.getDimension(context, "dimension"), null))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                                IrisModdedCommands.tp(context.getSource(), DimensionArgument.getDimension(context, "dimension"), null)))
                         .then(Commands.argument("player", EntityArgument.player())
-                                .executes((CommandContext<CommandSourceStack> context) ->
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
                                         IrisModdedCommands.tp(context.getSource(), DimensionArgument.getDimension(context, "dimension"),
-                                                EntityArgument.getPlayer(context, "player")))));
+                                                EntityArgument.getPlayer(context, "player"))))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> helpTree() {
         return Commands.literal("help").requires(READ_ONLY)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), ""))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), "")))
                 .then(Commands.argument("section", StringArgumentType.greedyString())
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), StringArgumentType.getString(context, "section"))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), StringArgumentType.getString(context, "section")))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> downloadTree(String name) {
         return Commands.literal(name).requires(GATE)
                 .then(Commands.argument("source", StringArgumentType.greedyString()).suggests(DOWNLOAD_SOURCES)
-                        .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.download(
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.download(
                                 context.getSource(),
                                 StringArgumentType.getString(context, "source")
-                        )));
+                        ))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> metricsTree(String name) {
         return Commands.literal(name).requires(READ_ONLY)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.metrics(context.getSource()));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.metrics(context.getSource())));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> regenTree(String name) {
         return Commands.literal(name).requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.regen(context.getSource(), 0))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.regen(context.getSource(), 0)))
                 .then(Commands.argument("radius", IntegerArgumentType.integer(0, 64))
-                        .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.regen(context.getSource(), IntegerArgumentType.getInteger(context, "radius"))));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.regen(context.getSource(), IntegerArgumentType.getInteger(context, "radius")))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> gotoTree(String name) {
         return Commands.literal(name).requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name)))
                 .then(Commands.literal("biome")
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.BIOME_KEYS)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoBiome(context.getSource(), StringArgumentType.getString(context, "key")))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoBiome(context.getSource(), StringArgumentType.getString(context, "key"))))))
                 .then(Commands.literal("region")
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.REGION_KEYS)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoRegion(context.getSource(), StringArgumentType.getString(context, "key")))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoRegion(context.getSource(), StringArgumentType.getString(context, "key"))))))
                 .then(Commands.literal("object")
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.OBJECT_KEYS)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoObject(context.getSource(), StringArgumentType.getString(context, "key")))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoObject(context.getSource(), StringArgumentType.getString(context, "key"))))))
                 .then(Commands.literal("river")
                         .then(Commands.argument("type", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.HYDROLOGY_TYPES)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoRiver(context.getSource(), StringArgumentType.getString(context, "type")))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoRiver(context.getSource(), StringArgumentType.getString(context, "type"))))))
                 .then(Commands.literal("unregistered")
-                        .executes((CommandContext<CommandSourceStack> context) ->
-                                ModdedUnregisteredStructures.print(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) ->
+                                ModdedUnregisteredStructures.print(context.getSource()))))
                 .then(Commands.literal("structure")
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.STRUCTURE_KEYS)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoStructure(context.getSource(), StringArgumentType.getString(context, "key")))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoStructure(context.getSource(), StringArgumentType.getString(context, "key"))))))
                 .then(Commands.literal("poi")
                         .then(Commands.argument("type", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.POI_TYPES)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoPoi(context.getSource(), StringArgumentType.getString(context, "type")))));
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedLocateCommands.gotoPoi(context.getSource(), StringArgumentType.getString(context, "type"))))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> pregenTree(String name) {
         RequiredArgumentBuilder<CommandSourceStack, Integer> radius = Commands.argument("radius", IntegerArgumentType.integer(1, 100000))
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStart(context, false, false, false, false, false));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStart(context, false, false, false, false, false)));
         attachPregenCenter(radius, false);
         attachPregenFlags(radius, false, false, false, false, false);
         RequiredArgumentBuilder<CommandSourceStack, Identifier> dimension = Commands.argument("dimension", DimensionArgument.dimension()).suggests(ModdedCommandSuggestions.DIMENSION_NAMES)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStart(context, true, false, false, false, false));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStart(context, true, false, false, false, false)));
         attachPregenCenter(dimension, true);
         attachPregenFlags(dimension, true, false, false, false, false);
         radius.then(dimension);
 
         return Commands.literal(name).requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), name)))
                 .then(Commands.literal("start")
                         .then(radius))
                 .then(Commands.literal("stop")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStop(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStop(context.getSource()))))
                 .then(Commands.literal("x")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStop(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStop(context.getSource()))))
                 .then(Commands.literal("pause")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenPause(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenPause(context.getSource()))))
                 .then(Commands.literal("resume")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenPause(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenPause(context.getSource()))))
                 .then(Commands.literal("status")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStatus(context.getSource())));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStatus(context.getSource()))));
     }
 
     private static void attachPregenCenter(ArgumentBuilder<CommandSourceStack, ?> node, boolean withDimension) {
         RequiredArgumentBuilder<CommandSourceStack, Integer> z = Commands.argument("z", IntegerArgumentType.integer())
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStart(context, withDimension, true, false, false, false));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStart(context, withDimension, true, false, false, false)));
         attachPregenFlags(z, withDimension, true, false, false, false);
         node.then(Commands.literal("at")
                 .then(Commands.argument("x", IntegerArgumentType.integer())
@@ -291,22 +304,22 @@ final class ModdedCommandTree {
 
     private static LiteralArgumentBuilder<CommandSourceStack> pregenFlagNode(String name, boolean withDimension, boolean withCenter, boolean gui, boolean sync, boolean nocache) {
         LiteralArgumentBuilder<CommandSourceStack> flag = Commands.literal(name)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStart(context, withDimension, withCenter, gui, sync, nocache));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedPregenCommands.pregenStart(context, withDimension, withCenter, gui, sync, nocache)));
         attachPregenFlags(flag, withDimension, withCenter, gui, sync, nocache);
         return flag;
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> goldenhashTree(String name) {
         LiteralArgumentBuilder<CommandSourceStack> radiusAndThreads = Commands.literal(name).requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), 8, 8, ModdedGoldenHash.Mode.AUTO));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), 8, 8, ModdedGoldenHash.Mode.AUTO)));
         attachModes(radiusAndThreads, (CommandContext<CommandSourceStack> context) -> 8, (CommandContext<CommandSourceStack> context) -> 8);
 
         com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, Integer> radius = Commands.argument("radius", IntegerArgumentType.integer(0, 256))
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), IntegerArgumentType.getInteger(context, "radius"), 8, ModdedGoldenHash.Mode.AUTO));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), IntegerArgumentType.getInteger(context, "radius"), 8, ModdedGoldenHash.Mode.AUTO)));
         attachModes(radius, (CommandContext<CommandSourceStack> context) -> IntegerArgumentType.getInteger(context, "radius"), (CommandContext<CommandSourceStack> context) -> 8);
 
         com.mojang.brigadier.builder.RequiredArgumentBuilder<CommandSourceStack, Integer> threads = Commands.argument("threads", IntegerArgumentType.integer(1, 64))
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), IntegerArgumentType.getInteger(context, "radius"), IntegerArgumentType.getInteger(context, "threads"), ModdedGoldenHash.Mode.AUTO));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), IntegerArgumentType.getInteger(context, "radius"), IntegerArgumentType.getInteger(context, "threads"), ModdedGoldenHash.Mode.AUTO)));
         attachModes(threads, (CommandContext<CommandSourceStack> context) -> IntegerArgumentType.getInteger(context, "radius"), (CommandContext<CommandSourceStack> context) -> IntegerArgumentType.getInteger(context, "threads"));
 
         radius.then(threads);
@@ -320,33 +333,33 @@ final class ModdedCommandTree {
 
     private static void attachModes(com.mojang.brigadier.builder.ArgumentBuilder<CommandSourceStack, ?> node, IntExtractor radius, IntExtractor threads) {
         node.then(Commands.literal("capture")
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), radius.extract(context), threads.extract(context), ModdedGoldenHash.Mode.CAPTURE)));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), radius.extract(context), threads.extract(context), ModdedGoldenHash.Mode.CAPTURE))));
         node.then(Commands.literal("verify")
-                .executes((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), radius.extract(context), threads.extract(context), ModdedGoldenHash.Mode.VERIFY)));
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> IrisModdedCommands.goldenhash(context.getSource(), radius.extract(context), threads.extract(context), ModdedGoldenHash.Mode.VERIFY))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> editTree() {
         return Commands.literal("edit").requires(GATE)
-                .executes((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), "edit"))
+                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedCommandHelp.send(context.getSource(), "edit")))
                 .then(Commands.literal("biome")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editBiome(context.getSource(), null))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editBiome(context.getSource(), null)))
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.BIOME_KEYS)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editBiome(context.getSource(), StringArgumentType.getString(context, "key")))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editBiome(context.getSource(), StringArgumentType.getString(context, "key"))))))
                 .then(Commands.literal("b")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editBiome(context.getSource(), null))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editBiome(context.getSource(), null)))
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.BIOME_KEYS)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editBiome(context.getSource(), StringArgumentType.getString(context, "key")))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editBiome(context.getSource(), StringArgumentType.getString(context, "key"))))))
                 .then(Commands.literal("region")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editRegion(context.getSource(), null))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editRegion(context.getSource(), null)))
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.REGION_KEYS)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editRegion(context.getSource(), StringArgumentType.getString(context, "key")))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editRegion(context.getSource(), StringArgumentType.getString(context, "key"))))))
                 .then(Commands.literal("r")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editRegion(context.getSource(), null))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editRegion(context.getSource(), null)))
                         .then(Commands.argument("key", StringArgumentType.greedyString()).suggests(ModdedCommandSuggestions.REGION_KEYS)
-                                .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editRegion(context.getSource(), StringArgumentType.getString(context, "key")))))
+                                .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editRegion(context.getSource(), StringArgumentType.getString(context, "key"))))))
                 .then(Commands.literal("dimension")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editDimension(context.getSource())))
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editDimension(context.getSource()))))
                 .then(Commands.literal("d")
-                        .executes((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editDimension(context.getSource())));
+                        .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> ModdedEditCommands.editDimension(context.getSource()))));
     }
 }
