@@ -29,7 +29,6 @@ public class BukkitArtifactVerifierTest {
             SLIMJAR_RESOLUTIONS,
             NMS_BINDING + ".class"
     );
-    private static final int LOCALES = 2;
     private static final int MATTER_SLICES = 1;
 
     @Rule
@@ -39,7 +38,7 @@ public class BukkitArtifactVerifierTest {
     public void acceptsCompleteArtifact() throws Exception {
         File artifact = createArtifact(validEntries());
 
-        BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, MATTER_SLICES, Long.MAX_VALUE);
+        BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, MATTER_SLICES, Long.MAX_VALUE);
     }
 
     @Test
@@ -49,7 +48,7 @@ public class BukkitArtifactVerifierTest {
         File artifact = createArtifact(entries);
 
         GradleException failure = assertThrows(GradleException.class,
-                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, MATTER_SLICES, Long.MAX_VALUE));
+                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, MATTER_SLICES, Long.MAX_VALUE));
         assertTrue(failure.getMessage().contains(PLUGIN_DESCRIPTOR));
     }
 
@@ -60,7 +59,7 @@ public class BukkitArtifactVerifierTest {
         File artifact = createArtifact(entries);
 
         GradleException failure = assertThrows(GradleException.class,
-                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, MATTER_SLICES, Long.MAX_VALUE));
+                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, MATTER_SLICES, Long.MAX_VALUE));
         assertTrue(failure.getMessage().contains(SLIMJAR_DEPENDENCIES));
     }
 
@@ -71,7 +70,7 @@ public class BukkitArtifactVerifierTest {
         File artifact = createArtifact(entries);
 
         GradleException failure = assertThrows(GradleException.class,
-                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, MATTER_SLICES, Long.MAX_VALUE));
+                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, MATTER_SLICES, Long.MAX_VALUE));
         assertTrue(failure.getMessage().contains(SLIMJAR_RESOLUTIONS));
     }
 
@@ -82,7 +81,7 @@ public class BukkitArtifactVerifierTest {
         File artifact = createArtifact(entries);
 
         GradleException failure = assertThrows(GradleException.class,
-                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, MATTER_SLICES, Long.MAX_VALUE));
+                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, MATTER_SLICES, Long.MAX_VALUE));
         assertTrue(failure.getMessage().contains("art/arcane/volmlib/util/noise/CNG"));
     }
 
@@ -101,7 +100,7 @@ public class BukkitArtifactVerifierTest {
                 classReferencing("art/arcane/iris/ParalithicConsumer", "art/arcane/iris/util/paralithic/functions/Function"));
         File artifact = createArtifact(entries);
 
-        BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, MATTER_SLICES, Long.MAX_VALUE);
+        BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, MATTER_SLICES, Long.MAX_VALUE);
     }
 
     @Test
@@ -112,20 +111,19 @@ public class BukkitArtifactVerifierTest {
                 () -> BukkitArtifactVerifier.verify(
                         artifact,
                         REQUIRED_ENTRIES,
-                        LOCALES,
                         MATTER_SLICES,
                         artifact.length() - 1L));
         assertTrue(failure.getMessage().contains("must not exceed"));
     }
 
     @Test
-    public void rejectsDroppedLocale() throws Exception {
+    public void rejectsEmbeddedLocale() throws Exception {
         Map<String, byte[]> entries = validEntries();
-        entries.remove("languages/de_DE.json");
+        entries.put("languages/de_DE.json", "{}".getBytes(StandardCharsets.UTF_8));
         File artifact = createArtifact(entries);
 
         GradleException failure = assertThrows(GradleException.class,
-                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, MATTER_SLICES, Long.MAX_VALUE));
+                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, MATTER_SLICES, Long.MAX_VALUE));
         assertTrue(failure.getMessage().contains("locale files"));
     }
 
@@ -136,7 +134,7 @@ public class BukkitArtifactVerifierTest {
         File artifact = createArtifact(entries);
 
         GradleException failure = assertThrows(GradleException.class,
-                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, MATTER_SLICES, Long.MAX_VALUE));
+                () -> BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, MATTER_SLICES, Long.MAX_VALUE));
         assertTrue(failure.getMessage().contains("Matter slice types"));
     }
 
@@ -147,7 +145,7 @@ public class BukkitArtifactVerifierTest {
                 classAnnotatedWith("art/arcane/iris/Annotated", "com/google/errorprone/annotations/CanIgnoreReturnValue"));
         File artifact = createArtifact(entries);
 
-        BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, LOCALES, MATTER_SLICES, Long.MAX_VALUE);
+        BukkitArtifactVerifier.verify(artifact, REQUIRED_ENTRIES, MATTER_SLICES, Long.MAX_VALUE);
     }
 
     private Map<String, byte[]> validEntries() {
@@ -155,8 +153,7 @@ public class BukkitArtifactVerifierTest {
         entries.put(PLUGIN_DESCRIPTOR, "name: Iris\n".getBytes(StandardCharsets.UTF_8));
         entries.put(SLIMJAR_DEPENDENCIES, new byte[]{1});
         entries.put(SLIMJAR_RESOLUTIONS, new byte[]{1});
-        entries.put("languages/de_DE.json", "{}".getBytes(StandardCharsets.UTF_8));
-        entries.put("languages/fr_FR.json", "{}".getBytes(StandardCharsets.UTF_8));
+
         entries.put(NMS_BINDING + ".class",
                 classReferencing(NMS_BINDING, "art/arcane/volmlib/util/noise/CNG"));
         entries.put("art/arcane/volmlib/util/noise/CNG.class", emptyClass("art/arcane/volmlib/util/noise/CNG"));

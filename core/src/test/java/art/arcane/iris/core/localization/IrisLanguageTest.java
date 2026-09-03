@@ -23,12 +23,17 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
+import art.arcane.volmlib.util.localization.LanguageAudience;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -39,6 +44,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertThrows;
 
 public class IrisLanguageTest {
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{[A-Za-z][A-Za-z0-9_]*}");
@@ -108,11 +114,66 @@ public class IrisLanguageTest {
     public void setUp() throws Exception {
         dataFolder = temporaryFolder.newFolder();
         assertTrue(IrisLanguage.reload(dataFolder, "en_US"));
+        for (String locale : VolmitLocales.nonEnglish()) {
+            Path target = IrisLanguage.remote(dataFolder).cacheFile(locale);
+            Files.createDirectories(target.getParent());
+            Files.copy(Path.of("src/main/resources/languages", locale + ".json"), target, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     @After
     public void tearDown() {
         assertTrue(IrisLanguage.reload(dataFolder, "en_US"));
+    }
+
+    private LocaleOverlay loadSourceOverlay(String locale) throws Exception {
+        Path source = Path.of("src/main/resources/languages", locale + ".json");
+        return IrisLanguage.parseOverlay(source.toString(), locale, Files.readString(source));
+    }
+
+    @Test
+    public void missingDownloadUsesCodeOwnedEnglish() throws Exception {
+        Files.delete(IrisLanguage.remote(dataFolder).cacheFile("de_DE"));
+        assertTrue(IrisLanguage.reload(dataFolder, "de_DE"));
+        assertEquals("Unknown Iris command", IrisLanguage.plain(IrisMessages.COMMAND_UNKNOWN));
+    }
+
+    @Test
+    public void failedServerSelectionRetainsSettingsAndRenderedLanguage() throws Exception {
+        IrisSettings previous = IrisSettings.settings;
+        IrisSettings current = new IrisSettings();
+        IrisSettings.settings = current;
+        Files.createDirectory(dataFolder.toPath().resolve("iris.json"));
+        IrisLanguage.start();
+        try {
+            assertThrows(ExecutionException.class,
+                    () -> IrisLanguage.selections().selectDefault("de_DE").get(5, TimeUnit.SECONDS));
+            assertEquals("en_US", current.getGeneral().getLanguage());
+            assertEquals("en_US", IrisLanguage.activeLocale());
+            assertEquals("Unknown Iris command", IrisLanguage.plain(IrisMessages.COMMAND_UNKNOWN));
+        } finally {
+            IrisLanguage.shutdown();
+            IrisSettings.settings = previous;
+        }
+    }
+
+    @Test
+    public void personalSelectionDoesNotChangeAnotherPlayerOrTheServerDefault() throws Exception {
+        UUID germanPlayer = UUID.randomUUID();
+        UUID otherPlayer = UUID.randomUUID();
+        IrisLanguage.start();
+        try {
+            IrisLanguage.selections().selectPlayer(germanPlayer, "de_DE").get(5, TimeUnit.SECONDS);
+            String german = LanguageAudience.call(germanPlayer, () -> IrisLanguage.plain(IrisMessages.COMMAND_UNKNOWN));
+            String other = LanguageAudience.call(otherPlayer, () -> IrisLanguage.plain(IrisMessages.COMMAND_UNKNOWN));
+            assertFalse("Unknown Iris command".equals(german));
+            assertEquals("Unknown Iris command", other);
+            assertEquals("en_US", IrisLanguage.activeLocale());
+            IrisLanguage.selections().clearPlayer(germanPlayer).get(5, TimeUnit.SECONDS);
+            assertEquals("Unknown Iris command", LanguageAudience.call(germanPlayer, () -> IrisLanguage.plain(IrisMessages.COMMAND_UNKNOWN)));
+        } finally {
+            IrisLanguage.shutdown();
+        }
     }
 
     @Test
@@ -149,10 +210,10 @@ public class IrisLanguageTest {
     }
 
     @Test
-    public void bundledLocalesMatchSharedManifestAndCoverEntireCatalog() throws Exception {
+    public void downloadableLocalesMatchSharedManifestAndCoverEntireCatalog() throws Exception {
         assertEquals(17, VolmitLocales.nonEnglish().size());
         for (String locale : VolmitLocales.nonEnglish()) {
-            LocaleOverlay overlay = IrisLanguage.loadBundledOverlay(locale);
+            LocaleOverlay overlay = loadSourceOverlay(locale);
             assertEquals(locale, overlay.locale());
             assertEquals(IrisLanguage.catalog().ids(), overlay.values().keySet());
 
@@ -175,30 +236,7 @@ public class IrisLanguageTest {
     }
 
     @Test
-    public void compactBukkitLocaleUsesSortedCatalogPositionsAndEnglishFallbacks() {
-        List<String> messageIds = IrisLanguage.catalog().ids().stream()
-                .filter(id -> !id.startsWith("iris.modded."))
-                .sorted()
-                .toList();
-        String translatedId = IrisMessages.COMMAND_UNKNOWN.id();
-        JsonArray values = new JsonArray(messageIds.size());
-        for (int i = 0; i < messageIds.size(); i++) {
-            values.add(messageIds.get(i).equals(translatedId) ? "Unbekannter Iris-Befehl" : null);
-        }
-        JsonArray compact = new JsonArray(2);
-        compact.add("de_DE");
-        compact.add(values);
-
-        LocaleOverlay overlay = IrisLanguage.parseOverlay("test", "de_DE", compact.toString());
-
-        assertEquals(Set.of(translatedId), overlay.values().keySet());
-        assertEquals(
-                "Unbekannter Iris-Befehl",
-                ((TextValue) overlay.value(translatedId)).template());
-    }
-
-    @Test
-    public void bundledServerResourcesExactlyMatchNonEnglishManifest() throws Exception {
+    public void sourceLocalesExactlyMatchNonEnglishManifest() throws Exception {
         Set<String> expected = VolmitLocales.nonEnglish().stream()
                 .map(locale -> locale + ".json")
                 .collect(Collectors.toUnmodifiableSet());
@@ -208,9 +246,9 @@ public class IrisLanguageTest {
     }
 
     @Test
-    public void bundledLocalesPreserveReservedWorldNames() throws Exception {
+    public void downloadableLocalesPreserveReservedWorldNames() throws Exception {
         for (String locale : VolmitLocales.nonEnglish()) {
-            LocaleOverlay overlay = IrisLanguage.loadBundledOverlay(locale);
+            LocaleOverlay overlay = loadSourceOverlay(locale);
             TextValue irisName = (TextValue) overlay.value(
                     BukkitCommandMessagesExtended.COMMAND_IRIS_YOU_CANNOT_USE_WORLD_NAME_IRIS_CREATING_WORLDS_AS_IRIS.id()
             );
@@ -224,7 +262,7 @@ public class IrisLanguageTest {
     }
 
     @Test
-    public void bundledLocaleLoadsWithoutUserOverride() {
+    public void downloadedLocaleLoadsWithoutUserOverride() {
         assertTrue(IrisLanguage.reload(dataFolder, "de_DE"));
         assertEquals("de_DE", IrisLanguage.activeLocale());
         assertFalse("Unknown Iris command".equals(IrisLanguage.plain(IrisMessages.COMMAND_UNKNOWN)));

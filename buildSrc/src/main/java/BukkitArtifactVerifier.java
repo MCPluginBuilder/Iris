@@ -47,7 +47,7 @@ public final class BukkitArtifactVerifier {
     private BukkitArtifactVerifier() {
     }
 
-    public static void verify(File artifact, List<String> requiredEntries, int minimumLocales,
+    public static void verify(File artifact, List<String> requiredEntries,
                               int minimumMatterSlices, long maximumArtifactBytes) {
         if (!artifact.isFile()) {
             throw new GradleException("Missing Bukkit Iris artifact: " + artifact.getAbsolutePath());
@@ -92,9 +92,8 @@ public final class BukkitArtifactVerifier {
                 }
             }
 
-            if (locales < minimumLocales) {
-                throw new GradleException(artifact.getName() + " ships " + locales + " locale files; expected at least "
-                        + minimumLocales);
+            if (locales != 0) {
+                throw new GradleException(artifact.getName() + " ships " + locales + " locale files; translations must download on demand");
             }
             // Matter.read() resolves slice types from the canonical name stored in the payload.
             if (matterSlices < minimumMatterSlices) {

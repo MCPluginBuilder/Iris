@@ -38,6 +38,24 @@ String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
     .orElse('com.github.VolmitSoftware:VolmLib:e6574cf814b3dd670385a4d632a63fde2038e186')
     .get()
 
+String languageSourceReference = providers.gradleProperty('languageRevision').orElse('master').get()
+List<File> languageSourceFiles = fileTree('src/main/resources/languages') {
+    include('*.json')
+}.files.toList().sort { File left, File right -> left.name <=> right.name }
+List<String> languageSourceLocales = languageSourceFiles.collect { File source ->
+    source.name.substring(0, source.name.length() - '.json'.length())
+}
+def languageSourceManifestTask = tasks.register('generateLanguageSourceManifest', WriteProperties) {
+    destinationFile.set(layout.buildDirectory.file('generated/language-source/iris-language-source.properties'))
+    property('revision', languageSourceReference)
+    property('locales', languageSourceLocales.join(','))
+}
+tasks.named('processResources').configure {
+    dependsOn(languageSourceManifestTask)
+    exclude('languages/**')
+    from(languageSourceManifestTask)
+}
+
 /**
  * Dependencies.
  *
@@ -218,7 +236,8 @@ tasks.named('compileJava', JavaCompile).configure {
 
 tasks.named('test', Test).configure {
     jvmArgs('--add-modules', 'jdk.incubator.vector')
-    classpath = files('src/main/resources') + classpath
+    dependsOn(languageSourceManifestTask)
+    classpath = files(layout.buildDirectory.dir('generated/language-source')) + files('src/main/resources') + classpath
 }
 
 configurations.matching { it.name.startsWith('slim') }.all { }

@@ -5,6 +5,12 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.volmlib.util.director.DirectorTextResolver;
 import art.arcane.volmlib.util.localization.LinesKey;
+import art.arcane.volmlib.util.localization.LanguageAudience;
+import art.arcane.volmlib.util.localization.LanguageFileEditor;
+import art.arcane.volmlib.util.localization.PluginLanguageEditor;
+import art.arcane.volmlib.util.localization.PluginLanguageService;
+import art.arcane.volmlib.util.localization.RemoteLanguageCatalog;
+import art.arcane.volmlib.util.localization.LocalizationValidator;
 import art.arcane.volmlib.util.localization.LocaleOverlay;
 import art.arcane.volmlib.util.localization.LocalizationCandidate;
 import art.arcane.volmlib.util.localization.LocalizationIssue;
@@ -16,20 +22,32 @@ import art.arcane.volmlib.util.localization.MessageArgumentKind;
 import art.arcane.volmlib.util.localization.MessageArgs;
 import art.arcane.volmlib.util.localization.MessageCatalog;
 import art.arcane.volmlib.util.localization.MessageKey;
+import art.arcane.volmlib.util.localization.MessageValue;
+import art.arcane.volmlib.util.localization.LinesValue;
+import art.arcane.volmlib.util.localization.PluralValue;
+import art.arcane.volmlib.util.localization.TextValue;
 import art.arcane.volmlib.util.localization.PluralKey;
 import art.arcane.volmlib.util.localization.PluralSelector;
 import art.arcane.volmlib.util.localization.ResolvedLines;
 import art.arcane.volmlib.util.localization.ResolvedText;
 import art.arcane.volmlib.util.localization.TextKey;
-import art.arcane.volmlib.util.localization.VolmitLocales;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.GsonBuilder;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.UUID;
+import java.util.logging.Logger;
+import com.google.gson.Gson;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
@@ -51,15 +69,12 @@ import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 
 public final class IrisLanguage {
+    private static final Object SNAPSHOT_LOCK = new Object();
     private static final long MAX_LOCALE_BYTES = 2L * 1024L * 1024L;
     private static final int MAX_REPORTED_ISSUES = 12;
     private static final Pattern LOCALE_NAME = Pattern.compile("[A-Za-z0-9_-]+");
     private static final Pattern LEGACY_COLOR = Pattern.compile("(?i)\\u00a7[0-9A-FK-ORX]");
     private static final MessageCatalog CATALOG = IrisMessages.catalog();
-    private static final List<String> BUKKIT_MESSAGE_IDS = CATALOG.ids().stream()
-            .filter(id -> !id.startsWith("iris.modded."))
-            .sorted()
-            .toList();
     private static final LocalizationManager MANAGER = new LocalizationManager(
             LocalizationCandidate.english(CATALOG, PluralSelector.oneOther())
     );
@@ -74,6 +89,9 @@ public final class IrisLanguage {
             new CopyOnWriteArrayList<>();
     private static volatile File dataFolder;
     private static volatile String activeLocale = CATALOG.englishLocale();
+    private static volatile RemoteLanguageCatalog remote;
+    private static volatile Path remoteRoot;
+    private static volatile PluginLanguageService selections;
 
     private IrisLanguage() {
     }
@@ -82,7 +100,9 @@ public final class IrisLanguage {
         if (!IrisPlatforms.isBound()) {
             return false;
         }
-        return reload(IrisPlatforms.get().dataFolder(), configuredLocale());
+        boolean loaded = reload(IrisPlatforms.get().dataFolder(), configuredLocale());
+        start();
+        return loaded;
     }
 
     public static synchronized boolean reload() {
@@ -201,20 +221,30 @@ public final class IrisLanguage {
 
     private static boolean applyReload(File root, String requestedLocale, SnapshotCapture capture) {
         LocalizationReloadResult result;
-        if (capture.failure() == null) {
-            result = MANAGER.reload(() -> loadCandidate(root, requestedLocale, capture.snapshot()));
-        } else {
-            result = MANAGER.reload(() -> {
-                throw capture.failure();
-            });
+        synchronized (SNAPSHOT_LOCK) {
+            if (capture.failure() == null) {
+                result = MANAGER.reload(() -> loadCandidate(root, requestedLocale, capture.snapshot()));
+            } else {
+                result = MANAGER.reload(() -> {
+                    throw capture.failure();
+                });
+            }
+            dataFolder = root;
+            if (result.applied()) {
+                activeLocale = requestedLocale;
+            }
         }
-        dataFolder = root;
         if (!result.applied()) {
             reportRejectedReload(requestedLocale, result);
             return false;
         }
 
-        activeLocale = requestedLocale;
+        PluginLanguageService current = selections;
+        if (current != null) {
+            current.invalidate();
+            current.cache(activeLocale, MANAGER.snapshot());
+            requestConfiguredLocale();
+        }
         int warnings = result.validation().warnings().size();
         IrisLogging.debug("Loaded locale " + requestedLocale + " with " + warnings + " fallback "
                 + (warnings == 1 ? "entry" : "entries") + ".");
@@ -274,7 +304,7 @@ public final class IrisLanguage {
     }
 
     public static String plain(MessageKey key) {
-        LocalizationSnapshot snapshot = MANAGER.snapshot();
+        LocalizationSnapshot snapshot = snapshot();
         PlainMemo memo = PLAIN_MEMO.get();
         if (memo == null || memo.snapshot() != snapshot) {
             memo = new PlainMemo(snapshot, new ConcurrentHashMap<>());
@@ -284,7 +314,7 @@ public final class IrisLanguage {
         if (cached != null) {
             return cached;
         }
-        String resolved = plain(key, MessageArgs.empty());
+        String resolved = IrisLogging.clean(render(resolve(snapshot, key, MessageArgs.empty())));
         memo.values().put(key.id(), resolved);
         return resolved;
     }
@@ -317,14 +347,18 @@ public final class IrisLanguage {
     }
 
     private static ResolvedText resolve(MessageKey key, MessageArgs arguments) {
+        return resolve(snapshot(), key, arguments);
+    }
+
+    private static ResolvedText resolve(LocalizationSnapshot snapshot, MessageKey key, MessageArgs arguments) {
         if (key instanceof TextKey textKey) {
-            return MANAGER.snapshot().resolve(textKey, arguments);
+            return snapshot.resolve(textKey, arguments);
         }
         if (key instanceof PluralKey pluralKey) {
-            return MANAGER.snapshot().resolve(pluralKey, arguments);
+            return snapshot.resolve(pluralKey, arguments);
         }
         if (key instanceof LinesKey linesKey) {
-            ResolvedLines lines = MANAGER.snapshot().resolve(linesKey, arguments);
+            ResolvedLines lines = snapshot.resolve(linesKey, arguments);
             return new ResolvedText(lines.key(), lines.locale(), String.join("\n", lines.lines()), lines.arguments());
         }
         throw new IllegalArgumentException("Unsupported Iris message key: " + key.id());
@@ -343,41 +377,216 @@ public final class IrisLanguage {
         }
 
         if (!CATALOG.englishLocale().equals(locale)) {
-            LocaleOverlay bundled = loadBundledOverlay(locale);
-            if (bundled != null) {
-                overlays.add(bundled);
+            LocaleOverlay downloaded = loadDownloadedOverlay(root, locale);
+            if (downloaded != null) {
+                overlays.add(downloaded);
             }
         }
         return new LocalizationCandidate(CATALOG, overlays, PluralSelector.oneOther());
     }
 
-    static LocaleOverlay loadBundledOverlay(String locale) throws Exception {
-        String normalizedLocale = normalizeLocale(locale);
-        if (CATALOG.englishLocale().equals(normalizedLocale)) {
-            return null;
+    static RemoteLanguageCatalog remote(File root) {
+        Path path = root.toPath().toAbsolutePath().normalize();
+        RemoteLanguageCatalog current = remote;
+        if (current != null && path.equals(remoteRoot)) {
+            return current;
         }
-        String resourceName = "/languages/" + normalizedLocale + ".json";
-        InputStream input = IrisLanguage.class.getResourceAsStream(resourceName);
-        if (input == null) {
-            if (VolmitLocales.isBundled(normalizedLocale)) {
-                throw new IllegalStateException("Missing bundled Iris locale resource: " + resourceName);
+        synchronized (IrisLanguage.class) {
+            if (remote != null && path.equals(remoteRoot)) {
+                return remote;
             }
-            return null;
-        }
-        try (InputStream stream = input) {
-            byte[] bytes = stream.readNBytes((int) MAX_LOCALE_BYTES + 1);
-            if (bytes.length > MAX_LOCALE_BYTES) {
-                throw new IllegalArgumentException("Bundled locale is too large: " + resourceName);
+            if (remote != null) {
+                remote.close();
             }
-            return parseOverlay("bundled:" + resourceName, normalizedLocale, new String(bytes, StandardCharsets.UTF_8));
+            remote = RemoteLanguageCatalog.load(new RemoteLanguageCatalog.Options(
+                    "Iris",
+                    URI.create("https://raw.githubusercontent.com/VolmitSoftware/Iris/"),
+                    "core/src/main/resources/languages",
+                    ".json",
+                    "iris-language-source.properties",
+                    path.resolve("languages/downloaded"),
+                    IrisLanguage.class.getClassLoader()
+            ));
+            remoteRoot = path;
+            return remote;
         }
+    }
+
+    public static synchronized void start() {
+        if (selections != null || dataFolder == null) {
+            return;
+        }
+        selections = new PluginLanguageService(new PluginLanguageService.Options(
+                dataFolder.toPath().resolve("languages/players.properties"),
+                IrisLanguage::availableLocales,
+                IrisLanguage::activeLocale,
+                MANAGER::snapshot,
+                IrisLanguage::prepareLocale,
+                IrisLanguage::selectDefault,
+                Logger.getLogger("Iris")
+        ));
+        requestConfiguredLocale();
+    }
+
+    public static synchronized void shutdown() {
+        PluginLanguageService current = selections;
+        selections = null;
+        if (current != null) {
+            current.close();
+        }
+        RemoteLanguageCatalog currentRemote = remote;
+        remote = null;
+        remoteRoot = null;
+        if (currentRemote != null) {
+            currentRemote.close();
+        }
+    }
+
+    public static PluginLanguageService selections() {
+        return selections;
+    }
+
+    public static Set<String> availableLocales() {
+        Set<String> locales = new LinkedHashSet<>();
+        locales.add(CATALOG.englishLocale());
+        locales.addAll(remote(dataFolder).availableLocales());
+        return Set.copyOf(locales);
+    }
+
+    public static String text(UUID player, MessageKey key, MessageArgs arguments) {
+        return LanguageAudience.call(player, () -> text(key, arguments));
+    }
+
+    public static String plain(UUID player, MessageKey key, MessageArgs arguments) {
+        return LanguageAudience.call(player, () -> plain(key, arguments));
+    }
+
+    private static LocalizationSnapshot snapshot() {
+        PluginLanguageService current = selections;
+        return current == null ? MANAGER.snapshot() : current.snapshot();
+    }
+
+    private static LocalizationSnapshot prepareLocale(String locale) throws Exception {
+        File root = dataFolder;
+        if (!CATALOG.englishLocale().equals(locale) && remote(root).availableLocales().contains(locale)) {
+            remote(root).readOrDownload(locale, IrisLanguage::validateDownload);
+        }
+        SnapshotCapture capture = captureForReload(overrideFile(root, locale), locale);
+        if (capture.failure() != null) {
+            throw capture.failure();
+        }
+        return LocalizationSnapshot.create(loadCandidate(root, locale, capture.snapshot()));
+    }
+
+    public static PluginLanguageEditor.Options editorOptions() {
+        return new PluginLanguageEditor.Options(IrisLanguage::prepareLocale, IrisLanguage::writeMessage);
+    }
+
+    private static LocalizationSnapshot writeMessage(PluginLanguageEditor.Edit edit) throws IOException {
+        File root = dataFolder;
+        File file = overrideFile(root, edit.locale());
+        LocalizationSnapshot prepared = LanguageFileEditor.update(file.toPath(), raw -> {
+            LocalizationSnapshot current = editorSnapshot(root, file, edit.locale(), raw);
+            if (!current.value(CATALOG.require(edit.key())).equals(edit.expected())) {
+                throw new IOException("Language message changed; reopen it before saving");
+            }
+            String updated = writeOverride(raw, edit);
+            return new LanguageFileEditor.Prepared<>(updated, editorSnapshot(root, file, edit.locale(), updated));
+        });
+        synchronized (SNAPSHOT_LOCK) {
+            if (root.equals(dataFolder) && edit.locale().equals(activeLocale)) {
+                MANAGER.install(prepared);
+            }
+        }
+        return prepared;
+    }
+
+    private static LocalizationSnapshot editorSnapshot(File root, File file, String locale, String raw) throws IOException {
+        try {
+            LocaleHotloadSnapshot source = LocaleHotloadSnapshot.present(file, locale, raw, sha256(raw.getBytes(StandardCharsets.UTF_8)));
+            return LocalizationSnapshot.create(loadCandidate(root, locale, source));
+        } catch (Exception failure) {
+            throw new IOException("Could not validate Iris language " + locale, failure);
+        }
+    }
+
+    private static String writeOverride(String raw, PluginLanguageEditor.Edit edit) {
+        Map<String, MessageValue> values = new LinkedHashMap<>(parseOverlay("editor", edit.locale(), raw).values());
+        values.put(edit.key(), edit.value());
+        JsonObject messages = new JsonObject();
+        Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
+        for (Map.Entry<String, MessageValue> entry : values.entrySet()) {
+            JsonElement value = switch (entry.getValue()) {
+                case TextValue text -> gson.toJsonTree(text.template());
+                case LinesValue lines -> gson.toJsonTree(lines.lines());
+                case PluralValue plural -> gson.toJsonTree(plural.forms());
+            };
+            messages.add(entry.getKey(), value);
+        }
+        JsonObject document = new JsonObject();
+        document.addProperty("locale", edit.locale());
+        document.add("messages", messages);
+        return gson.toJson(document) + "\n";
+    }
+
+    private static void selectDefault(String locale, LocalizationSnapshot prepared) throws Exception {
+        IrisSettings current = IrisSettings.get();
+        JsonObject serialized = new Gson().toJsonTree(current).getAsJsonObject();
+        serialized.getAsJsonObject("general").addProperty("language", locale);
+        Path target = dataFolder.toPath().resolve("iris.json");
+        Path temporary = Files.createTempFile(target.getParent(), "iris-", ".json.tmp");
+        try {
+            Files.writeString(temporary, serialized.toString());
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+        current.getGeneral().setLanguage(locale);
+        synchronized (SNAPSHOT_LOCK) {
+            MANAGER.install(prepared);
+            activeLocale = locale;
+        }
+    }
+
+    private static void requestConfiguredLocale() {
+        String locale = activeLocale;
+        if (CATALOG.englishLocale().equals(locale)) {
+            return;
+        }
+        File root = dataFolder;
+        remote(root).request(locale, IrisLanguage::validateDownload, result -> {
+            if (!result.successful()) {
+                IrisLogging.error("Failed to download Iris locale " + locale + ".");
+                IrisLogging.reportError(result.failure());
+                return;
+            }
+            synchronized (IrisLanguage.class) {
+                if (root.equals(dataFolder) && locale.equals(activeLocale)) {
+                    reloadResolved(root, locale, false);
+                }
+            }
+        });
+    }
+
+    private static void validateDownload(String locale, String raw) {
+        LocalizationValidator.validate(CATALOG, List.of(parseOverlay("download:" + locale, locale, raw)))
+                .throwIfInvalid();
+    }
+
+    private static LocaleOverlay loadDownloadedOverlay(File root, String locale) {
+        RemoteLanguageCatalog.CacheResult cached = remote(root).read(locale, IrisLanguage::validateDownload);
+        if (cached.state() == RemoteLanguageCatalog.CacheState.VALID) {
+            return parseOverlay(cached.file().toString(), locale, cached.content());
+        }
+        if (cached.failure() != null) {
+            IrisLogging.error("Ignoring invalid downloaded Iris locale " + locale + ".");
+            IrisLogging.reportError(cached.failure());
+        }
+        return null;
     }
 
     static LocaleOverlay parseOverlay(String source, String locale, String raw) {
         JsonElement parsed = JsonParser.parseString(raw == null || raw.isBlank() ? "{}" : raw);
-        if (parsed.isJsonArray()) {
-            return parseCompactBukkitOverlay(source, locale, parsed.getAsJsonArray());
-        }
         if (!parsed.isJsonObject()) {
             throw new IllegalArgumentException("Locale source is not a JSON object: " + source);
         }
@@ -403,49 +612,6 @@ public final class IrisLanguage {
         }
         appendMessages(builder, messages.getAsJsonObject(), "");
         return builder.build();
-    }
-
-    private static LocaleOverlay parseCompactBukkitOverlay(
-            String source,
-            String locale,
-            JsonArray root
-    ) {
-        if (root.size() != 2 || !root.get(0).isJsonPrimitive() || !root.get(1).isJsonArray()) {
-            throw new IllegalArgumentException("Compact locale source is invalid: " + source);
-        }
-        if (!locale.equals(normalizeLocale(root.get(0).getAsString()))) {
-            throw new IllegalArgumentException("Locale source declares a different locale than its file: " + source);
-        }
-        JsonArray messages = root.get(1).getAsJsonArray();
-        if (messages.size() != BUKKIT_MESSAGE_IDS.size()) {
-            throw new IllegalArgumentException("Compact locale message count is invalid: " + source);
-        }
-        LocaleOverlay.Builder builder = LocaleOverlay.builder(source, locale);
-        for (int i = 0; i < messages.size(); i++) {
-            JsonElement value = messages.get(i);
-            if (value == null || value.isJsonNull()) {
-                continue;
-            }
-            appendCompactMessage(builder, BUKKIT_MESSAGE_IDS.get(i), value);
-        }
-        return builder.build();
-    }
-
-    private static void appendCompactMessage(
-            LocaleOverlay.Builder builder,
-            String key,
-            JsonElement value
-    ) {
-        MessageKey definition = CATALOG.key(key);
-        if (value.isJsonObject() && definition instanceof PluralKey) {
-            builder.plural(key, readPlural(key, value.getAsJsonObject()));
-        } else if (value.isJsonArray()) {
-            builder.lines(key, readLines(key, value.getAsJsonArray()));
-        } else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
-            builder.text(key, value.getAsString());
-        } else {
-            throw new IllegalArgumentException("Compact locale value has an invalid shape: " + key);
-        }
     }
 
     private static void appendMessages(LocaleOverlay.Builder builder, JsonObject object, String prefix) {
