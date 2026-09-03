@@ -1550,6 +1550,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "Bu Minecraft sürümünde üretilemeyen paket içeriğini göster",
+    "iris.director.commandpack.param.pack_folder_name_compat": "Raporlanacak paket klasörü adı",
+    "iris.bukkit.runtime.commandpack.compat_header": "§ePaket '{pack}': içerik Minecraft {version} sürümünde yok",
+    "iris.bukkit.runtime.commandpack.compat_none": "§aPaket '{pack}' Minecraft {version} sürümünde eksik olan içerik kullanmıyor.",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7Bu içeriği geri kazanmak için sunucuyu daha yeni bir Minecraft sürümüne güncelleyin veya yedekler tanımlayın (boyutun blockFallbacks, bloğun backup).",
+    "iris.modded.moddedpackcommands.compat_header": "Paket '{pack}': içerik Minecraft {version} sürümünde yok",
+    "iris.modded.moddedpackcommands.compat_none": "Paket '{pack}' Minecraft {version} sürümünde eksik olan içerik kullanmıyor.",
+    "iris.modded.moddedpackcommands.compat_remedy": "Bu içeriği geri kazanmak için sunucuyu daha yeni bir Minecraft sürümüne güncelleyin veya yedekler tanımlayın (boyutun blockFallbacks, bloğun backup).",
+    "iris.modded.help.entry.command.compat_content": "Bu Minecraft sürümünde üretilemeyen içeriği göster"
   }
 }

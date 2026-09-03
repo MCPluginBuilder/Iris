@@ -1,6 +1,9 @@
 package art.arcane.iris.core.pack;
 
 import art.arcane.iris.core.ServerConfigurator;
+import art.arcane.iris.core.compat.CompatAction;
+import art.arcane.iris.core.compat.CompatFinding;
+import art.arcane.iris.core.compat.CompatRegistry;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformRegistries;
@@ -28,7 +31,7 @@ import java.util.Optional;
 import java.util.Set;
 
 public final class PackValidationCache {
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 3;
     private static final long MAX_CACHE_BYTES = 16L * 1024L * 1024L;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -105,11 +108,17 @@ public final class PackValidationCache {
                         || !actual.add(cached.packName)) {
                     return Optional.empty();
                 }
+                List<CompatFinding> findings = readFindings(cached.compatFindings);
+                if (findings == null) {
+                    return Optional.empty();
+                }
                 results.add(new PackValidationResult(
                         cached.packName,
                         cached.blockingErrors,
                         cached.warnings,
-                        cached.validatedAtMillis));
+                        cached.validatedAtMillis,
+                        findings,
+                        cached.minecraftVersion));
             }
             if (!expected.equals(actual)) {
                 return Optional.empty();
@@ -144,6 +153,8 @@ public final class PackValidationCache {
             cached.blockingErrors = List.copyOf(result.getBlockingErrors());
             cached.warnings = List.copyOf(result.getWarnings());
             cached.validatedAtMillis = result.getValidatedAtMillis();
+            cached.minecraftVersion = result.getMinecraftVersion();
+            cached.compatFindings = writeFindings(result.getCompatFindings());
             state.results.add(cached);
         }
 
@@ -165,6 +176,48 @@ public final class PackValidationCache {
         } finally {
             Files.deleteIfExists(staged);
         }
+    }
+
+    /** Null when a persisted finding is malformed; the caller discards the whole cache file. */
+    private static List<CompatFinding> readFindings(List<CachedFinding> cached) {
+        if (cached == null) {
+            return List.of();
+        }
+        List<CompatFinding> findings = new ArrayList<>(cached.size());
+        for (CachedFinding finding : cached) {
+            if (finding == null || finding.key == null || finding.registry == null || finding.action == null) {
+                return null;
+            }
+            CompatRegistry registry;
+            CompatAction action;
+            try {
+                registry = CompatRegistry.valueOf(finding.registry);
+                action = CompatAction.valueOf(finding.action);
+            } catch (IllegalArgumentException unknownEnum) {
+                return null;
+            }
+            findings.add(new CompatFinding(
+                    registry, finding.key, action, finding.subjectType, finding.subjectKey, finding.detail));
+        }
+        return List.copyOf(findings);
+    }
+
+    private static List<CachedFinding> writeFindings(List<CompatFinding> findings) {
+        if (findings == null || findings.isEmpty()) {
+            return List.of();
+        }
+        List<CachedFinding> cached = new ArrayList<>(findings.size());
+        for (CompatFinding finding : findings) {
+            CachedFinding entry = new CachedFinding();
+            entry.registry = finding.registry().name();
+            entry.key = finding.key();
+            entry.action = finding.action().name();
+            entry.subjectType = finding.subjectType();
+            entry.subjectKey = finding.subjectKey();
+            entry.detail = finding.detail();
+            cached.add(entry);
+        }
+        return cached;
     }
 
     private static void updateSorted(MessageDigest digest, List<String> values) {
@@ -197,5 +250,16 @@ public final class PackValidationCache {
         private List<String> blockingErrors;
         private List<String> warnings;
         private long validatedAtMillis;
+        private String minecraftVersion;
+        private List<CachedFinding> compatFindings;
+    }
+
+    private static final class CachedFinding {
+        private String registry;
+        private String key;
+        private String action;
+        private String subjectType;
+        private String subjectKey;
+        private String detail;
     }
 }

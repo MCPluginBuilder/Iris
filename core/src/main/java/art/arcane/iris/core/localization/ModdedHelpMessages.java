@@ -278,6 +278,10 @@ public final class ModdedHelpMessages {
             "iris.modded.help.entry.command.status_validation",
             "Show cached validation status"
     );
+    public static final TextKey COMMAND_COMPAT_SHOW_CONTENT_THAT_CANNOT_GENERATE_ON_THIS_MINECRAFT_VERSION = TextKey.of(
+            "iris.modded.help.entry.command.compat_content",
+            "Show content that cannot generate on this Minecraft version"
+    );
     public static final TextKey COMMAND_ENABLE_CREATE_AND_INJECT_A_PERSISTENT_IRIS_DIMENSION_AT_RUNTIME_DOWNLOADS_THE_PACK = TextKey.of(
             "iris.modded.help.entry.command.enable",
             "Create and inject a persistent Iris dimension at runtime; refuses if the pack is missing, quote pack:dimensionKey to pick a specific pack dimension"
@@ -484,6 +488,7 @@ public final class ModdedHelpMessages {
             COMMAND_CLEANUP_PREVIEW_OR_QUARANTINE_UNUSED_RESOURCE_CANDIDATES,
             COMMAND_RESTORE_PREVIEW_OR_RESTORE_THE_LATEST_QUARANTINE,
             COMMAND_STATUS_SHOW_CACHED_VALIDATION_STATUS,
+            COMMAND_COMPAT_SHOW_CONTENT_THAT_CANNOT_GENERATE_ON_THIS_MINECRAFT_VERSION,
             COMMAND_ENABLE_CREATE_AND_INJECT_A_PERSISTENT_IRIS_DIMENSION_AT_RUNTIME_DOWNLOADS_THE_PACK,
             COMMAND_REPLACE_OVERWORLD_INJECT_AN_IRIS_PRIMARY_WORLD_AND_ROUTE_PLAYERS_THERE_INSTEAD_OF_THE,
             COMMAND_DISABLE_EVACUATE_AND_UNLOAD_AN_IRIS_DIMENSION_WORLD_DATA_ON_DISK_IS_KEPT,

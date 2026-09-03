@@ -1550,6 +1550,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "Toon pack-inhoud die niet kan worden gegenereerd op deze Minecraft-versie",
+    "iris.director.commandpack.param.pack_folder_name_compat": "De naam van de packmap om te rapporteren",
+    "iris.bukkit.runtime.commandpack.compat_header": "§ePack '{pack}': inhoud niet beschikbaar op Minecraft {version}",
+    "iris.bukkit.runtime.commandpack.compat_none": "§aPack '{pack}' gebruikt geen inhoud die ontbreekt in Minecraft {version}.",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7Werk de server bij naar een nieuwere Minecraft om deze inhoud te herstellen, of declareer terugvallen (blockFallbacks van de dimensie, backup van het blok).",
+    "iris.modded.moddedpackcommands.compat_header": "Pack '{pack}': inhoud niet beschikbaar op Minecraft {version}",
+    "iris.modded.moddedpackcommands.compat_none": "Pack '{pack}' gebruikt geen inhoud die ontbreekt in Minecraft {version}.",
+    "iris.modded.moddedpackcommands.compat_remedy": "Werk de server bij naar een nieuwere Minecraft om deze inhoud te herstellen, of declareer terugvallen (blockFallbacks van de dimensie, backup van het blok).",
+    "iris.modded.help.entry.command.compat_content": "Toon inhoud die niet kan worden gegenereerd op deze Minecraft-versie"
   }
 }

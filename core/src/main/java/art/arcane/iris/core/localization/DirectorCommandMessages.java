@@ -570,6 +570,14 @@ public final class DirectorCommandMessages {
             "iris.director.commandpack.param.pack_folder_name",
             "The pack folder name"
     );
+    public static final TextKey COMMAND_PACK_DIRECTOR_SHOW_CONTENT_CANNOT_GENERATE_THIS_MINECRAFT_VERSION = TextKey.of(
+            "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version",
+            "Show pack content that cannot generate on this Minecraft version"
+    );
+    public static final TextKey COMMAND_PACK_PARAM_PACK_FOLDER_NAME_COMPAT = TextKey.of(
+            "iris.director.commandpack.param.pack_folder_name_compat",
+            "The pack folder name to report on"
+    );
     public static final TextKey COMMAND_PREGEN_DIRECTOR_PREGENERATE_YOUR_IRIS_WORLDS = TextKey.of(
             "iris.director.commandpregen.director.pregenerate_your_iris_worlds",
             "Pregenerate your Iris worlds!"
@@ -1005,6 +1013,8 @@ public final class DirectorCommandMessages {
             COMMAND_PACK_PARAM_PREVIEW_APPLY_2,
             COMMAND_PACK_DIRECTOR_SHOW_CACHED_VALIDATION_STATUS_PACK,
             COMMAND_PACK_PARAM_PACK_FOLDER_NAME,
+            COMMAND_PACK_DIRECTOR_SHOW_CONTENT_CANNOT_GENERATE_THIS_MINECRAFT_VERSION,
+            COMMAND_PACK_PARAM_PACK_FOLDER_NAME_COMPAT,
             COMMAND_PREGEN_DIRECTOR_PREGENERATE_YOUR_IRIS_WORLDS,
             COMMAND_PREGEN_DIRECTOR_PREGENERATE_WORLD,
             COMMAND_PREGEN_PARAM_RADIUS_PREGEN_BLOCKS,

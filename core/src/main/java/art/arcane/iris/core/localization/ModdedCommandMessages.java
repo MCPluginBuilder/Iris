@@ -771,6 +771,19 @@ public final class ModdedCommandMessages {
             "iris.modded.moddedpackcommands.message_2",
             "  ! " + "{value}"
     );
+    public static final TextKey MODDED_PACK_COMMANDS_COMPAT_HEADER = TextKey.of(
+            "iris.modded.moddedpackcommands.compat_header",
+            "Pack '" + "{pack}" + "': content unavailable on Minecraft " + "{version}"
+    );
+    public static final TextKey MODDED_PACK_COMMANDS_COMPAT_NONE = TextKey.of(
+            "iris.modded.moddedpackcommands.compat_none",
+            "Pack '" + "{pack}" + "' uses no content that is unavailable on Minecraft " + "{version}" + "."
+    );
+    public static final TextKey MODDED_PACK_COMMANDS_COMPAT_REMEDY = TextKey.of(
+            "iris.modded.moddedpackcommands.compat_remedy",
+            "Update the server to a newer Minecraft to restore this content, or declare fallbacks"
+                    + " (dimension blockFallbacks, block backup)."
+    );
     public static final TextKey MODDED_PACK_COMMANDS_MORE_WARNING_S = TextKey.of(
             "iris.modded.moddedpackcommands.more_warning_s",
             "  ... and " + "{value}" + " more warning(s)."
@@ -1432,6 +1445,9 @@ public final class ModdedCommandMessages {
             MODDED_PACK_COMMANDS_PACK_IS_BROKEN,
             MODDED_PACK_COMMANDS_MESSAGE,
             MODDED_PACK_COMMANDS_MESSAGE_2,
+            MODDED_PACK_COMMANDS_COMPAT_HEADER,
+            MODDED_PACK_COMMANDS_COMPAT_NONE,
+            MODDED_PACK_COMMANDS_COMPAT_REMEDY,
             MODDED_PACK_COMMANDS_MORE_WARNING_S,
             MODDED_PACK_COMMANDS_NO_CLEANUP_CANDIDATES_FOUND_PACK,
             MODDED_PACK_COMMANDS_CLEANUP_PREVIEW_PACK_CANDIDATE_S_NO_FILES_WERE_CHANGED,

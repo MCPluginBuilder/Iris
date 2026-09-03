@@ -164,7 +164,8 @@ final class ModdedCommandHelp {
                 Entry.command("validate", "[pack]", ModdedHelpMessages.COMMAND_VALIDATE_VALIDATE_A_PACK_OR_EVERY_PACK, "v"),
                 Entry.command("cleanup", "<pack> [apply]", ModdedHelpMessages.COMMAND_CLEANUP_PREVIEW_OR_QUARANTINE_UNUSED_RESOURCE_CANDIDATES, "c"),
                 Entry.command("restore", "<pack> [apply]", ModdedHelpMessages.COMMAND_RESTORE_PREVIEW_OR_RESTORE_THE_LATEST_QUARANTINE, "r"),
-                Entry.command("status", "[pack]", ModdedHelpMessages.COMMAND_STATUS_SHOW_CACHED_VALIDATION_STATUS, "s")
+                Entry.command("status", "[pack]", ModdedHelpMessages.COMMAND_STATUS_SHOW_CACHED_VALIDATION_STATUS, "s"),
+                Entry.command("compat", "[pack]", ModdedHelpMessages.COMMAND_COMPAT_SHOW_CONTENT_THAT_CANNOT_GENERATE_ON_THIS_MINECRAFT_VERSION, "cp")
         ));
         SECTIONS.put("pk", SECTIONS.get("pack"));
         SECTIONS.put("world", List.of(

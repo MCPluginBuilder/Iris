@@ -1550,6 +1550,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "顯示在目前 Minecraft 版本中無法生成的資源包內容",
+    "iris.director.commandpack.param.pack_folder_name_compat": "要報告的資源包資料夾名稱",
+    "iris.bukkit.runtime.commandpack.compat_header": "§e資源包 '{pack}': 內容在 Minecraft {version} 中無法使用",
+    "iris.bukkit.runtime.commandpack.compat_none": "§a資源包 '{pack}' 未使用 Minecraft {version} 中缺少的內容。",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7將伺服器升級到較新的 Minecraft 以還原這些內容，或宣告備援 (維度的 blockFallbacks、方塊的 backup)。",
+    "iris.modded.moddedpackcommands.compat_header": "資源包 '{pack}': 內容在 Minecraft {version} 中無法使用",
+    "iris.modded.moddedpackcommands.compat_none": "資源包 '{pack}' 未使用 Minecraft {version} 中缺少的內容。",
+    "iris.modded.moddedpackcommands.compat_remedy": "將伺服器升級到較新的 Minecraft 以還原這些內容，或宣告備援 (維度的 blockFallbacks、方塊的 backup)。",
+    "iris.modded.help.entry.command.compat_content": "顯示在目前 Minecraft 版本中無法生成的內容"
   }
 }

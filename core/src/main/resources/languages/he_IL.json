@@ -1550,6 +1550,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "הצג תוכן חבילה שלא ניתן ליצור בגרסת Minecraft הזו",
+    "iris.director.commandpack.param.pack_folder_name_compat": "שם תיקיית החבילה לדיווח",
+    "iris.bukkit.runtime.commandpack.compat_header": "§eחבילה '{pack}': תוכן לא זמין ב-Minecraft {version}",
+    "iris.bukkit.runtime.commandpack.compat_none": "§aהחבילה '{pack}' אינה משתמשת בתוכן שחסר ב-Minecraft {version}.",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7עדכן את השרת ל-Minecraft חדש יותר כדי לשחזר את התוכן הזה, או הגדר חלופות (blockFallbacks של הממד, backup של הבלוק).",
+    "iris.modded.moddedpackcommands.compat_header": "חבילה '{pack}': תוכן לא זמין ב-Minecraft {version}",
+    "iris.modded.moddedpackcommands.compat_none": "החבילה '{pack}' אינה משתמשת בתוכן שחסר ב-Minecraft {version}.",
+    "iris.modded.moddedpackcommands.compat_remedy": "עדכן את השרת ל-Minecraft חדש יותר כדי לשחזר את התוכן הזה, או הגדר חלופות (blockFallbacks של הממד, backup של הבלוק).",
+    "iris.modded.help.entry.command.compat_content": "הצג תוכן שלא ניתן ליצור בגרסת Minecraft הזו"
   }
 }

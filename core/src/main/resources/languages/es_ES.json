@@ -1550,6 +1550,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "Muestra el contenido del pack que no puede generarse en esta versión de Minecraft",
+    "iris.director.commandpack.param.pack_folder_name_compat": "El nombre de la carpeta del pack sobre el que informar",
+    "iris.bukkit.runtime.commandpack.compat_header": "§ePack '{pack}': contenido no disponible en Minecraft {version}",
+    "iris.bukkit.runtime.commandpack.compat_none": "§aEl pack '{pack}' no usa contenido que falte en Minecraft {version}.",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7Actualiza el servidor a un Minecraft más reciente para recuperar este contenido, o declara alternativas (blockFallbacks de la dimensión, backup del bloque).",
+    "iris.modded.moddedpackcommands.compat_header": "Pack '{pack}': contenido no disponible en Minecraft {version}",
+    "iris.modded.moddedpackcommands.compat_none": "El pack '{pack}' no usa contenido que falte en Minecraft {version}.",
+    "iris.modded.moddedpackcommands.compat_remedy": "Actualiza el servidor a un Minecraft más reciente para recuperar este contenido, o declara alternativas (blockFallbacks de la dimensión, backup del bloque).",
+    "iris.modded.help.entry.command.compat_content": "Muestra el contenido que no puede generarse en esta versión de Minecraft"
   }
 }

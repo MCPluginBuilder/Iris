@@ -39,6 +39,9 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisEngineData;
 import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.core.compat.PackCompatReport;
+import art.arcane.iris.core.pack.PackValidationResult;
+import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.spi.IrisLogging;
 import com.google.common.util.concurrent.AtomicDouble;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -66,6 +69,7 @@ import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.io.File;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Objects;
@@ -234,6 +238,7 @@ public class IrisEngine implements Engine {
             EngineRuntime initialRuntime = runtimeBuilder.buildRuntime();
             runtimeBuilder.publishRuntime(initialRuntime, null);
             IrisLogging.debug("[IrisEngine timing] setupEngine total=" + (M.ms() - _t0) + "ms");
+            logPackCompatSummary();
             logStudioInitializationPhase("build_runtime", phaseStartedAt, false);
             phaseStartedAt = System.nanoTime();
             if (requiredMode.warmGenerationCaches()) {
@@ -252,6 +257,38 @@ public class IrisEngine implements Engine {
             throw new IllegalStateException("Failed to initialize Iris engine for world '" + target.getWorld().name() + "'.", e);
         }
         IrisLogging.debug("Engine Initialized " + getCacheID());
+    }
+
+    /**
+     * One line per engine naming what this pack cannot generate on the running Minecraft version. The published
+     * validation result is complete (validation force-loads the whole pack), so it is preferred; an unvalidated pack
+     * falls back to what this engine has gated while building its runtime (dimension, regions, biomes). Never throws:
+     * a report failure must not take an otherwise working world down with it.
+     */
+    private void logPackCompatSummary() {
+        try {
+            File folder = getData().getDataFolder();
+            // A world engine reads its snapshot copy under <world>/iris/pack, so the dimension key is the pack's name.
+            String pack = getDimension().getLoadKey();
+            String world = target.getWorld().name();
+            String version = IrisPlatforms.isBound() ? IrisPlatforms.get().minecraftVersion() : null;
+            PackValidationResult published = PackValidationRegistry.get(folder.toPath());
+            if (published == null) {
+                published = PackValidationRegistry.get(folder.getName());
+            }
+            PackCompatReport report = published != null && !published.getCompatFindings().isEmpty()
+                    ? PackCompatReport.of(published.getCompatFindings())
+                    : getData().getCompatReport();
+            if (!report.isEmpty()) {
+                IrisLogging.info("World '" + world + "' pack '" + pack + "' " + report.summaryLine(version));
+            }
+            if (getDimension().isCompatExcluded()) {
+                IrisLogging.error("World '" + world + "' pack '" + pack + "' cannot generate on Minecraft "
+                        + (version == null || version.isBlank() ? "unknown" : version));
+            }
+        } catch (Throwable e) {
+            IrisLogging.debug("Pack compat summary failed: " + e.getMessage());
+        }
     }
 
     public void awaitGenerationCacheWarm() {
@@ -682,7 +719,8 @@ public class IrisEngine implements Engine {
             return null;
         }
 
-        return getData().getBiomeLoader().load(getDimension().getFocus());
+        IrisBiome focus = getData().getBiomeLoader().load(getDimension().getFocus());
+        return focus == null || focus.isCompatExcluded() ? null : focus;
     }
 
     @Override
@@ -691,7 +729,8 @@ public class IrisEngine implements Engine {
             return null;
         }
 
-        return getData().getRegionLoader().load(getDimension().getFocusRegion());
+        IrisRegion focus = getData().getRegionLoader().load(getDimension().getFocusRegion());
+        return focus == null || focus.isCompatExcluded() ? null : focus;
     }
 
     @Override

@@ -19,6 +19,7 @@
 package art.arcane.iris.modded.command;
 
 import art.arcane.iris.modded.ModdedIrisLog;
+import art.arcane.iris.core.compat.PackCompatReport;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackResourceCleanup;
@@ -92,6 +93,15 @@ public final class ModdedPackCommands {
                 .executes((CommandContext<CommandSourceStack> context) -> status(context.getSource(), null))
                 .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
                         .executes((CommandContext<CommandSourceStack> context) -> status(context.getSource(), StringArgumentType.getString(context, "pack")))));
+
+        root.then(Commands.literal("compat")
+                .executes((CommandContext<CommandSourceStack> context) -> compat(context.getSource(), null))
+                .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
+                        .executes((CommandContext<CommandSourceStack> context) -> compat(context.getSource(), StringArgumentType.getString(context, "pack")))));
+        root.then(Commands.literal("cp")
+                .executes((CommandContext<CommandSourceStack> context) -> compat(context.getSource(), null))
+                .then(Commands.argument("pack", StringArgumentType.word()).suggests(IrisModdedCommands.PACK_NAMES)
+                        .executes((CommandContext<CommandSourceStack> context) -> compat(context.getSource(), StringArgumentType.getString(context, "pack")))));
 
         return root;
     }
@@ -213,6 +223,77 @@ public final class ModdedPackCommands {
         }
         report(source, result);
         return 1;
+    }
+
+    private static int compat(CommandSourceStack source, String pack) {
+        if (pack == null || pack.isBlank()) {
+            Map<String, PackValidationResult> snapshot = PackValidationRegistry.snapshot();
+            if (snapshot.isEmpty()) {
+                IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_NO_VALIDATION_RESULTS_RECORDED_RUN_IRIS_PACK_VALIDATE_FIRST));
+                return 0;
+            }
+            for (Map.Entry<String, PackValidationResult> entry : snapshot.entrySet()) {
+                for (String line : compatOutput(entry.getKey(), entry.getValue())) {
+                    IrisModdedCommands.ok(source, line);
+                }
+            }
+            return 1;
+        }
+        PackValidationResult result = PackValidationRegistry.get(pack);
+        for (String line : compatOutput(pack, result)) {
+            if (result == null) {
+                IrisModdedCommands.fail(source, line);
+            } else {
+                IrisModdedCommands.ok(source, line);
+            }
+        }
+        return result == null ? 0 : 1;
+    }
+
+    /**
+     * The compat listing for one pack, straight from the persisted validation so no pack is reloaded. Every key is
+     * printed with every subject; the boot listing is the capped form of the same data.
+     */
+    static List<String> compatOutput(String pack, PackValidationResult result) {
+        List<String> lines = new ArrayList<>();
+        if (result == null) {
+            lines.add(IrisLanguage.plain(
+                    ModdedCommandMessages.MODDED_PACK_COMMANDS_NO_VALIDATION_RESULT_RUN_IRIS_PACK_VALIDATE,
+                    MessageArgument.untrusted("pack", pack),
+                    MessageArgument.untrusted("pack2", pack)));
+            return lines;
+        }
+        String version = compatVersion(result);
+        if (result.getCompatFindings().isEmpty()) {
+            lines.add(IrisLanguage.plain(
+                    ModdedCommandMessages.MODDED_PACK_COMMANDS_COMPAT_NONE,
+                    MessageArgument.untrusted("pack", pack),
+                    MessageArgument.untrusted("version", version)));
+            return lines;
+        }
+        lines.add(IrisLanguage.plain(
+                ModdedCommandMessages.MODDED_PACK_COMMANDS_COMPAT_HEADER,
+                MessageArgument.untrusted("pack", pack),
+                MessageArgument.untrusted("version", version)));
+        for (String line : PackCompatReport.of(result.getCompatFindings()).keyLines(0)) {
+            lines.add(IrisLanguage.plain(
+                    ModdedCommandMessages.MODDED_PACK_COMMANDS_MESSAGE_2,
+                    MessageArgument.untrusted("value", line)));
+        }
+        lines.add(IrisLanguage.plain(ModdedCommandMessages.MODDED_PACK_COMMANDS_COMPAT_REMEDY));
+        return lines;
+    }
+
+    /** The live Minecraft version, falling back to the one the validation ran against. */
+    static String compatVersion(PackValidationResult result) {
+        if (IrisPlatforms.isBound()) {
+            String live = IrisPlatforms.get().minecraftVersion();
+            if (live != null && !live.isBlank()) {
+                return live;
+            }
+        }
+        String persisted = result.getMinecraftVersion();
+        return persisted == null || persisted.isBlank() ? "unknown" : persisted;
     }
 
     private static void report(CommandSourceStack source, PackValidationResult result) {
