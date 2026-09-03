@@ -34,7 +34,7 @@ public final class DecoratorPlatformHooks {
     }
 
     public interface SurfaceSturdiness {
-        boolean canGoOn(PlatformBlockState surface);
+        boolean canGoOn(PlatformBlockState surface, boolean upward);
     }
 
     public static synchronized Bindings bind(FaceFixer faceFixer, SurfaceSturdiness surfaceSturdiness) {

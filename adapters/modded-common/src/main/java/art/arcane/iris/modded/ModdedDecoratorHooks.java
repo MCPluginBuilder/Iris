@@ -95,8 +95,8 @@ public final class ModdedDecoratorHooks implements DecoratorPlatformHooks.FaceFi
     }
 
     @Override
-    public boolean canGoOn(PlatformBlockState surface) {
-        return isFaceSturdy((BlockState) surface.nativeHandle(), Direction.UP);
+    public boolean canGoOn(PlatformBlockState surface, boolean upward) {
+        return isFaceSturdy((BlockState) surface.nativeHandle(), upward ? Direction.UP : Direction.DOWN);
     }
 
     private static boolean isFaceSturdy(BlockState state, Direction face) {

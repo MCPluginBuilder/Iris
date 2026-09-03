@@ -115,7 +115,7 @@ final class DecoratorCore {
         PlatformBlockState bdx = data.get(x, height, z);
         PlatformBlockState bd = decorator.pickBlockData(rng, irisData, realX, realZ);
 
-        if (!underwater && !canGoOn(bd, bdx)
+        if (!IrisSpeleothems.isSpike(bd) && !underwater && !canGoOn(bd, bdx)
                 && !decorator.isForcePlace() && decorator.getForceBlock() == null) {
             return;
         }
@@ -135,6 +135,11 @@ final class DecoratorCore {
             if (decorator.getBlacklist() != null && matchesPalette(decorator.getBlacklistArray(irisData), bdx)) {
                 return;
             }
+        }
+
+        if (IrisSpeleothems.isSpike(bd)) {
+            placeSingleSpike(bd, data, x, z, height + 1, true, underwater && !caveSkipFluid);
+            return;
         }
 
         String half = bd == null ? null : IrisProceduralBlocks.propertyValue(bd, "half");
@@ -165,8 +170,11 @@ final class DecoratorCore {
     }
 
     private static boolean matchesPalette(PlatformBlockState[] palette, PlatformBlockState surface) {
+        if (surface == null) {
+            return false;
+        }
         for (int i = 0; i < palette.length; i++) {
-            if (palette[i].equals(surface)) {
+            if (palette[i] == surface || surface.matches(palette[i])) {
                 return true;
             }
         }
@@ -179,6 +187,12 @@ final class DecoratorCore {
                               RNG rng, IrisData irisData, boolean applyFixFaces, EngineMantle mantle) {
         PlatformBlockState bd = decorator.pickBlockData(rng, irisData, realX, realZ);
         if (bd == null) {
+            return;
+        }
+        if (IrisSpeleothems.isSpike(bd)) {
+            if (height + 1 < data.getHeight() && allowsSurface(decorator, data.get(x, height + 1, z), irisData)) {
+                placeSingleSpike(bd, data, x, z, height, false, false);
+            }
             return;
         }
         if (applyFixFaces) {
@@ -194,72 +208,48 @@ final class DecoratorCore {
             return;
         }
 
-        int effectiveMax = max;
-        if (opts.underwater && height < opts.fluidHeight) {
-            effectiveMax = opts.fluidHeight;
-        }
-
-        int stack = computeStack(decorator, rng, realX, realZ, irisData, effectiveMax);
-
-        if (stack == 1) {
-            int targetY = height + 1;
-            if (targetY >= data.getHeight()) {
-                return;
-            }
-
-            PlatformBlockState existing = data.get(x, targetY, z);
-            if (!canReplaceStackTarget(existing, opts.underwater)
-                    || (opts.caveSkipFluid && B.isFluid(existing))) {
-                return;
-            }
-
-            PlatformBlockState block = decorator.pickBlockDataTop(rng, irisData, realX, realZ);
-            if (block == null || (!opts.underwater && !canGoOn(block, data.get(x, height, z)))) {
-                return;
-            }
-
-            block = stackedVineBlock(block, stack, 0);
-            data.set(x, targetY, z, block);
+        PlatformBlockState support = data.get(x, height, z);
+        if (!allowsSurface(decorator, support, irisData)) {
             return;
         }
-
-        PlatformBlockState bdx = data.get(x, height, z);
-
+        int effectiveMax = opts.underwater ? Math.min(max, opts.fluidHeight - height) : max;
+        int stack = computeStack(decorator, rng, realX, realZ, irisData, effectiveMax);
+        int placed = 0;
+        boolean hasSpikes = false;
         for (int i = 0; i < stack; i++) {
-            int h = height + i;
-            double threshold = ((double) i) / (stack - 1);
-            PlatformBlockState bd = threshold >= decorator.getTopThreshold()
-                    ? decorator.pickBlockDataTop(rng, irisData, realX, realZ)
-                    : decorator.pickBlockData(rng, irisData, realX, realZ);
-
-            if (bd == null) {
+            int y = height + 1 + i;
+            if (y >= data.getHeight()) {
                 break;
             }
-
-            if (i == 0 && !opts.underwater && !canGoOn(bd, bdx)) {
-                break;
-            }
-
-            if (opts.underwater && height + 1 + i > opts.fluidHeight) {
-                break;
-            }
-
-            if (height + 1 + i >= data.getHeight()) {
-                break;
-            }
-
-            PlatformBlockState existing = data.get(x, height + 1 + i, z);
+            PlatformBlockState existing = data.get(x, y, z);
             if (!canReplaceStackTarget(existing, opts.underwater)
                     || (opts.caveSkipFluid && B.isFluid(existing))) {
                 break;
             }
-
-            if (IrisProceduralBlocks.materialKey(bd).equals("minecraft:pointed_dripstone")) {
-                bd = dripstoneBlock(stack, i, "up");
+            double threshold = stack == 1 ? 1.0 : ((double) i) / (stack - 1);
+            PlatformBlockState block = threshold >= decorator.getTopThreshold()
+                    ? decorator.pickBlockDataTop(rng, irisData, realX, realZ)
+                    : decorator.pickBlockData(rng, irisData, realX, realZ);
+            if (block == null) {
+                break;
             }
-
-            bd = stackedVineBlock(bd, stack, i);
-            data.set(x, height + 1 + i, z, bd);
+            if (IrisSpeleothems.isSpike(block)) {
+                if (!IrisSpeleothems.canPlace(block, data, x, z, y, true, opts.underwater)) {
+                    break;
+                }
+                block = IrisSpeleothems.orient(block, existing, true);
+                hasSpikes = true;
+            } else if (i == 0 && !opts.underwater && !canGoOn(block, support)) {
+                break;
+            }
+            data.set(x, y, z, stackedVineBlock(block, stack, i));
+            placed++;
+        }
+        if (placed > 0 && placed < stack) {
+            finishVineTip(data, x, z, height + placed);
+        }
+        if (hasSpikes) {
+            IrisSpeleothems.finishColumn(data, x, z, height + 1, placed, true);
         }
     }
 
@@ -269,46 +259,46 @@ final class DecoratorCore {
         if (height < 0 || height >= data.getHeight()) {
             return;
         }
-
-        int stack = computeStack(decorator, rng, realX, realZ, irisData, max);
-
-        if (stack == 1) {
-            if (opts.caveSkipFluid && B.isFluid(data.get(x, height, z))) {
-                return;
-            }
-            PlatformBlockState block = decorator.pickBlockDataTop(rng, irisData, realX, realZ);
-            if (block == null) {
-                return;
-            }
-            block = stackedVineBlock(block, stack, 0);
-            data.set(x, height, z, fixFacesForHunk(block, data, x, z, realX, height, realZ, mantle));
+        PlatformBlockState support = height + 1 < data.getHeight() ? data.get(x, height + 1, z) : null;
+        if (!allowsSurface(decorator, support, irisData)) {
             return;
         }
-
+        int stack = computeStack(decorator, rng, realX, realZ, irisData, max);
+        int placed = 0;
+        boolean hasSpikes = false;
         for (int i = 0; i < stack; i++) {
-            int h = height - i;
-            if (h < 0 || h < minHeight) {
+            int y = height - i;
+            if (y < 0 || y < minHeight) {
                 break;
             }
-
-            double threshold = ((double) i) / (double) (stack - 1);
-            PlatformBlockState bd = threshold >= decorator.getTopThreshold()
+            PlatformBlockState existing = data.get(x, y, z);
+            if (!canReplaceStackTarget(existing, opts.underwater)
+                    || (opts.caveSkipFluid && B.isFluid(existing))) {
+                break;
+            }
+            double threshold = stack == 1 ? 1.0 : ((double) i) / (stack - 1);
+            PlatformBlockState block = threshold >= decorator.getTopThreshold()
                     ? decorator.pickBlockDataTop(rng, irisData, realX, realZ)
                     : decorator.pickBlockData(rng, irisData, realX, realZ);
-
-            if (bd == null) {
+            if (block == null) {
                 break;
             }
-
-            if (IrisProceduralBlocks.materialKey(bd).equals("minecraft:pointed_dripstone")) {
-                bd = dripstoneBlock(stack, i, "down");
+            if (IrisSpeleothems.isSpike(block)) {
+                if (!IrisSpeleothems.canPlace(block, data, x, z, y, false, opts.underwater)) {
+                    break;
+                }
+                block = IrisSpeleothems.orient(block, existing, false);
+                hasSpikes = true;
             }
-
-            bd = stackedVineBlock(bd, stack, i);
-            if (opts.caveSkipFluid && B.isFluid(data.get(x, h, z))) {
-                break;
-            }
-            data.set(x, h, z, fixFacesForHunk(bd, data, x, z, realX, h, realZ, mantle));
+            block = stackedVineBlock(block, stack, i);
+            data.set(x, y, z, fixFacesForHunk(block, data, x, z, realX, y, realZ, mantle));
+            placed++;
+        }
+        if (placed > 0 && placed < stack) {
+            finishVineTip(data, x, z, height - placed + 1);
+        }
+        if (hasSpikes) {
+            IrisSpeleothems.finishColumn(data, x, z, height, placed, false);
         }
     }
 
@@ -318,6 +308,13 @@ final class DecoratorCore {
                                     RNG rng, IrisData irisData) {
         PlatformBlockState bd = decorator.pickBlockData(rng, irisData, realX, realZ);
         if (bd == null) {
+            return;
+        }
+
+        if (IrisSpeleothems.isSpike(bd)) {
+            if (max > 1 && allowsSurface(decorator, data.get(xf, height, zf), irisData)) {
+                placeSingleSpike(bd, data, xf, zf, height + 1, true, false);
+            }
             return;
         }
 
@@ -357,6 +354,7 @@ final class DecoratorCore {
         }
 
         int placed = 0;
+        boolean hasSpikes = false;
         for (int i = 0; i < stack; i++) {
             int h = height + 1 + i;
             if (h >= height + max || h >= data.getHeight()) {
@@ -369,9 +367,23 @@ final class DecoratorCore {
             if (bd == null) {
                 break;
             }
+            if (IrisSpeleothems.isSpike(bd)) {
+                if (!allowsSurface(decorator, data.get(xf, height, zf), irisData)
+                        || !IrisSpeleothems.canPlace(bd, data, xf, zf, h, true, false)) {
+                    break;
+                }
+                bd = IrisSpeleothems.orient(bd, data.get(xf, h, zf), true);
+                hasSpikes = true;
+            }
             bd = stackedVineBlock(bd, stack, i);
             data.set(xf, h, zf, bd);
             placed++;
+        }
+        if (placed > 0 && placed < stack) {
+            finishVineTip(data, xf, zf, height + placed);
+        }
+        if (hasSpikes) {
+            IrisSpeleothems.finishColumn(data, xf, zf, height + 1, placed, true);
         }
         return placed;
     }
@@ -437,11 +449,7 @@ final class DecoratorCore {
         if (!B.canPlaceOnto(decorator, surface)) {
             return false;
         }
-        DecoratorPlatformHooks.SurfaceSturdiness sturdiness = DecoratorPlatformHooks.surfaceSturdiness();
-        if (sturdiness != null) {
-            return sturdiness.canGoOn(surface);
-        }
-        return ((BlockData) surface.nativeHandle()).isFaceSturdy(BlockFace.UP, BlockSupport.FULL);
+        return IrisSpeleothems.isSturdy(surface, true);
     }
 
     static boolean isValidShorelineSupport(IrisDecorator decorator, PlatformBlockState decorant, PlatformBlockState surface) {
@@ -477,37 +485,27 @@ final class DecoratorCore {
         return stack;
     }
 
-    private static volatile PlatformBlockState[] dripstoneUp;
-    private static volatile PlatformBlockState[] dripstoneDown;
-
-    private static PlatformBlockState[] buildDripstoneArr(String direction) {
-        String[] order = {"tip", "frustum", "base"};
-        PlatformBlockState[] arr = new PlatformBlockState[3];
-        for (int k = 0; k < 3; k++) {
-            arr[k] = B.getState("minecraft:pointed_dripstone[thickness=" + order[k] + ",vertical_direction=" + direction + "]");
-        }
-        return arr;
+    private static boolean allowsSurface(IrisDecorator decorator, PlatformBlockState surface, IrisData data) {
+        return decorator.isForcePlace()
+                || (decorator.getWhitelist() == null || matchesPalette(decorator.getWhitelistArray(data), surface))
+                && (decorator.getBlacklist() == null || !matchesPalette(decorator.getBlacklistArray(data), surface));
     }
 
-    private static PlatformBlockState dripstoneBlock(int stack, int i, String direction) {
-        int thIdx;
-        if (i == stack - 1) {
-            thIdx = 0;
-        } else if (i == stack - 2) {
-            thIdx = 1;
-        } else {
-            thIdx = 2;
+    private static void placeSingleSpike(PlatformBlockState spike, Hunk<PlatformBlockState> data,
+                                          int x, int z, int y, boolean upward, boolean allowWater) {
+        if (!IrisSpeleothems.canPlace(spike, data, x, z, y, upward, allowWater)) {
+            return;
         }
-        if (direction.equals("up")) {
-            if (dripstoneUp == null) {
-                dripstoneUp = buildDripstoneArr("up");
-            }
-            return dripstoneUp[thIdx];
+        data.set(x, y, z, IrisSpeleothems.orient(spike, data.get(x, y, z), upward));
+        IrisSpeleothems.finishColumn(data, x, z, y, 1, upward);
+    }
+
+    private static void finishVineTip(Hunk<PlatformBlockState> data, int x, int z, int y) {
+        PlatformBlockState state = data.get(x, y, z);
+        PlatformBlockState tip = stackedVineBlock(state, 1, 0);
+        if (tip != state) {
+            data.set(x, y, z, tip);
         }
-        if (dripstoneDown == null) {
-            dripstoneDown = buildDripstoneArr("down");
-        }
-        return dripstoneDown[thIdx];
     }
 
     static String stackedVineKey(PlatformBlockState state, int stack, int index) {

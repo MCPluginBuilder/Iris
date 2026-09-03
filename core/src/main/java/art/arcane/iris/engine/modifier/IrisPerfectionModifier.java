@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.modifier;
 
+import art.arcane.iris.engine.decorator.IrisSpeleothems;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedModifier;
 import art.arcane.iris.engine.object.IrisProceduralBlocks;
@@ -104,6 +105,9 @@ public class IrisPerfectionModifier extends EngineAssignedModifier<PlatformBlock
 
                         for (int k = top; k >= 0; k--) {
                             PlatformBlockState b = output.get(finalI, k, j);
+                            if (IrisSpeleothems.isSpike(b)) {
+                                b = normalizeSpike(b, output, finalI, j, k, States.AIR, States.WATER);
+                            }
                             boolean now = b != null && !(B.isAir(b) || B.isFluid(b));
 
                             if (now != inside) {
@@ -159,6 +163,40 @@ public class IrisPerfectionModifier extends EngineAssignedModifier<PlatformBlock
         }
 
         getEngine().getMetrics().getPerfection().put(p.getMilliseconds());
+    }
+
+    static PlatformBlockState normalizeSpike(PlatformBlockState state, Hunk<PlatformBlockState> output,
+                                              int x, int z, int y, PlatformBlockState air, PlatformBlockState water) {
+        if (IrisSpeleothems.isSupported(state, output, x, z, y)) {
+            IrisSpeleothems.finishAtTip(output, x, z, y);
+            return output.get(x, y, z);
+        }
+
+        String material = IrisProceduralBlocks.materialKey(state);
+        String direction = IrisProceduralBlocks.propertyValue(state, "vertical_direction");
+        boolean upward = "up".equals(direction);
+        int step = upward ? 1 : -1;
+        int nextY = y;
+        while (nextY >= 0 && nextY < output.getHeight()) {
+            PlatformBlockState current = output.get(x, nextY, z);
+            if (!IrisSpeleothems.isSpike(current)
+                    || !material.equals(IrisProceduralBlocks.materialKey(current))
+                    || !direction.equals(IrisProceduralBlocks.propertyValue(current, "vertical_direction"))) {
+                break;
+            }
+            output.set(x, nextY, z, current.isWaterLogged() ? water : air);
+            nextY += step;
+        }
+
+        if (nextY >= 0 && nextY < output.getHeight()) {
+            PlatformBlockState retained = output.get(x, nextY, z);
+            if (IrisSpeleothems.isSpike(retained)
+                    && material.equals(IrisProceduralBlocks.materialKey(retained))
+                    && !direction.equals(IrisProceduralBlocks.propertyValue(retained, "vertical_direction"))) {
+                IrisSpeleothems.finishColumn(output, x, z, nextY, 1, !upward);
+            }
+        }
+        return output.get(x, y, z);
     }
 
     private void hideOres(Hunk<PlatformBlockState> output, boolean multicore) {

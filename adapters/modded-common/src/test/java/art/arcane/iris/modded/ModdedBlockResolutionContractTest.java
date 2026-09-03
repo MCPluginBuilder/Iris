@@ -1,8 +1,16 @@
 package art.arcane.iris.modded;
 
+import art.arcane.iris.engine.decorator.DecoratorPlatformHooks;
+import art.arcane.iris.engine.decorator.IrisSpeleothems;
+import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.project.hunk.Hunk;
+
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.SpeleothemBlock;
+import net.minecraft.world.level.block.state.properties.SpeleothemThickness;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -60,4 +68,39 @@ public class ModdedBlockResolutionContractTest {
         assertFalse(ModdedBlockResolution.canPlaceOnto(Blocks.CACTUS, Blocks.STONE));
         assertTrue(ModdedBlockResolution.isDecorant(Blocks.CACTUS.defaultBlockState()));
     }
+
+    @Test
+    public void sulfurAndDripstoneTipsReceivePostLoadUpdates() {
+        for (Block block : new Block[]{Blocks.SULFUR_SPIKE, Blocks.POINTED_DRIPSTONE}) {
+            for (SpeleothemThickness thickness : SpeleothemThickness.values()) {
+                assertEquals(thickness == SpeleothemThickness.TIP,
+                        ModdedBlockResolution.isUpdatable(block.defaultBlockState()
+                                .setValue(SpeleothemBlock.THICKNESS, thickness)));
+            }
+        }
+        assertFalse(ModdedBlockResolution.isUpdatable(Blocks.STONE.defaultBlockState()));
+    }
+    @Test
+    public void nativeSpikesUseModdedSupportFaces() {
+        ModdedDecoratorHooks hooks = new ModdedDecoratorHooks();
+        DecoratorPlatformHooks.Bindings previous = DecoratorPlatformHooks.bind(hooks, hooks);
+        try {
+            for (String material : new String[]{"minecraft:sulfur_spike", "minecraft:pointed_dripstone"}) {
+                for (boolean upward : new boolean[]{true, false}) {
+                    Hunk<PlatformBlockState> output = Hunk.newArrayHunk(1, 3, 1);
+                    PlatformBlockState spike = ModdedBlockResolution.get(material
+                            + "[vertical_direction=" + (upward ? "up" : "down") + ",thickness=tip]");
+                    int supportY = upward ? 0 : 2;
+                    output.set(0, 1, 0, spike);
+                    output.set(0, supportY, 0, ModdedBlockResolution.get("minecraft:stone_slab[type=top]"));
+                    assertEquals(upward, IrisSpeleothems.isSupported(spike, output, 0, 0, 1));
+                    output.set(0, supportY, 0, ModdedBlockResolution.get("minecraft:stone_slab[type=bottom]"));
+                    assertEquals(!upward, IrisSpeleothems.isSupported(spike, output, 0, 0, 1));
+                }
+            }
+        } finally {
+            DecoratorPlatformHooks.restore(previous);
+        }
+    }
+
 }

@@ -33,7 +33,7 @@ import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
-import net.minecraft.world.level.block.PointedDripstoneBlock;
+import net.minecraft.world.level.block.SpeleothemBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.SpeleothemThickness;
@@ -476,8 +476,8 @@ public final class ModdedBlockResolution {
 
     public static boolean isUpdatable(BlockState state) {
         return isStorage(state)
-                || (state.getBlock() instanceof PointedDripstoneBlock
-                && state.getValue(PointedDripstoneBlock.THICKNESS) == SpeleothemThickness.TIP);
+                || (state.getBlock() instanceof SpeleothemBlock
+                && state.getValue(SpeleothemBlock.THICKNESS) == SpeleothemThickness.TIP);
     }
 
     public static boolean isFoliage(BlockState state) {
