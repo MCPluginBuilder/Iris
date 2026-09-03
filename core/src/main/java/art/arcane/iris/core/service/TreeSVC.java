@@ -142,8 +142,19 @@ public class TreeSVC implements IrisService {
             return;
         }
 
+        KList<String> pool = placement.compatPlace(worldAccess.getData());
+
+        if (pool.isEmpty()) {
+            IrisLogging.debug("Tree placement has no object available on this Minecraft version");
+            return;
+        }
+
         saplingPlane.forEach(block -> block.setType(Material.AIR));
-        IrisObject object = worldAccess.getData().getObjectLoader().load(placement.getPlace().getRandom(RNG.r));
+        IrisObject object = worldAccess.getData().getObjectLoader().load(pool.getRandom(RNG.r));
+
+        if (object == null) {
+            return;
+        }
         String treeMarker = object.getLoadKey() + "@" + ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         List<BlockState> blockStateList = new KList<>();
         KMap<Location, BlockData> dataCache = new KMap<>();
@@ -311,12 +322,12 @@ public class TreeSVC implements IrisService {
 
         // Retrieve objectPlacements of type `species` from biome
         IrisBiome biome = worldAccess.getEngine().getBiome(location.getBlockX(), location.getBlockY()-worldAccess.getTarget().getWorld().minHeight(), location.getBlockZ());
-        placements.addAll(matchObjectPlacements(biome.getObjects(), size, type));
+        placements.addAll(matchObjectPlacements(biome.getObjects(), size, type, worldAccess.getData()));
 
         // Add more or find any in the region
         if (isUseAll || placements.isEmpty()) {
             IrisRegion region = worldAccess.getEngine().getRegion(location.getBlockX(), location.getBlockZ());
-            placements.addAll(matchObjectPlacements(region.getObjects(), size, type));
+            placements.addAll(matchObjectPlacements(region.getObjects(), size, type, worldAccess.getData()));
         }
 
         // Check if no matches were found, return a random one if they are
@@ -329,14 +340,15 @@ public class TreeSVC implements IrisService {
      * @param objects The object placements to check
      * @param size    The size of the sapling area to filter with
      * @param type    The type of the tree to filter with
+     * @param data    The pack, for the version-content gate
      * @return A list of objectPlacements that matched. May be empty.
      */
-    private KList<IrisObjectPlacement> matchObjectPlacements(KList<IrisObjectPlacement> objects, IrisTreeSize size, TreeType type) {
+    private KList<IrisObjectPlacement> matchObjectPlacements(KList<IrisObjectPlacement> objects, IrisTreeSize size, TreeType type, IrisData data) {
 
         KList<IrisObjectPlacement> p = new KList<>();
 
         for (IrisObjectPlacement i : objects) {
-            if (i.matches(size, type)) {
+            if (i.matches(size, type) && !i.isCompatExcluded(data)) {
                 p.add(i);
             }
         }

@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.loader;
 
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
 import com.google.gson.GsonBuilder;
 import art.arcane.iris.spi.IrisLogging;
 import lombok.Data;
@@ -34,6 +36,23 @@ public abstract class IrisRegistrant {
     private transient String loadKey;
 
     private transient File loadFile;
+    /** Version-content gate verdict; excluded registrants must be filtered out of every pool that could pick them. */
+    @EqualsAndHashCode.Exclude
+    private transient CompatStatus compat = CompatStatus.OK;
+
+    /**
+     * Version-content gate hook, called once per load from {@code IrisData.preprocessObject} before the registrant is
+     * cached. The default runs the gate's annotated-field walker; subclasses whose exclusion also depends on their pools
+     * (spawners, loot tables, regions, the dimension, jigsaw pieces) override, call {@code super}, and combine.
+     */
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        return gate.evaluate(this);
+    }
+
+    public boolean isCompatExcluded() {
+        CompatStatus status = compat;
+        return status != null && status.excluded();
+    }
 
     public abstract String getFolderName();
 

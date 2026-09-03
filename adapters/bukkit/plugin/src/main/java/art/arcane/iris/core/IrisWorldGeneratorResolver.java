@@ -60,6 +60,7 @@ import java.util.function.Supplier;
  */
 public final class IrisWorldGeneratorResolver {
     private static final int VALIDATION_STABILITY_ATTEMPTS = 2;
+    private static final int COMPAT_BOOT_KEY_CAP = 3;
     private static final Object SNAPSHOT_VALIDATION_LOCK = new Object();
     private static final String IRIS_DIMENSION_NAMESPACE = "iris";
     private static final String PLOT_SQUARED_DISCOVERY_WORLD = "CheckingPlotSquaredGenerator";
@@ -123,6 +124,9 @@ public final class IrisWorldGeneratorResolver {
             if (packDirectory != null && packFingerprint != null && !packFingerprint.isBlank()) {
                 PackValidationRegistry.publish(packDirectory.toPath(), result, packFingerprint);
             }
+            String minecraftVersion = IrisPlatforms.isBound() ? IrisPlatforms.get().minecraftVersion() : null;
+            String compatSummary = PackValidator.compatSummary(result, minecraftVersion);
+            String compatSuffix = compatSummary.isEmpty() ? "" : " " + compatSummary;
             if (!result.isLoadable()) {
                 Iris.error("Pack '" + result.getPackName()
                         + "' FAILED validation - world and Studio creation with this pack will be refused. Reasons:");
@@ -131,12 +135,22 @@ public final class IrisWorldGeneratorResolver {
                 }
             } else if (!result.getWarnings().isEmpty()) {
                 Iris.info("Pack '" + result.getPackName() + "' validated ("
-                        + result.getWarnings().size() + " warning(s)).");
+                        + result.getWarnings().size() + " warning(s))." + compatSuffix);
                 for (String warning : result.getWarnings()) {
                     Iris.warn("  [" + result.getPackName() + "] " + warning);
                 }
             } else if (cached.isEmpty()) {
-                Iris.success("Pack '" + result.getPackName() + "' validated.");
+                if (compatSummary.isEmpty()) {
+                    Iris.success("Pack '" + result.getPackName() + "' validated.");
+                } else {
+                    Iris.info("Pack '" + result.getPackName() + "' validated." + compatSuffix);
+                }
+            } else if (!compatSummary.isEmpty()) {
+                Iris.info("Pack '" + result.getPackName() + "' validated." + compatSuffix);
+            }
+            // Cache hits carry the persisted findings, so the listing prints on every boot, not only after a miss.
+            for (String line : PackValidator.compatBootLines(result, minecraftVersion, COMPAT_BOOT_KEY_CAP)) {
+                Iris.warn(line);
             }
         }
         IrisStartupValidation.markPacksReady();

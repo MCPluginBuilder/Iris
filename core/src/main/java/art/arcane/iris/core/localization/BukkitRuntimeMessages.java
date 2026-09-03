@@ -158,6 +158,19 @@ public final class BukkitRuntimeMessages {
                     "other", C.GRAY + "  ... and {count} more warnings."
             )
     );
+    public static final TextKey COMMAND_PACK_COMPAT_HEADER = TextKey.of(
+            "iris.bukkit.runtime.commandpack.compat_header",
+            C.YELLOW + "Pack '" + "{pack}" + "': content unavailable on Minecraft " + "{version}"
+    );
+    public static final TextKey COMMAND_PACK_COMPAT_NONE = TextKey.of(
+            "iris.bukkit.runtime.commandpack.compat_none",
+            C.GREEN + "Pack '" + "{pack}" + "' uses no content that is unavailable on Minecraft " + "{version}" + "."
+    );
+    public static final TextKey COMMAND_PACK_COMPAT_REMEDY = TextKey.of(
+            "iris.bukkit.runtime.commandpack.compat_remedy",
+            C.GRAY + "Update the server to a newer Minecraft to restore this content, or declare fallbacks"
+                    + " (dimension blockFallbacks, block backup)."
+    );
     public static final LinesKey COMMAND_DEVELOPER_UPDATE_WORLD_WARNING = LinesKey.of(
             "iris.bukkit.runtime.commanddeveloper.update_world_warning",
             C.RED + "You should always make a backup before using this",
@@ -644,6 +657,9 @@ public final class BukkitRuntimeMessages {
             COMMAND_PACK_MESSAGE,
             COMMAND_PACK_MESSAGE_2,
             COMMAND_PACK_MORE_WARNING_S,
+            COMMAND_PACK_COMPAT_HEADER,
+            COMMAND_PACK_COMPAT_NONE,
+            COMMAND_PACK_COMPAT_REMEDY,
             COMMAND_DEVELOPER_UPDATE_WORLD_WARNING,
             BULK_STRUCTURE_IMPORTER_IMPORTING_VANILLA_DATAPACK_STRUCTURES_MODE_INCLUDENONJIGSAW,
             BULK_STRUCTURE_IMPORTER_FAIL_INVALID_KEY,

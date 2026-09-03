@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.object;
 
 
+import art.arcane.iris.core.compat.ContentGate;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
@@ -141,10 +142,15 @@ public class IrisBlockData extends IrisRegistrant {
         return computeProperties(getData());
     }
 
+    /** The full state this entry names, {@code namespace:block[props]}, as the gate and the registries expect it. */
+    public String stateKey() {
+        return keyify(getBlock()) + computeProperties();
+    }
+
     public PlatformBlockState getBlockData(IrisData data) {
         return blockdata.aquire(() ->
         {
-            IrisBlockData customData = data.getBlockLoader().load(getBlock(), false);
+            IrisBlockData customData = data.getBlockLoader() == null ? null : data.getBlockLoader().load(getBlock(), false);
 
             if (customData != null) {
                 PlatformBlockState customState = customData.getBlockData(data);
@@ -168,7 +174,7 @@ public class IrisBlockData extends IrisRegistrant {
                         IrisLogging.debug("Block Data used " + sx + " (CUSTOM)");
                     }
 
-                    PlatformBlockState bx = B.getState(sx);
+                    PlatformBlockState bx = resolve(data, sx);
 
                     if (bx != null) {
                         return bx;
@@ -178,8 +184,8 @@ public class IrisBlockData extends IrisRegistrant {
                 }
             }
 
-            String ss = keyify(getBlock()) + computeProperties();
-            PlatformBlockState resolved = B.getState(ss);
+            String ss = stateKey();
+            PlatformBlockState resolved = resolve(data, ss);
 
             if (debug) {
                 IrisLogging.debug("Block Data used " + ss);
@@ -193,8 +199,40 @@ public class IrisBlockData extends IrisRegistrant {
                 return backup.getBlockData(data);
             }
 
-            return B.getState("AIR");
+            IrisLogging.warnOnce("block-missing:" + ss, "Block " + ss + " does not exist on this server and has no backup; generating air");
+            return B.getAirState();
         });
+    }
+
+    /**
+     * {@link #getBlockData(IrisData)} for match sides such as {@code edit} find lists: a key missing on this server
+     * (after custom blocks, the gate chain and every backup) yields a {@link art.arcane.iris.core.compat.MissingBlockState}
+     * carrying the key instead of air, so a palette placeholder with the same key can still be matched and rewritten.
+     */
+    public PlatformBlockState getBlockDataOrPlaceholder(IrisData data) {
+        ContentGate gate = data.getContentGate();
+        String state = stateKey();
+
+        if (!gate.ready() || hasCustomBlock(data) || gate.resolveBlock(state) != null) {
+            return getBlockData(data);
+        }
+
+        if (backup != null) {
+            return backup.getBlockDataOrPlaceholder(data);
+        }
+
+        PlatformBlockState placeholder = gate.resolveBlockOrPlaceholder(state);
+        return placeholder == null ? getBlockData(data) : placeholder;
+    }
+
+    private boolean hasCustomBlock(IrisData data) {
+        return data.getBlockLoader() != null && data.getBlockLoader().load(getBlock(), false) != null;
+    }
+
+    /** Registry, legacy rename table, then dimension blockFallbacks; null when the state is missing on this server. */
+    private static PlatformBlockState resolve(IrisData data, String state) {
+        ContentGate.BlockResolution resolution = data.getContentGate().resolveBlock(state);
+        return resolution == null ? null : resolution.state();
     }
 
     public TileData tryGetTile(IrisData data) {

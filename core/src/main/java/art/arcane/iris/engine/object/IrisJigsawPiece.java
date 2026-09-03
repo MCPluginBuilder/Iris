@@ -18,6 +18,12 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.CompatAction;
+import art.arcane.iris.core.compat.CompatFinding;
+import art.arcane.iris.core.compat.CompatRegistry;
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
@@ -79,6 +85,42 @@ public class IrisJigsawPiece extends IrisRegistrant {
 
     public IrisJigsawPieceRules resolvedRules() {
         return rules == null ? new IrisJigsawPieceRules() : rules;
+    }
+
+    /**
+     * A piece is one object stamped verbatim - nothing rewrites its blocks - so a palette key the server does not
+     * have (after the pack's declared fallbacks) takes the whole piece out of every pool that lists it.
+     */
+    @Override
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        CompatStatus base = super.evaluateCompat(gate);
+
+        if (base.excluded() || gate == null || !gate.ready()) {
+            return base;
+        }
+
+        IrisData data = getLoader();
+
+        if (data == null || object == null || object.isBlank()) {
+            return base;
+        }
+
+        for (String paletteKey : IrisObjectIO.readPaletteKeysCached(data.getObjectLoader().findFile(object.trim()))) {
+            String key = ContentGate.baseKey(ContentGate.normalizeState(paletteKey));
+
+            if (key == null || gate.resolveBlock(key) != null) {
+                continue;
+            }
+
+            CompatFinding finding = new CompatFinding(CompatRegistry.BLOCK, key, CompatAction.EXCLUDED,
+                    "jigsaw piece", getLoadKey(), "object " + object.trim());
+            gate.report().record(finding);
+            KList<CompatFinding> reasons = new KList<>(base.reasons());
+            reasons.add(finding);
+            return CompatStatus.excludedBy(reasons);
+        }
+
+        return base;
     }
 
     @Override

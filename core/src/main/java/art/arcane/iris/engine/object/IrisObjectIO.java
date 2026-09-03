@@ -18,6 +18,8 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.ContentGate;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.spi.IrisLogging;
@@ -40,6 +42,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -50,6 +54,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class IrisObjectIO {
     private static final String V2_HEADER = "Iris V2 IOB;";
     private static final int MAX_PALETTE_ENTRIES = 32_767;
+    private static final int PALETTE_CACHE_LIMIT = 8192;
+    private static final Map<String, List<String>> PALETTE_CACHE = new ConcurrentHashMap<>();
 
     private IrisObjectIO() {
     }
@@ -86,6 +92,32 @@ public final class IrisObjectIO {
         }
     }
 
+    /**
+     * {@link #readPaletteKeys(File)} memoized on path, size and mtime. The version-content gate reads the same object
+     * headers once per placement that lists them, which at boot is the same file dozens of times.
+     */
+    public static List<String> readPaletteKeysCached(File file) {
+        if (file == null || !file.isFile()) {
+            return List.of();
+        }
+
+        String key = file.getPath() + '@' + file.lastModified() + '#' + file.length();
+        List<String> cached = PALETTE_CACHE.get(key);
+
+        if (cached != null) {
+            return cached;
+        }
+
+        List<String> palette = readPaletteKeys(file);
+
+        if (PALETTE_CACHE.size() >= PALETTE_CACHE_LIMIT) {
+            PALETTE_CACHE.clear();
+        }
+
+        PALETTE_CACHE.put(key, palette);
+        return palette;
+    }
+
     static IrisBlockVector sampleSize(File file) throws IOException {
         try (DataInputStream din = new DataInputStream(new FileInputStream(file))) {
             return new IrisBlockVector(din.readInt(), din.readInt(), din.readInt());
@@ -104,7 +136,7 @@ public final class IrisObjectIO {
 
         for (int i = 0; i < s; i++) {
             IrisBlockVector pos = new IrisBlockVector(din.readShort(), din.readShort(), din.readShort());
-            PlatformBlockState data = B.getState(din.readUTF());
+            PlatformBlockState data = resolvePaletteState(self, din.readUTF());
             if (isStructureMarker(data)) {
                 continue;
             }
@@ -148,7 +180,7 @@ public final class IrisObjectIO {
         // block count (tens of thousands) instead of times the palette size (hundreds).
         PlatformBlockState[] resolved = new PlatformBlockState[palette.size()];
         for (i = 0; i < resolved.length; i++) {
-            resolved[i] = B.getState(palette.get(i));
+            resolved[i] = resolvePaletteState(self, palette.get(i));
         }
 
         s = din.readInt();
@@ -183,6 +215,39 @@ public final class IrisObjectIO {
                 readLegacy(self, fin);
             }
         }
+    }
+
+    /**
+     * Palette key to state. A key the server does not have goes through the pack's dimension {@code blockFallbacks}
+     * before the plain lookup, so a declared fallback actually reaches the world instead of becoming air. Present
+     * keys take exactly one registry lookup, as before.
+     */
+    private static PlatformBlockState resolvePaletteState(IrisObject self, String key) {
+        PlatformBlockState direct = B.getStateOrNull(key, false);
+
+        if (direct != null) {
+            return direct;
+        }
+
+        IrisData data = self.getLoader();
+
+        if (data != null) {
+            try {
+                ContentGate gate = data.getContentGate();
+
+                if (gate != null && gate.ready()) {
+                    PlatformBlockState viaGate = gate.resolveBlockOrPlaceholder(key);
+
+                    if (viaGate != null) {
+                        return viaGate;
+                    }
+                }
+            } catch (Throwable e) {
+                // The gate is advisory here; object loading must never fail because of it.
+            }
+        }
+
+        return B.getState(key);
     }
 
     private static boolean isStructureMarker(PlatformBlockState data) {

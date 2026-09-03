@@ -83,6 +83,9 @@ final class MarkerSpawnScanner {
                     IrisLogging.error("Cannot load spawner: " + i + " for marker on " + manager.getName());
                     continue;
                 }
+                if (m.isCompatExcluded()) {
+                    continue;
+                }
                 m.setReferenceMarker(mark);
 
                 // This is so fucking incorrect its a joke
@@ -180,6 +183,9 @@ final class MarkerSpawnScanner {
                 IrisSpawner spawner = manager.getData().getSpawnerLoader().load(i);
                 if (spawner == null) {
                     IrisLogging.error("Cannot load spawner: " + i + " for marker on " + manager.getName());
+                    continue;
+                }
+                if (spawner.isCompatExcluded()) {
                     continue;
                 }
                 spawner.setReferenceMarker(mark);

@@ -358,6 +358,11 @@ public class IrisFloatingChildBiomes implements IRare {
                 return parent;
             }
 
+            if (loaded.isCompatExcluded()) {
+                CompatPools.drop(data, loaded, "floating child biome", parent.getLoadKey(), "biome " + biome, null);
+                return parent;
+            }
+
             return loaded;
         });
     }

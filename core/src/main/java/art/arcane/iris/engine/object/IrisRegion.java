@@ -19,6 +19,9 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.engine.framework.render.RenderType;
+import art.arcane.iris.core.compat.CompatFinding;
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -44,6 +47,8 @@ import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 
 import java.awt.Color;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 
 
@@ -321,6 +326,11 @@ public class IrisRegion extends IrisRegistrant implements IRare {
                     continue;
                 }
 
+                if (biome.isCompatExcluded()) {
+                    CompatPools.drop(g.getData(), biome, "region", getLoadKey(), "biomes " + i, null);
+                    continue;
+                }
+
                 names.add(biome.getCarvingBiome());
                 b.put(biome.getLoadKey(), biome);
                 names.addAll(biome.getChildren());
@@ -345,55 +355,26 @@ public class IrisRegion extends IrisRegistrant implements IRare {
     }
 
     public KList<IrisBiome> getRealCaveBiomes(DataProvider g) {
-        return realCaveBiomes.aquire(() ->
-        {
-            KList<IrisBiome> realCaveBiomes = new KList<>();
-
-            for (String i : getCaveBiomes()) {
-                realCaveBiomes.add(g.getData().getBiomeLoader().load(i));
-            }
-
-            return realCaveBiomes;
-        });
+        return realCaveBiomes.aquire(() -> resolvePool(g, getCaveBiomes(), "caveBiomes", null));
     }
 
     public KList<IrisBiome> getRealShoreBiomes(DataProvider g) {
-        return realShoreBiomes.aquire(() ->
-        {
-            KList<IrisBiome> realShoreBiomes = new KList<>();
-
-            for (String i : getShoreBiomes()) {
-                realShoreBiomes.add(g.getData().getBiomeLoader().load(i));
-            }
-
-            return realShoreBiomes;
-        });
+        return realShoreBiomes.aquire(() -> resolvePool(g, getShoreBiomes(), "shoreBiomes", null));
     }
 
     public KList<IrisBiome> getRealSeaBiomes(DataProvider g) {
-        return realSeaBiomes.aquire(() ->
-        {
-            KList<IrisBiome> realSeaBiomes = new KList<>();
-
-            for (String i : getSeaBiomes()) {
-                realSeaBiomes.add(g.getData().getBiomeLoader().load(i));
-            }
-
-            return realSeaBiomes;
-        });
+        return realSeaBiomes.aquire(() -> resolvePool(g, getSeaBiomes(), "seaBiomes", null));
     }
 
     public KList<IrisBiome> getRealLandBiomes(DataProvider g) {
-        return realLandBiomes.aquire(() ->
-        {
-            KList<IrisBiome> realLandBiomes = new KList<>();
+        return realLandBiomes.aquire(() -> resolvePool(g, getLandBiomes(), "landBiomes", null));
+    }
 
-            for (String i : getLandBiomes()) {
-                realLandBiomes.add(g.getData().getBiomeLoader().load(i));
-            }
-
-            return realLandBiomes;
-        });
+    /** A biome reference pool with unloadable and gate-excluded biomes removed; drops are reported once. */
+    private KList<IrisBiome> resolvePool(DataProvider g, KList<String> keys, String field, List<CompatFinding> sink) {
+        IrisData data = g == null ? null : g.getData();
+        return CompatPools.load(data == null ? null : data.getBiomeLoader(), keys, data,
+                "region", getLoadKey(), field, sink);
     }
 
     public KList<IrisBiome> getAllAnyBiomes() {
@@ -466,6 +447,42 @@ public class IrisRegion extends IrisRegistrant implements IRare {
 
     public void pickRandomColor(DataProvider data) {
 
+    }
+
+    /**
+     * Cascade: a region that lost every land biome to the gate cannot generate, so it leaves the dimension's region
+     * pool too. Loading biomes here is safe - biomes never load regions.
+     */
+    @Override
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        CompatStatus base = super.evaluateCompat(gate);
+
+        if (base.excluded()) {
+            return base;
+        }
+
+        IrisData data = getLoader();
+
+        if (data == null) {
+            return base;
+        }
+
+        for (int index = 0; index < structures.size(); index++) {
+            structures.get(index).reportExcludedCaveBiomes(data, "region", getLoadKey(),
+                    "structures[" + index + "].caveBiomes");
+        }
+
+        if (getLandBiomes().isEmpty()) {
+            return base;
+        }
+
+        List<CompatFinding> drops = new ArrayList<>();
+
+        if (!resolvePool(() -> data, getLandBiomes(), "landBiomes", drops).isEmpty()) {
+            return base;
+        }
+
+        return CompatPools.cascade(data, base, drops, "region", getLoadKey(), "no land biomes remain");
     }
 
     @Override

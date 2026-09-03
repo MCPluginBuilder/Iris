@@ -424,7 +424,7 @@ final class IrisObjectPlacementRunner {
                     IrisMarker marker = self.getLoader().getMarkerLoader().load(j.getMarker());
                     int markerSalt = markerIndex++;
 
-                    if (marker == null) {
+                    if (marker == null || marker.isCompatExcluded()) {
                         continue;
                     }
 

@@ -19,6 +19,8 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.platform.bukkit.BukkitBlockState;
@@ -366,5 +368,15 @@ public class IrisObject extends IrisRegistrant {
     @Override
     public String getTypeName() {
         return "Object";
+    }
+
+    /**
+     * Objects are never gated on their own: whether a palette key that is missing on this server matters depends on
+     * the placement that stamps it (its {@code edit} rules may rewrite it), so the verdict is made per placement and
+     * per jigsaw piece. Overridden to keep the generic walker out of the block map as well.
+     */
+    @Override
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        return CompatStatus.OK;
     }
 }

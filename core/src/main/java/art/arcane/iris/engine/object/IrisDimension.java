@@ -19,6 +19,9 @@
 package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.IrisDatapackCompiler.DimensionHeight;
+import art.arcane.iris.core.compat.CompatFinding;
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -60,10 +63,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -126,6 +131,8 @@ public class IrisDimension extends IrisRegistrant {
     @MinNumber(0)
     @Desc("The version of this dimension. Changing this will stop users from accidentally upgrading (and breaking their worlds).")
     private int version = 1;
+    @Desc("When a block key does not exist on the running Minecraft version, generate this block state instead. Keys are base block keys such as minecraft:sulfur; values are full block states. Applies to every palette, decorator, deposit, replace rule and object in this pack. Content that uses a missing block with no fallback here (and no per-entry backup) is excluded from generation on that version and listed at startup.")
+    private KMap<String, String> blockFallbacks = new KMap<>();
     @ArrayType(min = 1, type = IrisBlockDrops.class)
     @Desc("Define custom block drops for this dimension")
     private KList<IrisBlockDrops> blockDrops = new KList<>();
@@ -307,6 +314,25 @@ public class IrisDimension extends IrisRegistrant {
         return staticObjectLayer.aquire(() -> IrisStaticObjectLayer.compile(this, data));
     }
 
+    /**
+     * Runs the version-content gate over every static object so the pack report lists the entries this server cannot
+     * place. The static layer makes the same decision when it compiles; validation calls this on its detached loader
+     * so the boot listing is complete without compiling a layer.
+     */
+    public void evaluateStaticObjectsCompat(IrisData data) {
+        if (staticObjects == null) {
+            return;
+        }
+
+        for (int index = 0; index < staticObjects.size(); index++) {
+            IrisStaticObject entry = staticObjects.get(index);
+
+            if (entry != null) {
+                entry.evaluateCompat(data, getLoadKey(), index);
+            }
+        }
+    }
+
     public IrisDimension setStaticObjects(KList<IrisStaticObject> staticObjects) {
         this.staticObjects = staticObjects;
         staticObjectLayer.reset();
@@ -473,11 +499,18 @@ public class IrisDimension extends IrisRegistrant {
             return regions.v();
         }
 
-        for (String key : getRegions()) {
+        for (int index = 0; index < getRegions().size(); index++) {
+            String key = getRegions().get(index);
             IrisRegion region = data.getRegionLoader().load(key);
-            if (region != null) {
-                regions.put(key, region);
+            if (region == null) {
+                continue;
             }
+            if (region.isCompatExcluded()) {
+                CompatPools.drop(data, region, "dimension", getLoadKey(),
+                        "regions[" + index + "] " + key, null);
+                continue;
+            }
+            regions.put(key, region);
         }
         for (IrisImageMapBinding binding : getImageMaps()) {
             if (binding == null || binding.getApplication() != IrisImageMapApplication.REGION) {
@@ -490,7 +523,7 @@ public class IrisDimension extends IrisRegistrant {
             for (String target : imageMapTargets(map)) {
                 String key = localImageMapTarget(target);
                 IrisRegion region = data.getRegionLoader().load(key);
-                if (region != null) {
+                if (region != null && !region.isCompatExcluded()) {
                     regions.put(key, region);
                 }
             }
@@ -707,9 +740,11 @@ public class IrisDimension extends IrisRegistrant {
             // comes from the chunk generator's generation-settings getter, not from the datapack.
             String derivativeKey = irisBiome.getVanillaDerivativeKey();
 
+            ContentGate contentGate = getLoader() == null ? null : getLoader().getContentGate();
+
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
                 String customBiomeId = customBiome.getId();
-                String json = customBiome.generateJson(fixer);
+                String json = customBiome.generateJson(fixer, contentGate);
 
                 synchronized (biomes) {
                     if (!biomes.add(customBiomeId)) {
@@ -903,6 +938,39 @@ public class IrisDimension extends IrisRegistrant {
             output.getParentFile().mkdirs();
             IO.writeAll(output, json);
         }
+    }
+
+    /** The declared region pool with unloadable and gate-excluded regions removed; drops are reported once. */
+    private KList<IrisRegion> resolveRegionPool(IrisData data, List<CompatFinding> sink) {
+        return CompatPools.load(data == null ? null : data.getRegionLoader(), getRegions(), data,
+                "dimension", getLoadKey(), "regions", sink);
+    }
+
+    /**
+     * Cascade: a dimension whose every region was excluded cannot generate anything. Pack validation turns this into a
+     * blocking error. Loading regions here is safe - regions never load dimensions.
+     */
+    @Override
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        CompatStatus base = super.evaluateCompat(gate);
+
+        if (base.excluded()) {
+            return base;
+        }
+
+        IrisData data = getLoader();
+
+        if (data == null || getRegions().isEmpty()) {
+            return base;
+        }
+
+        List<CompatFinding> drops = new ArrayList<>();
+
+        if (!resolveRegionPool(data, drops).isEmpty()) {
+            return base;
+        }
+
+        return CompatPools.cascade(data, base, drops, "dimension", getLoadKey(), "no regions remain");
     }
 
     @Override

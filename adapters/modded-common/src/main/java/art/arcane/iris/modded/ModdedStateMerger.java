@@ -28,8 +28,9 @@ import java.util.Map;
 public final class ModdedStateMerger implements BlockDataMergeSupport.StateMerger {
     @Override
     public PlatformBlockState merge(PlatformBlockState base, PlatformBlockState update) {
-        ModdedBlockState fabricBase = (ModdedBlockState) base;
-        ModdedBlockState fabricUpdate = (ModdedBlockState) update;
+        if (!(base instanceof ModdedBlockState fabricBase) || !(update instanceof ModdedBlockState fabricUpdate)) {
+            return update;
+        }
         ModdedBlockState metadataSource = fabricUpdate.isCustom() ? fabricUpdate : fabricBase;
 
         try {

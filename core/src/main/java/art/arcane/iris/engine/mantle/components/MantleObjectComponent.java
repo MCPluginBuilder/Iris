@@ -417,7 +417,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
         for (IrisObjectPlacement i : surfaceBiome.getSurfaceObjects()) {
             biomeSurfaceChecked++;
-            boolean chance = rng.chance(i.getChance() + rng.d(-0.005, 0.005));
+            boolean chance = rng.chance(i.getChance() + rng.d(-0.005, 0.005)) && !i.isCompatExcluded(getData());
             if (traceRegen) {
                 IrisLogging.debug("Regen object placer chance: chunk=" + x + "," + z
                         + " scope=biome-surface"
@@ -450,7 +450,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 continue;
             }
             biomeCaveChecked++;
-            boolean chance = rng.chance(i.getChance());
+            boolean chance = rng.chance(i.getChance()) && !i.isCompatExcluded(getData());
             if (traceRegen) {
                 IrisLogging.debug("Regen object placer chance: chunk=" + x + "," + z
                         + " scope=biome-cave"
@@ -480,7 +480,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
         for (IrisObjectPlacement i : region.getSurfaceObjects()) {
             regionSurfaceChecked++;
-            boolean chance = rng.chance(i.getChance() + rng.d(-0.005, 0.005));
+            boolean chance = rng.chance(i.getChance() + rng.d(-0.005, 0.005)) && !i.isCompatExcluded(getData());
             if (traceRegen) {
                 IrisLogging.debug("Regen object placer chance: chunk=" + x + "," + z
                         + " scope=region-surface"
@@ -513,7 +513,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 continue;
             }
             regionCaveChecked++;
-            boolean chance = rng.chance(i.getChance());
+            boolean chance = rng.chance(i.getChance()) && !i.isCompatExcluded(getData());
             if (traceRegen) {
                 IrisLogging.debug("Regen object placer chance: chunk=" + x + "," + z
                         + " scope=region-cave"
@@ -1182,7 +1182,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
         boolean forcePlace = dimension.isUpperObjectsForcePlace();
         if (upperBiome != null) {
             for (IrisObjectPlacement i : upperBiome.getSurfaceObjects()) {
-                if (!rng.chance(i.getChance() + rng.d(-0.005, 0.005))) {
+                if (!rng.chance(i.getChance() + rng.d(-0.005, 0.005)) || i.isCompatExcluded(getData())) {
                     continue;
                 }
                 try {
@@ -1197,7 +1197,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
         if (upperRegion != null) {
             for (IrisObjectPlacement i : upperRegion.getSurfaceObjects()) {
-                if (!rng.chance(i.getChance() + rng.d(-0.005, 0.005))) {
+                if (!rng.chance(i.getChance() + rng.d(-0.005, 0.005)) || i.isCompatExcluded(getData())) {
                     continue;
                 }
                 try {
@@ -1635,13 +1635,13 @@ public class MantleObjectComponent extends IrisMantleComponent {
         IrisRegion region = getEngineMantle().getEngine().getRegion((x << 4) + 8, (z << 4) + 8);
         Set<String> v = new KSet<>();
         for (IrisObjectPlacement i : biome.getSurfaceObjects()) {
-            if (rng.chance(i.getChance() + rng.d(-0.005, 0.005))) {
+            if (rng.chance(i.getChance() + rng.d(-0.005, 0.005)) && !i.isCompatExcluded(getData())) {
                 v.addAll(guessPlacedKeys(rng, x, z, i));
             }
         }
 
         for (IrisObjectPlacement i : region.getSurfaceObjects()) {
-            if (rng.chance(i.getChance() + rng.d(-0.005, 0.005))) {
+            if (rng.chance(i.getChance() + rng.d(-0.005, 0.005)) && !i.isCompatExcluded(getData())) {
                 v.addAll(guessPlacedKeys(rng, x, z, i));
             }
         }

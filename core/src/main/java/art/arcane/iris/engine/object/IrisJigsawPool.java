@@ -18,6 +18,12 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.CompatAction;
+import art.arcane.iris.core.compat.CompatFinding;
+import art.arcane.iris.core.compat.CompatRegistry;
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
@@ -49,6 +55,75 @@ public class IrisJigsawPool extends IrisRegistrant {
 
     public boolean requiresFallback(boolean structureRequiresCaps) {
         return structureRequiresCaps || mandatoryFallback;
+    }
+
+    /**
+     * Excluded pieces drop out of the pool; a pool with nothing left to place is excluded in turn so every connector
+     * that targets it terminates instead of failing assembly.
+     */
+    @Override
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        CompatStatus base = super.evaluateCompat(gate);
+
+        if (base.excluded() || gate == null || !gate.ready()) {
+            return base;
+        }
+
+        IrisData data = getLoader();
+
+        if (data == null || pieces == null || pieces.isEmpty()) {
+            return base;
+        }
+
+        KList<CompatFinding> reasons = new KList<>(base.reasons());
+        CompatFinding cause = null;
+        int usable = 0;
+
+        for (int i = 0; i < pieces.size(); i++) {
+            IrisJigsawPieceEntry entry = pieces.get(i);
+
+            if (entry == null) {
+                continue;
+            }
+
+            String key = entry.getPiece() == null ? "" : entry.getPiece().trim();
+
+            // An empty membership terminates a branch on purpose, and a piece key that does not resolve at all is a
+            // pack error the loader already reports - neither is a version-content problem.
+            if (entry.isEmpty() || key.isEmpty()) {
+                usable++;
+                continue;
+            }
+
+            IrisJigsawPiece piece = data.load(IrisJigsawPiece.class, key, false);
+
+            if (piece == null || !piece.isCompatExcluded()) {
+                usable++;
+                continue;
+            }
+
+            CompatFinding reason = piece.getCompat().reasons().isEmpty() ? null : piece.getCompat().reasons().getFirst();
+            CompatFinding dropped = new CompatFinding(
+                    reason == null ? CompatRegistry.BLOCK : reason.registry(),
+                    reason == null ? key : reason.key(),
+                    CompatAction.DROPPED, "jigsaw pool", getLoadKey(), "pieces[" + i + "] " + key);
+            gate.report().record(dropped);
+            reasons.add(dropped);
+
+            if (cause == null) {
+                cause = dropped;
+            }
+        }
+
+        if (usable > 0 || cause == null) {
+            return new CompatStatus(false, reasons);
+        }
+
+        CompatFinding excluded = new CompatFinding(cause.registry(), cause.key(), CompatAction.EXCLUDED,
+                "jigsaw pool", getLoadKey(), "no pieces remain");
+        gate.report().record(excluded);
+        reasons.add(excluded);
+        return CompatStatus.excludedBy(reasons);
     }
 
     @Override

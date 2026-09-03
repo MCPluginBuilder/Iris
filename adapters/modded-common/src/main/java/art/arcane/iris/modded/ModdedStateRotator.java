@@ -47,7 +47,9 @@ public final class ModdedStateRotator implements IrisObjectRotation.StateRotator
 
     @Override
     public PlatformBlockState rotate(IrisObjectRotation rotation, PlatformBlockState state, int spinxx, int spinyy, int spinzz) {
-        ModdedBlockState fabric = (ModdedBlockState) state;
+        if (!(state instanceof ModdedBlockState fabric)) {
+            return state;
+        }
         BlockState d = fabric.handle();
         boolean deleted = false;
 

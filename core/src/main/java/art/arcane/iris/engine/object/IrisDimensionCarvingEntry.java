@@ -63,7 +63,14 @@ public class IrisDimensionCarvingEntry {
                 return null;
             }
 
-            return data.getBiomeLoader().load(biomeKey.trim());
+            IrisBiome loaded = data.getBiomeLoader().load(biomeKey.trim());
+
+            if (loaded != null && loaded.isCompatExcluded()) {
+                CompatPools.drop(data, loaded, "carving entry", getId(), "biome " + biomeKey.trim(), null);
+                return null;
+            }
+
+            return loaded;
         });
     }
 

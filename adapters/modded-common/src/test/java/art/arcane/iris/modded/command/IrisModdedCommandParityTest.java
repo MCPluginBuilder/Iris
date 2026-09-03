@@ -153,6 +153,8 @@ public class IrisModdedCommandParityTest {
         assertTrue(ModdedCommandHelp.documents("object", "we"));
         assertTrue(ModdedCommandHelp.documents("world", "mainworld"));
         assertTrue(ModdedCommandHelp.documents("goto", "unregistered"));
+        assertTrue(ModdedCommandHelp.documents("pack", "compat"));
+        assertTrue(ModdedCommandHelp.documents("pack", "cp"));
     }
 
     @Test
@@ -170,6 +172,8 @@ public class IrisModdedCommandParityTest {
                 "structure", "struct", "str", "developer", "dev"}) {
             assertNotNull(category, child(iris, category).getCommand());
         }
+        assertNotNull("pack compat", child(child(iris, "pack"), "compat").getCommand());
+        assertNotNull("pack cp", child(child(iris, "pk"), "cp").getCommand());
     }
 
     @Test

@@ -1552,6 +1552,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "Hiển thị nội dung gói không thể tạo trên phiên bản Minecraft này",
+    "iris.director.commandpack.param.pack_folder_name_compat": "Tên thư mục gói cần báo cáo",
+    "iris.bukkit.runtime.commandpack.compat_header": "§eGói '{pack}': nội dung không có trên Minecraft {version}",
+    "iris.bukkit.runtime.commandpack.compat_none": "§aGói '{pack}' không dùng nội dung nào thiếu trên Minecraft {version}.",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7Cập nhật máy chủ lên Minecraft mới hơn để khôi phục nội dung này, hoặc khai báo phương án dự phòng (blockFallbacks của chiều, backup của khối).",
+    "iris.modded.moddedpackcommands.compat_header": "Gói '{pack}': nội dung không có trên Minecraft {version}",
+    "iris.modded.moddedpackcommands.compat_none": "Gói '{pack}' không dùng nội dung nào thiếu trên Minecraft {version}.",
+    "iris.modded.moddedpackcommands.compat_remedy": "Cập nhật máy chủ lên Minecraft mới hơn để khôi phục nội dung này, hoặc khai báo phương án dự phòng (blockFallbacks của chiều, backup của khối).",
+    "iris.modded.help.entry.command.compat_content": "Hiển thị nội dung không thể tạo trên phiên bản Minecraft này"
   }
 }

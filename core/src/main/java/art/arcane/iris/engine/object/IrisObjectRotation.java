@@ -20,6 +20,7 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.Snippet;
+import art.arcane.iris.core.compat.MissingBlockState;
 import art.arcane.iris.platform.bukkit.BukkitBlockState;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -286,6 +287,9 @@ public class IrisObjectRotation {
     public PlatformBlockState rotate(PlatformBlockState state, int spinx, int spiny, int spinz) {
         if (state == null) {
             return null;
+        }
+        if (MissingBlockState.isPlaceholder(state)) {
+            return state;
         }
 
         StateRotator rotator = PLATFORM_ROTATOR;

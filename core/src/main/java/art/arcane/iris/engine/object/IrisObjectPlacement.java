@@ -20,6 +20,12 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.platform.bukkit.BukkitBlockResolution;
 
+import art.arcane.iris.core.compat.CompatAction;
+import art.arcane.iris.core.compat.CompatFinding;
+import art.arcane.iris.core.compat.CompatRegistry;
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
+import art.arcane.iris.core.compat.PackCompatReport;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.data.cache.LazyBoundedCache;
@@ -181,6 +187,109 @@ public class IrisObjectPlacement {
     @SerializedName(value = "forcePlace", alternate = {"force"})
     private boolean forcePlace = false;
     private transient AtomicCache<TableCache> cache = new AtomicCache<>();
+    private transient AtomicCache<CompatStatus> compatCache = new AtomicCache<>();
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private transient volatile KList<String> compatPlaceCache;
+
+    /**
+     * Version-content gate verdict for this placement on the running server. The placement's own generated blocks
+     * (every {@code edit[].replace} palette option) exclude the whole placement when one of them is unavailable; each
+     * object in {@code place} is then dropped when its .iob palette carries a key that neither resolves nor is
+     * rewritten by a matching {@code edit} rule with chance 1. Match sides ({@code edit[].find}, {@code markers[].mark})
+     * never count. Cached per placement.
+     */
+    public CompatStatus evaluateCompat(IrisData data) {
+        return compatCache.aquire(() -> computeCompat(data));
+    }
+
+    /** True when nothing in this placement can generate on the running server. */
+    public boolean isCompatExcluded(IrisData data) {
+        return evaluateCompat(data).excluded();
+    }
+
+    /** The {@code place} pool with objects that cannot generate on the running server removed. */
+    public KList<String> compatPlace(IrisData data) {
+        evaluateCompat(data);
+        KList<String> survivors = compatPlaceCache;
+        return survivors == null ? place : survivors;
+    }
+
+    private CompatStatus computeCompat(IrisData data) {
+        if (data == null) {
+            compatPlaceCache = place;
+            return CompatStatus.OK;
+        }
+
+        ContentGate gate = data.getContentGate();
+        PackCompatReport report = data.getCompatReport();
+
+        if (gate == null || !gate.ready()) {
+            // Registry not bound or not ready: UNKNOWN is never MISSING, so nothing is gated.
+            report.markIncomplete("registry not ready while evaluating object placements");
+            compatPlaceCache = place;
+            return CompatStatus.OK;
+        }
+
+        String subject = compatSubject();
+        KList<CompatFinding> reasons = new KList<>();
+        CompatFinding blocked = IrisObjectCompat.evaluateEditPalettes(edit, data, gate, "placement", subject, "", reasons);
+        IrisObjectCompat.record(report, reasons);
+
+        if (blocked != null) {
+            compatPlaceCache = new KList<>();
+            return CompatStatus.excludedBy(reasons);
+        }
+
+        KList<String> survivors = new KList<>(place.size());
+        CompatFinding firstDrop = null;
+
+        for (int i = 0; i < place.size(); i++) {
+            String objectKey = place.get(i);
+            KList<CompatFinding> objectReasons = new KList<>();
+            KList<String> missing = IrisObjectCompat.unplaceableKeys(objectKey, edit, data, gate, "object", objectKey,
+                    subject + " place[" + i + "]", objectReasons);
+            IrisObjectCompat.record(report, objectReasons);
+            reasons.addAll(objectReasons);
+
+            if (missing.isEmpty()) {
+                survivors.add(objectKey);
+                continue;
+            }
+
+            // One finding per missing key, so the operator sees every fallback the object needs at once.
+            for (String key : missing) {
+                CompatFinding dropped = new CompatFinding(CompatRegistry.BLOCK, key, CompatAction.DROPPED,
+                        "object", objectKey, subject + " place[" + i + "]");
+                report.record(dropped);
+                reasons.add(dropped);
+
+                if (firstDrop == null) {
+                    firstDrop = dropped;
+                }
+            }
+        }
+
+        if (firstDrop != null && survivors.isEmpty()) {
+            CompatFinding excluded = new CompatFinding(firstDrop.registry(), firstDrop.key(), CompatAction.EXCLUDED,
+                    "placement", subject, "no objects remain");
+            report.record(excluded);
+            reasons.add(excluded);
+            compatPlaceCache = new KList<>();
+            return CompatStatus.excludedBy(reasons);
+        }
+
+        compatPlaceCache = survivors.size() == place.size() ? place : survivors;
+        return new CompatStatus(false, reasons);
+    }
+
+    /** The subject a finding names: the single object, or the whole place list when there is more than one. */
+    private String compatSubject() {
+        if (place.isEmpty()) {
+            return "";
+        }
+        return place.size() == 1 ? place.getFirst() : place.toString(", ");
+    }
 
     public IrisObjectPlacement toPlacement(String... place) {
         IrisObjectPlacement p = new IrisObjectPlacement();
@@ -244,11 +353,14 @@ public class IrisObjectPlacement {
     }
 
     public IrisObject getObject(DataProvider g, RNG random) {
-        if (place.isEmpty()) {
+        IrisData data = g.getData();
+        KList<String> pool = compatPlace(data);
+
+        if (pool.isEmpty()) {
             return null;
         }
 
-        return g.getData().getObjectLoader().load(place.get(random.nextInt(place.size())));
+        return data.getObjectLoader().load(pool.get(random.nextInt(pool.size())));
     }
 
     public boolean matches(IrisTreeSize size, TreeType type) {
@@ -296,6 +408,9 @@ public class IrisObjectPlacement {
             IrisLootTable table = loader.apply(loot.getName());
             if (table == null) {
                 IrisLogging.warn("Couldn't find loot table " + loot.getName());
+                continue;
+            }
+            if (table.isCompatExcluded()) {
                 continue;
             }
 

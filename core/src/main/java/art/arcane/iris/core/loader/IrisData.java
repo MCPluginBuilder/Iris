@@ -18,6 +18,9 @@
 
 package art.arcane.iris.core.loader;
 
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
+import art.arcane.iris.core.compat.PackCompatReport;
 import com.google.gson.ExclusionStrategy;
 import com.google.gson.FieldAttributes;
 import com.google.gson.Gson;
@@ -103,6 +106,8 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     private static final Set<IrisData> ENGINE_HOLDERS =
             Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
     private final File dataFolder;
+    private final transient PackCompatReport compatReport = new PackCompatReport();
+    private transient volatile ContentGate contentGate;
     private final int id;
     private final boolean datapackCompiler;
     private volatile boolean closed = false;
@@ -429,6 +434,35 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     }
 
     public void preprocessObject(IrisRegistrant t) {
+        if (t == null) {
+            return;
+        }
+        try {
+            t.setCompat(t.evaluateCompat(getContentGate()));
+        } catch (Throwable e) {
+            IrisLogging.reportError(e);
+            t.setCompat(CompatStatus.OK);
+        }
+    }
+
+    /** Every version-content gating decision made for this pack instance. */
+    public PackCompatReport getCompatReport() {
+        return compatReport;
+    }
+
+    /** The version-content gate for this pack instance (lazy; rebuilt on hotload with the loaders). */
+    public ContentGate getContentGate() {
+        ContentGate gate = contentGate;
+        if (gate == null) {
+            synchronized (this) {
+                gate = contentGate;
+                if (gate == null) {
+                    gate = ContentGate.forData(this);
+                    contentGate = gate;
+                }
+            }
+        }
+        return gate;
     }
 
     public void close() {
@@ -481,6 +515,8 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     public synchronized void hotloaded() {
         StructureGraphCatalog.invalidate(this);
         IrisObjectScale.invalidate(this);
+        contentGate = null;
+        compatReport.clear();
         closed = false;
         possibleSnippets = new KMap<>();
         builder = new GsonBuilder()

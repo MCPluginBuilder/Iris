@@ -19,6 +19,7 @@
 package art.arcane.iris.core.commands;
 
 import art.arcane.iris.Iris;
+import art.arcane.iris.core.compat.PackCompatReport;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackResourceCleanup;
 import art.arcane.iris.core.pack.PackValidationCache;
@@ -34,10 +35,13 @@ import art.arcane.volmlib.util.director.annotations.Director;
 import art.arcane.volmlib.util.director.annotations.Param;
 import art.arcane.volmlib.util.localization.TextKey;
 
+import art.arcane.iris.spi.IrisPlatforms;
+
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.BukkitCommandMessages;
@@ -248,6 +252,76 @@ public class CommandPack implements DirectorExecutor {
             return;
         }
         reportResult(s, result);
+    }
+
+    @Director(description = "Show pack content that cannot generate on this Minecraft version", descriptionKey = "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version", aliases = {"cp"})
+    public void compat(
+            @Param(description = "The pack folder name to report on, or * for every pack", descriptionKey = "iris.director.commandpack.param.pack_folder_name_compat", defaultValue = "*")
+            String pack
+    ) {
+        VolmitSender s = sender();
+        if (wantsAllPacks(pack)) {
+            Map<String, PackValidationResult> snapshot = PackValidationRegistry.snapshot();
+            if (snapshot.isEmpty()) {
+                s.sendMessage(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_NO_VALIDATION_RESULTS_RECORDED_RUN_IRIS_PACK_VALIDATE_FIRST));
+                return;
+            }
+            for (Map.Entry<String, PackValidationResult> entry : snapshot.entrySet()) {
+                for (String line : compatOutput(entry.getKey(), entry.getValue())) {
+                    s.sendMessage(line);
+                }
+            }
+            return;
+        }
+        for (String line : compatOutput(pack, PackValidationRegistry.get(pack))) {
+            s.sendMessage(line);
+        }
+    }
+
+    /**
+     * The compat listing for one pack, straight from the persisted validation so no pack is reloaded. Every key is
+     * printed with every subject; the boot listing is the capped form of the same data.
+     */
+    static List<String> compatOutput(String pack, PackValidationResult result) {
+        List<String> lines = new ArrayList<>();
+        if (result == null) {
+            lines.add(IrisLanguage.text(
+                    BukkitRuntimeMessages.COMMAND_PACK_NO_VALIDATION_RESULT_RUN_IRIS_PACK_VALIDATE,
+                    MessageArgument.untrusted("pack", String.valueOf(pack)),
+                    MessageArgument.untrusted("pack2", String.valueOf(pack))));
+            return lines;
+        }
+        String version = compatVersion(result);
+        if (result.getCompatFindings().isEmpty()) {
+            lines.add(IrisLanguage.text(
+                    BukkitRuntimeMessages.COMMAND_PACK_COMPAT_NONE,
+                    MessageArgument.untrusted("pack", pack),
+                    MessageArgument.untrusted("version", version)));
+            return lines;
+        }
+        lines.add(IrisLanguage.text(
+                BukkitRuntimeMessages.COMMAND_PACK_COMPAT_HEADER,
+                MessageArgument.untrusted("pack", pack),
+                MessageArgument.untrusted("version", version)));
+        for (String line : PackCompatReport.of(result.getCompatFindings()).keyLines(0)) {
+            lines.add(IrisLanguage.text(
+                    BukkitRuntimeMessages.COMMAND_PACK_MESSAGE_2,
+                    MessageArgument.untrusted("value", line)));
+        }
+        lines.add(IrisLanguage.text(BukkitRuntimeMessages.COMMAND_PACK_COMPAT_REMEDY));
+        return lines;
+    }
+
+    /** The live Minecraft version, falling back to the one the validation ran against. */
+    static String compatVersion(PackValidationResult result) {
+        if (IrisPlatforms.isBound()) {
+            String live = IrisPlatforms.get().minecraftVersion();
+            if (live != null && !live.isBlank()) {
+                return live;
+            }
+        }
+        String persisted = result.getMinecraftVersion();
+        return persisted == null || persisted.isBlank() ? "unknown" : persisted;
     }
 
     private PackValidationResult runValidate(VolmitSender s, File packFolder) {

@@ -1,5 +1,8 @@
 package art.arcane.iris.core.pack;
 
+import art.arcane.iris.core.compat.CompatAction;
+import art.arcane.iris.core.compat.CompatFinding;
+import art.arcane.iris.core.compat.CompatRegistry;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.Assume;
@@ -16,6 +19,7 @@ import java.util.Optional;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -62,6 +66,55 @@ public class PackValidationCacheTest {
     }
 
     @Test
+    public void cacheRoundTripsCompatFindingsAndMinecraftVersion() throws Exception {
+        Path cache = new File(temporaryFolder.newFolder("compat-round-trip"), "validation.json").toPath();
+        CompatFinding excluded = new CompatFinding(
+                CompatRegistry.BLOCK, "minecraft:sulfur", CompatAction.EXCLUDED,
+                "Biome", "cave/sulfur-grotto", "layers[0].palette[1]");
+        CompatFinding dropped = new CompatFinding(
+                CompatRegistry.ENTITY, "minecraft:camel", CompatAction.DROPPED, "Spawner", "desert", "spawns[0]");
+        PackValidationCache.save(cache, "content", "context", List.of(new PackValidationResult(
+                "overworld", List.of(), List.of("warning"), 7L, List.of(excluded, dropped), "26.1.2")));
+
+        PackValidationResult loaded = PackValidationCache.load(
+                cache, "content", "context", List.of("overworld")).orElseThrow().getFirst();
+
+        assertEquals("26.1.2", loaded.getMinecraftVersion());
+        assertEquals(List.of(excluded, dropped), loaded.getCompatFindings());
+    }
+
+    @Test
+    public void resultsWithoutGatingRoundTripAsEmptyFindings() throws Exception {
+        Path cache = new File(temporaryFolder.newFolder("compat-empty"), "validation.json").toPath();
+        PackValidationCache.save(cache, "content", "context", List.of(
+                new PackValidationResult("overworld", List.of(), List.of(), 1L)));
+
+        PackValidationResult loaded = PackValidationCache.load(
+                cache, "content", "context", List.of("overworld")).orElseThrow().getFirst();
+
+        assertTrue(loaded.getCompatFindings().isEmpty());
+        assertNull(loaded.getMinecraftVersion());
+    }
+
+    @Test
+    public void cacheWithAnUnreadableFindingIsIgnored() throws Exception {
+        Path cache = new File(temporaryFolder.newFolder("compat-corrupt"), "validation.json").toPath();
+        Files.writeString(cache, """
+                {
+                  "schemaVersion": 3,
+                  "contentFingerprint": "content",
+                  "contextFingerprint": "context",
+                  "results": [
+                    {"packName":"overworld","blockingErrors":[],"warnings":[],"validatedAtMillis":1,
+                     "compatFindings":[{"registry":"NOT_A_REGISTRY","key":"minecraft:sulfur","action":"EXCLUDED"}]}
+                  ]
+                }
+                """, StandardCharsets.UTF_8);
+
+        assertTrue(PackValidationCache.load(cache, "content", "context", List.of("overworld")).isEmpty());
+    }
+
+    @Test
     public void corruptCacheIsIgnored() throws Exception {
         Path cache = new File(temporaryFolder.newFolder("corrupt"), "validation.json").toPath();
         Files.writeString(cache, "not-json", StandardCharsets.UTF_8);
@@ -77,7 +130,7 @@ public class PackValidationCacheTest {
         Path cache = new File(temporaryFolder.newFolder("duplicate"), "validation.json").toPath();
         Files.writeString(cache, """
                 {
-                  "schemaVersion": 2,
+                  "schemaVersion": 3,
                   "contentFingerprint": "content",
                   "contextFingerprint": "context",
                   "results": [

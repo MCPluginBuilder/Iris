@@ -518,7 +518,7 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
         IrisRegion region = getRegion(x, z);
 
         for (IrisObjectPlacement i : region.getObjects()) {
-            if (i.getPlace().contains(object)) {
+            if (i.compatPlace(getData()).contains(object)) {
                 return new PlacedObject(i, getData().getObjectLoader().load(object), id, x, z);
             }
         }
@@ -526,7 +526,7 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
         IrisBiome biome = getSurfaceBiome(x, z);
 
         for (IrisObjectPlacement i : biome.getObjects()) {
-            if (i.getPlace().contains(object)) {
+            if (i.compatPlace(getData()).contains(object)) {
                 return new PlacedObject(i, getData().getObjectLoader().load(object), id, x, z);
             }
         }
@@ -542,19 +542,20 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
             return false;
         }
 
+        IrisData data = getData();
         Set<String> biomeKeys = getDimension().getReachableBiomes(this).stream()
-                .filter((i) -> containsObjectPlacement(i.getObjects(), normalizedObjectKey))
+                .filter((i) -> containsObjectPlacement(i.getObjects(), normalizedObjectKey, data))
                 .map(IrisRegistrant::getLoadKey)
                 .collect(Collectors.toSet());
         Set<String> regionKeys = getDimension().getAllRegions(this).stream()
                 .filter((i) -> i.getAllBiomeIds().stream().anyMatch(biomeKeys::contains)
-                        || containsObjectPlacement(i.getObjects(), normalizedObjectKey))
+                        || containsObjectPlacement(i.getObjects(), normalizedObjectKey, data))
                 .map(IrisRegistrant::getLoadKey)
                 .collect(Collectors.toSet());
         return !regionKeys.isEmpty();
     }
 
-    private static boolean containsObjectPlacement(KList<IrisObjectPlacement> placements, String normalizedObjectKey) {
+    private static boolean containsObjectPlacement(KList<IrisObjectPlacement> placements, String normalizedObjectKey, IrisData data) {
         if (placements == null || placements.isEmpty() || normalizedObjectKey.isBlank()) {
             return false;
         }
@@ -564,7 +565,7 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
                 continue;
             }
 
-            for (String placedObject : placement.getPlace()) {
+            for (String placedObject : placement.compatPlace(data)) {
                 String normalizedPlacedObject = normalizeObjectPlacementKey(placedObject);
                 if (!normalizedPlacedObject.isBlank() && normalizedPlacedObject.equals(normalizedObjectKey)) {
                     return true;

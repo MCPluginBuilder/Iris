@@ -18,6 +18,8 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.CompatStatus;
+import art.arcane.iris.core.compat.ContentGate;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.framework.LootResolver;
 import art.arcane.iris.engine.object.annotations.ArrayType;
@@ -101,6 +103,25 @@ public class IrisLootTable extends IrisRegistrant {
         }
 
         return lootf;
+    }
+
+    /**
+     * Cascade: the gate walker drops loot entries whose item is missing on this server. A table with nothing left to
+     * roll leaves every reference pool that could pick it.
+     */
+    @Override
+    public CompatStatus evaluateCompat(ContentGate gate) {
+        return cascadeEmptyLoot(super.evaluateCompat(gate));
+    }
+
+    /** EXCLUDED when the walker dropped every loot entry; the walker's verdict is passed in as {@code base}. */
+    CompatStatus cascadeEmptyLoot(CompatStatus base) {
+        if (base.excluded() || !loot.isEmpty()) {
+            return base;
+        }
+
+        return CompatPools.cascade(getLoader(), base, CompatPools.droppedReasons(base),
+                "loot", getLoadKey(), "no loot entries remain");
     }
 
     @Override

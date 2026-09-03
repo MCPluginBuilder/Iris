@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.pack;
 
+import art.arcane.iris.core.compat.CompatFinding;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -27,15 +29,29 @@ public final class PackValidationResult {
     private final List<String> blockingErrors;
     private final List<String> warnings;
     private final long validatedAtMillis;
+    private final List<CompatFinding> compatFindings;
+    private final String minecraftVersion;
 
+    /** Result without version-content gating data; used where the pack was never loaded through the gate. */
     public PackValidationResult(String packName,
                                 List<String> blockingErrors,
                                 List<String> warnings,
                                 long validatedAtMillis) {
+        this(packName, blockingErrors, warnings, validatedAtMillis, List.of(), null);
+    }
+
+    public PackValidationResult(String packName,
+                                List<String> blockingErrors,
+                                List<String> warnings,
+                                long validatedAtMillis,
+                                List<CompatFinding> compatFindings,
+                                String minecraftVersion) {
         this.packName = packName;
         this.blockingErrors = blockingErrors == null ? new ArrayList<>() : new ArrayList<>(blockingErrors);
         this.warnings = warnings == null ? new ArrayList<>() : new ArrayList<>(warnings);
         this.validatedAtMillis = validatedAtMillis;
+        this.compatFindings = compatFindings == null ? List.of() : List.copyOf(compatFindings);
+        this.minecraftVersion = minecraftVersion;
     }
 
     public String getPackName() {
@@ -56,5 +72,15 @@ public final class PackValidationResult {
 
     public long getValidatedAtMillis() {
         return validatedAtMillis;
+    }
+
+    /** Every version-content gating decision recorded while this pack was validated. */
+    public List<CompatFinding> getCompatFindings() {
+        return compatFindings;
+    }
+
+    /** The raw {@code IrisPlatform.minecraftVersion()} the gate ran against, or null when it did not run. */
+    public String getMinecraftVersion() {
+        return minecraftVersion;
     }
 }

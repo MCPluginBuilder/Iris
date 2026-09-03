@@ -1552,6 +1552,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "显示在当前 Minecraft 版本中无法生成的资源包内容",
+    "iris.director.commandpack.param.pack_folder_name_compat": "要报告的资源包文件夹名称",
+    "iris.bukkit.runtime.commandpack.compat_header": "§e资源包 '{pack}': 内容在 Minecraft {version} 中不可用",
+    "iris.bukkit.runtime.commandpack.compat_none": "§a资源包 '{pack}' 未使用 Minecraft {version} 中缺失的内容。",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7将服务器升级到更新的 Minecraft 以恢复这些内容，或声明回退 (维度的 blockFallbacks、方块的 backup)。",
+    "iris.modded.moddedpackcommands.compat_header": "资源包 '{pack}': 内容在 Minecraft {version} 中不可用",
+    "iris.modded.moddedpackcommands.compat_none": "资源包 '{pack}' 未使用 Minecraft {version} 中缺失的内容。",
+    "iris.modded.moddedpackcommands.compat_remedy": "将服务器升级到更新的 Minecraft 以恢复这些内容，或声明回退 (维度的 blockFallbacks、方块的 backup)。",
+    "iris.modded.help.entry.command.compat_content": "显示在当前 Minecraft 版本中无法生成的内容"
   }
 }

@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.ContentGate;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.object.annotations.ArrayType;
@@ -34,6 +35,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import art.arcane.iris.spi.PlatformBlockState;
 import lombok.experimental.Accessors;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Snippet("object-block-replacer")
 @Accessors(chain = true)
@@ -65,7 +69,7 @@ public class IrisObjectReplace {
             KList<PlatformBlockState> b = new KList<>();
 
             for (IrisBlockData i : find) {
-                PlatformBlockState bx = i.getBlockData(rdata);
+                PlatformBlockState bx = i.getBlockDataOrPlaceholder(rdata);
 
                 if (bx != null) {
                     b.add(bx);
@@ -78,5 +82,90 @@ public class IrisObjectReplace {
 
     public PlatformBlockState getReplace(RNG seed, double x, double y, double z, IrisData rdata) {
         return getReplace().get(seed, x, y, z, rdata);
+    }
+
+    /**
+     * Key-level mirror of the runtime find match, for the version-content gate: it has to decide whether a palette
+     * key the server does not have is rewritten by this rule, and a missing key has no resolved state to compare.
+     * Non-exact compares the base block; exact requires every property named by the find entry to match, the same
+     * partial-match contract {@code PlatformBlockState.matches} uses at runtime.
+     */
+    public boolean matchesState(String stateKey) {
+        String state = ContentGate.normalizeState(stateKey);
+
+        if (state == null) {
+            return false;
+        }
+
+        String stateBase = ContentGate.baseKey(state);
+
+        for (IrisBlockData f : find) {
+            if (f == null) {
+                continue;
+            }
+
+            String findState = ContentGate.normalizeState(declaredState(f));
+
+            if (findState == null || !ContentGate.baseKey(findState).equals(stateBase)) {
+                continue;
+            }
+
+            if (!exact || propertiesMatch(findState, state)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** The find entry as one state string; {@code block} already carrying properties wins over the data map. */
+    private static String declaredState(IrisBlockData block) {
+        String declared = block.getBlock();
+
+        if (declared == null) {
+            return null;
+        }
+
+        return declared.indexOf('[') < 0 ? declared + block.computeProperties() : declared;
+    }
+
+    /** Every property the find side names must be present with the same value on the candidate state. */
+    private static boolean propertiesMatch(String findState, String candidateState) {
+        Map<String, String> required = properties(findState);
+
+        if (required.isEmpty()) {
+            return true;
+        }
+
+        Map<String, String> candidate = properties(candidateState);
+
+        for (Map.Entry<String, String> entry : required.entrySet()) {
+            if (!entry.getValue().equals(candidate.get(entry.getKey()))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static Map<String, String> properties(String state) {
+        int open = state.indexOf('[');
+        int close = state.lastIndexOf(']');
+
+        if (open < 0 || close < open) {
+            return Map.of();
+        }
+
+        Map<String, String> properties = new LinkedHashMap<>();
+
+        for (String part : state.substring(open + 1, close).split(",")) {
+            int split = part.indexOf('=');
+
+            if (split > 0) {
+                properties.put(part.substring(0, split).trim(), part.substring(split + 1).trim());
+            }
+        }
+
+        return properties;
     }
 }

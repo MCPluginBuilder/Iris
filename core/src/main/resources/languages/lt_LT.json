@@ -1552,6 +1552,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "Rodyti paketo turinį, kurio negalima sugeneruoti šioje Minecraft versijoje",
+    "iris.director.commandpack.param.pack_folder_name_compat": "Paketo aplanko pavadinimas ataskaitai",
+    "iris.bukkit.runtime.commandpack.compat_header": "§ePaketas '{pack}': turinys nepasiekiamas Minecraft {version}",
+    "iris.bukkit.runtime.commandpack.compat_none": "§aPaketas '{pack}' nenaudoja turinio, kurio trūksta Minecraft {version}.",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7Atnaujinkite serverį į naujesnį Minecraft, kad atkurtumėte šį turinį, arba paskelbkite atsargas (dimensijos blockFallbacks, bloko backup).",
+    "iris.modded.moddedpackcommands.compat_header": "Paketas '{pack}': turinys nepasiekiamas Minecraft {version}",
+    "iris.modded.moddedpackcommands.compat_none": "Paketas '{pack}' nenaudoja turinio, kurio trūksta Minecraft {version}.",
+    "iris.modded.moddedpackcommands.compat_remedy": "Atnaujinkite serverį į naujesnį Minecraft, kad atkurtumėte šį turinį, arba paskelbkite atsargas (dimensijos blockFallbacks, bloko backup).",
+    "iris.modded.help.entry.command.compat_content": "Rodyti turinį, kurio negalima sugeneruoti šioje Minecraft versijoje"
   }
 }

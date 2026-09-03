@@ -47,6 +47,10 @@ public final class IrisStaticObjectLayer {
             try {
                 Objects.requireNonNull(entry, "entry must not be null");
                 entry.validate(dimension.getMinHeight(), dimension.getMaxHeight());
+                if (entry.evaluateCompat(data, dimension.getLoadKey(), index).excluded()) {
+                    // The pack report already names the entry; the rest of the layer compiles as authored.
+                    continue;
+                }
                 IrisObject object = data.getObjectLoader().load(entry.getObject());
                 if (object == null) {
                     throw new IllegalArgumentException("Object '" + entry.getObject() + "' could not be loaded");

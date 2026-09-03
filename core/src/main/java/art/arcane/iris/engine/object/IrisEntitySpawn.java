@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.engine.data.cache.AtomicCache;
@@ -147,7 +148,17 @@ public class IrisEntitySpawn implements IRare {
     }
 
     public IrisEntity getRealEntity(Engine g) {
-        return ent.aquire(() -> g.getData().getEntityLoader().load(getEntity()));
+        return ent.aquire(() -> resolveEntity(g.getData()));
+    }
+
+    /** The referenced entity, or null when it does not load or the version-content gate excluded it. */
+    IrisEntity resolveEntity(IrisData data) {
+        if (data == null || data.getEntityLoader() == null) {
+            return null;
+        }
+
+        IrisEntity entity = data.getEntityLoader().load(getEntity());
+        return entity == null || entity.isCompatExcluded() ? null : entity;
     }
 
     public Entity spawn(Engine g, Location at) {

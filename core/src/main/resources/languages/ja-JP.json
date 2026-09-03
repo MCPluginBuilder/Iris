@@ -1552,6 +1552,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "この Minecraft バージョンでは生成できないパック内容を表示します",
+    "iris.director.commandpack.param.pack_folder_name_compat": "対象とするパックフォルダー名",
+    "iris.bukkit.runtime.commandpack.compat_header": "§eパック '{pack}': Minecraft {version} では利用できない内容があります",
+    "iris.bukkit.runtime.commandpack.compat_none": "§aパック '{pack}' に Minecraft {version} で欠けている内容はありません。",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7この内容を復元するにはサーバーを新しい Minecraft に更新するか、代替を宣言してください (ディメンションの blockFallbacks、ブロックの backup)。",
+    "iris.modded.moddedpackcommands.compat_header": "パック '{pack}': Minecraft {version} では利用できない内容があります",
+    "iris.modded.moddedpackcommands.compat_none": "パック '{pack}' に Minecraft {version} で欠けている内容はありません。",
+    "iris.modded.moddedpackcommands.compat_remedy": "この内容を復元するにはサーバーを新しい Minecraft に更新するか、代替を宣言してください (ディメンションの blockFallbacks、ブロックの backup)。",
+    "iris.modded.help.entry.command.compat_content": "この Minecraft バージョンでは生成できない内容を表示します"
   }
 }

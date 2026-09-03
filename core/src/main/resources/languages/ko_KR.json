@@ -1552,6 +1552,15 @@
     "iris.desktop.imagemap.preview_status": "X {x}  Z {z}  |  {value}  |  {scale} blocks/pixel",
     "iris.bukkit.commandstudio.opening_image_map_studio": "§aOpening the Image Map Studio.",
     "iris.modded.moddedstudiocommands.image_map_requires_iris_dimension": "Stand in an active Iris or Studio dimension before opening the Image Map Studio.",
-    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display."
+    "iris.modded.moddedstudiocommands.opening_image_map_studio_on_server_display": "Opening the Image Map Studio for {value} on the server display.",
+    "iris.director.commandpack.director.show_content_cannot_generate_this_minecraft_version": "이 Minecraft 버전에서 생성할 수 없는 팩 콘텐츠를 표시합니다",
+    "iris.director.commandpack.param.pack_folder_name_compat": "보고할 팩 폴더 이름",
+    "iris.bukkit.runtime.commandpack.compat_header": "§e팩 '{pack}': Minecraft {version} 에서 사용할 수 없는 콘텐츠",
+    "iris.bukkit.runtime.commandpack.compat_none": "§a팩 '{pack}' 은 Minecraft {version} 에 없는 콘텐츠를 사용하지 않습니다.",
+    "iris.bukkit.runtime.commandpack.compat_remedy": "§7이 콘텐츠를 복원하려면 서버를 최신 Minecraft 로 업데이트하거나 대체를 선언하세요 (차원의 blockFallbacks, 블록의 backup).",
+    "iris.modded.moddedpackcommands.compat_header": "팩 '{pack}': Minecraft {version} 에서 사용할 수 없는 콘텐츠",
+    "iris.modded.moddedpackcommands.compat_none": "팩 '{pack}' 은 Minecraft {version} 에 없는 콘텐츠를 사용하지 않습니다.",
+    "iris.modded.moddedpackcommands.compat_remedy": "이 콘텐츠를 복원하려면 서버를 최신 Minecraft 로 업데이트하거나 대체를 선언하세요 (차원의 blockFallbacks, 블록의 backup).",
+    "iris.modded.help.entry.command.compat_content": "이 Minecraft 버전에서 생성할 수 없는 콘텐츠를 표시합니다"
   }
 }
