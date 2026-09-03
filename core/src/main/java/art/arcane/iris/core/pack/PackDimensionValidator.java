@@ -49,6 +49,7 @@ final class PackDimensionValidator {
             validateImportedStructurePolicy(dimensionKey, dimJson, blockingErrors, warnings);
             validateDimensionHeights(packFolder, dimensionKey, dimJson, blockingErrors);
             validateWorldBoundary(dimensionKey, dimJson, blockingErrors);
+            validateStaticObjects(packFolder, dimensionKey, dimJson, blockingErrors);
 
             JSONArray regionsArray = dimJson.optJSONArray("regions");
             if (regionsArray == null || regionsArray.length() == 0) {
@@ -91,6 +92,17 @@ final class PackDimensionValidator {
                 blockingErrors.add("Dimension '" + dimensionKey + "' has no resolvable regions.");
             }
         }
+    }
+
+    static void validateStaticObjects(File packFolder, String dimensionKey, JSONObject dimension,
+                                      List<String> blockingErrors) {
+        if (!dimension.has("staticObjects")) {
+            return;
+        }
+        JSONObject height = resolveDimensionHeight(packFolder, dimension);
+        int minY = height == null ? -64 : (int) height.optDouble("min", 16D);
+        int maxY = height == null ? 320 : (int) height.optDouble("max", 32D);
+        PackStaticObjectValidator.validate(packFolder, dimensionKey, dimension, minY, maxY, blockingErrors);
     }
 
     static void validateImportedStructurePolicy(String dimensionKey, JSONObject dimension,

@@ -24,10 +24,12 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.project.SchemaBuilder;
+import art.arcane.iris.core.pack.PackValidator;
 import art.arcane.iris.engine.framework.PreservationRegistry;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.MeteredCache;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.volmlib.util.data.KCache;
@@ -415,6 +417,9 @@ public class ResourceLoader<T extends IrisRegistrant> implements MeteredCache {
             rawText = IO.readAll(j);
             JSONObject parsed = new JSONObject(rawText);
             JsonSchemaValidator.validateTopLevelKeys(parsed, rawText, j, resourceTypeName, objectClass);
+            if (objectClass == IrisDimension.class) {
+                PackValidator.requireValidStaticObjects(manager.getDataFolder(), name, parsed);
+            }
             T t = getManager().getGson()
                     .fromJson(preprocess(parsed).toString(0), objectClass);
             t.setLoadKey(name);

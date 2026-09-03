@@ -2,6 +2,7 @@ package art.arcane.iris.core.pack;
 
 import art.arcane.iris.engine.object.IrisObjectMarker;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
+import art.arcane.iris.engine.object.IrisStaticObject;
 import art.arcane.volmlib.util.collection.KList;
 import org.junit.Test;
 
@@ -49,6 +50,19 @@ public class PackExportClosureTest {
         assertTrue(PackExportClosure.collectObjectKeys(placements).isEmpty());
     }
 
+    @Test
+    public void collectsStaticObjectKeysWithoutDuplicates() {
+        KList<IrisStaticObject> placements = new KList<>();
+        placements.add(new IrisStaticObject().setObject("landmarks/tower"));
+        placements.add(new IrisStaticObject().setObject("landmarks/tower"));
+        placements.add(new IrisStaticObject().setObject("landmarks/bridge"));
+        placements.add(new IrisStaticObject().setObject(""));
+        placements.add((IrisStaticObject) null);
+
+        assertEquals(List.of("landmarks/bridge", "landmarks/tower"),
+                PackExportClosure.collectStaticObjectKeys(placements).stream().sorted().toList());
+    }
+
     /**
      * Source guard: both packagers must export the ambient-spawning graph. Spawner and marker
      * folders were silently omitted from exports, leaving dangling entitySpawners references.
@@ -61,6 +75,9 @@ public class PackExportClosureTest {
         assertTrue("Bukkit packager must write markers/", bukkit.contains("\"markers/\""));
         assertTrue("Bukkit packager must export region objects alongside biome objects",
                 bukkit.contains("regions.forEach((r) -> allPlacements.addAll(r.getObjects()))"));
+        assertTrue("Bukkit packager must export static objects", bukkit.contains("dimension.getStaticObjects()"));
+        assertTrue("Bukkit obfuscation must rewrite static object references",
+                bukkit.contains("placement.setObject(renameObjects.get(placement.getObject()))"));
         assertTrue("Bukkit packager must export entity loot tables", bukkit.contains("getLoot().getTables()"));
         int bukkitValidation = bukkit.indexOf("PackValidator.validateForPackaging(project.getPath())");
         assertTrue("Bukkit packager must validate before opening or mutating package state",
@@ -74,6 +91,8 @@ public class PackExportClosureTest {
         assertTrue("modded packager must write markers/", modded.contains("\"markers\""));
         assertTrue("modded packager must include initial spawns", modded.contains("getInitialSpawns"));
         assertTrue("modded packager must export region objects", modded.contains("region.getObjects()"));
+        assertTrue("modded packager must export static objects",
+                modded.contains("PackExportClosure.collectStaticObjectKeys(dimension.getStaticObjects())"));
         int moddedValidation = modded.indexOf("PackValidator.validateForPackaging(packFolder)");
         assertTrue("modded packager must validate before mutating package state",
                 moddedValidation >= 0 && moddedValidation < modded.indexOf("IO.delete(folder)"));

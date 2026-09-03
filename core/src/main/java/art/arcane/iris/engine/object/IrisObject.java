@@ -304,6 +304,10 @@ public class IrisObject extends IrisRegistrant {
         return IrisObjectTransforms.scaled(this, scale, interpolation);
     }
 
+    public IrisObject scaledAroundOrigin(double scale, IrisObjectPlacementScaleInterpolator interpolation) {
+        return IrisObjectTransforms.scaledAroundOrigin(this, scale, interpolation);
+    }
+
     public void place(Location at) {
         readLock.lock();
         try {

@@ -20,6 +20,7 @@ package art.arcane.iris.core.pack;
 
 import art.arcane.iris.engine.object.IrisObjectMarker;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
+import art.arcane.iris.engine.object.IrisStaticObject;
 import art.arcane.volmlib.util.collection.KSet;
 
 /**
@@ -65,6 +66,19 @@ public final class PackExportClosure {
                     continue;
                 }
                 objectKeys.add(key);
+            }
+        }
+        return objectKeys;
+    }
+
+    public static KSet<String> collectStaticObjectKeys(Iterable<IrisStaticObject> placements) {
+        KSet<String> objectKeys = new KSet<>();
+        if (placements == null) {
+            return objectKeys;
+        }
+        for (IrisStaticObject placement : placements) {
+            if (placement != null && placement.getObject() != null && !placement.getObject().isBlank()) {
+                objectKeys.add(placement.getObject());
             }
         }
         return objectKeys;

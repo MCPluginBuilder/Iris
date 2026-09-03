@@ -21,14 +21,19 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.common.data.VectorMap;
+import art.arcane.iris.util.common.math.AxisAlignedBB;
 import art.arcane.iris.util.common.math.IrisBlockVector;
 import art.arcane.iris.util.common.math.IrisVector;
+import art.arcane.iris.util.common.math.Vector3i;
 import art.arcane.iris.util.project.interpolation.Interpolation3D;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * Geometric transforms for {@link IrisObject}: rotation, scaling and the interpolated upscalers.
@@ -69,18 +74,33 @@ final class IrisObjectTransforms {
     }
 
     static IrisObject scaled(IrisObject self, double scale, IrisObjectPlacementScaleInterpolator interpolation) {
+        return scaled(self, scale, interpolation, ScaleOrigin.DEFAULT);
+    }
+
+    static IrisObject scaledAroundOrigin(IrisObject self, double scale, IrisObjectPlacementScaleInterpolator interpolation) {
+        if (!Double.isFinite(scale) || scale <= 0 || scale > 50) {
+            throw new IllegalArgumentException("Object scale must be finite, greater than zero, and at most 50");
+        }
+        return scaled(self, scale, interpolation, ScaleOrigin.SAVED);
+    }
+
+    private static IrisObject scaled(IrisObject self, double scale, IrisObjectPlacementScaleInterpolator interpolation,
+                                     ScaleOrigin origin) {
         if (interpolation == null) {
             interpolation = IrisObjectPlacementScaleInterpolator.NONE;
         }
+        boolean savedOrigin = origin == ScaleOrigin.SAVED;
         IrisVector sm1 = new IrisVector(scale - 1, scale - 1, scale - 1);
         scale = Math.max(0.001, Math.min(50, scale));
-        if (scale < 1) {
+        if (!savedOrigin && scale < 1) {
             scale = scale - 0.0001;
         }
 
         IrisPosition l1 = self.getAABB().max();
         IrisPosition l2 = self.getAABB().min();
         VectorMap<PlatformBlockState> placeBlock = new VectorMap<>();
+        VectorMap<TileData> placeTile = new VectorMap<>();
+        VectorMap<IrisBlockVector> placeMax = savedOrigin && scale > 1 ? new VectorMap<>() : null;
 
         IrisVector center = new IrisVector(self.getCenter().getX(), self.getCenter().getY(), self.getCenter().getZ());
         if (self.getH() == 2) {
@@ -93,33 +113,72 @@ final class IrisObjectTransforms {
             center = center.setZ(center.getBlockZ() + 0.5);
         }
 
-        IrisObject oo = new IrisObject((int) Math.ceil((self.w * scale) + (scale * 2)), (int) Math.ceil((self.h * scale) + (scale * 2)), (int) Math.ceil((self.d * scale) + (scale * 2)));
+        IrisObject oo = savedOrigin ? createOriginScaledObject(self, scale)
+                : new IrisObject((int) Math.ceil((self.w * scale) + (scale * 2)), (int) Math.ceil((self.h * scale) + (scale * 2)), (int) Math.ceil((self.d * scale) + (scale * 2)));
         oo.setLoadKey(self.getLoadKey());
         oo.setLoader(self.getLoader());
         oo.setLoadFile(self.getLoadFile());
 
+        boolean hasTiles;
         self.readLock.lock();
         try {
-            for (var entry : self.blocks) {
+            hasTiles = !self.states.isEmpty();
+            for (Map.Entry<IrisBlockVector, PlatformBlockState> entry : self.blocks) {
                 PlatformBlockState bd = entry.getValue();
-                placeBlock.put(entry.getKey().clone().add(IrisObject.HALF).subtract(center)
-                        .multiply(scale).add(sm1).toBlockVector(), bd);
+                IrisBlockVector sourcePosition = entry.getKey();
+                IrisBlockVector position = savedOrigin
+                        ? scaledMinimum(sourcePosition, scale)
+                        : sourcePosition.clone().add(IrisObject.HALF).subtract(center)
+                                .multiply(scale).add(sm1).toBlockVector();
+                placeBlock.put(position, bd);
+                if (placeMax != null) {
+                    placeMax.put(position, scaledMaximum(sourcePosition, scale));
+                }
+                if (hasTiles) {
+                    TileData tile = self.states.get(entry.getKey());
+                    if (tile == null) {
+                        placeTile.remove(position);
+                    } else {
+                        placeTile.put(position, tile);
+                    }
+                }
             }
         } finally {
             self.readLock.unlock();
         }
 
-        for (var entry : placeBlock) {
+        for (Map.Entry<IrisBlockVector, PlatformBlockState> entry : placeBlock) {
             IrisBlockVector v = entry.getKey();
+            TileData tile = hasTiles ? placeTile.get(v) : null;
             if (scale > 1) {
-                for (IrisBlockVector vec : IrisObjectShaping.blocksBetweenTwoPoints(v.clone().add(center), v.clone().add(center).add(sm1))) {
+                IrisVector minimum = savedOrigin ? v : v.clone().add(center);
+                IrisVector maximum = savedOrigin ? placeMax.get(v) : v.clone().add(center).add(sm1);
+                for (IrisBlockVector vec : IrisObjectShaping.blocksBetweenTwoPoints(minimum, maximum)) {
                     oo.blocks.put(vec, entry.getValue());
+                    if (hasTiles) {
+                        if (tile == null) {
+                            oo.states.remove(vec);
+                        } else {
+                            oo.states.put(vec, tile.clone());
+                        }
+                    }
                 }
             } else {
-                oo.setUnsigned(v.getBlockX(), v.getBlockY(), v.getBlockZ(), entry.getValue());
+                IrisBlockVector position = savedOrigin
+                        ? v
+                        : oo.getSigned(v.getBlockX(), v.getBlockY(), v.getBlockZ());
+                oo.blocks.put(position, entry.getValue());
+                if (hasTiles) {
+                    if (tile == null) {
+                        oo.states.remove(position);
+                    } else {
+                        oo.states.put(position, tile.clone());
+                    }
+                }
             }
         }
 
+        VectorMap<PlatformBlockState> scaledBlocks = oo.blocks;
         if (scale > 1) {
             switch (interpolation) {
                 case TRILINEAR -> trilinear(oo, (int) Math.round(scale));
@@ -128,7 +187,57 @@ final class IrisObjectTransforms {
             }
         }
 
+        removeInapplicableTiles(oo, scaledBlocks);
         return oo;
+    }
+
+    private static IrisObject createOriginScaledObject(IrisObject source, double scale) {
+        IrisBlockVector minimum = scaledMinimum(new IrisBlockVector(
+                -source.getCenter().getX(), -source.getCenter().getY(), -source.getCenter().getZ()), scale);
+        IrisBlockVector maximum = scaledMaximum(new IrisBlockVector(
+                source.getW() - source.getCenter().getX() - 1,
+                source.getH() - source.getCenter().getY() - 1,
+                source.getD() - source.getCenter().getZ() - 1), scale);
+        IrisObject object = new IrisObject(
+                maximum.getBlockX() - minimum.getBlockX() + 1,
+                maximum.getBlockY() - minimum.getBlockY() + 1,
+                maximum.getBlockZ() - minimum.getBlockZ() + 1);
+        object.setCenter(new Vector3i(-minimum.getBlockX(), -minimum.getBlockY(), -minimum.getBlockZ()));
+        object.aabb.aquire(() -> new AxisAlignedBB(
+                new IrisPosition(minimum.getBlockX(), minimum.getBlockY(), minimum.getBlockZ()),
+                new IrisPosition(maximum.getBlockX(), maximum.getBlockY(), maximum.getBlockZ())));
+        return object;
+    }
+
+    private static IrisBlockVector scaledMinimum(IrisBlockVector position, double scale) {
+        return new IrisBlockVector(Math.floor(position.getX() * scale),
+                Math.floor(position.getY() * scale), Math.floor(position.getZ() * scale));
+    }
+
+    private static IrisBlockVector scaledMaximum(IrisBlockVector position, double scale) {
+        return new IrisBlockVector(Math.ceil((position.getX() + 1) * scale) - 1,
+                Math.ceil((position.getY() + 1) * scale) - 1,
+                Math.ceil((position.getZ() + 1) * scale) - 1);
+    }
+
+    private static void removeInapplicableTiles(IrisObject object, VectorMap<PlatformBlockState> sourceBlocks) {
+        Iterator<Map.Entry<IrisBlockVector, TileData>> iterator = object.states.iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<IrisBlockVector, TileData> entry = iterator.next();
+            PlatformBlockState block = object.blocks.get(entry.getKey());
+            String tileKey = entry.getValue().getMaterialKey();
+            if (tileKey == null) {
+                tileKey = IrisObjectShaping.materialKey(sourceBlocks.get(entry.getKey()));
+            } else {
+                tileKey = tileKey.toLowerCase(Locale.ROOT);
+                if (tileKey.indexOf(':') < 0) {
+                    tileKey = "minecraft:" + tileKey;
+                }
+            }
+            if (block == null || !tileKey.equals(IrisObjectShaping.materialKey(block))) {
+                iterator.remove();
+            }
+        }
     }
 
     static void trilinear(IrisObject self, int rad) {
@@ -365,5 +474,10 @@ final class IrisObjectTransforms {
     }
 
     private record NearestBlock(int x, int y, int z, int rank, PlatformBlockState state) {
+    }
+
+    private enum ScaleOrigin {
+        DEFAULT,
+        SAVED
     }
 }

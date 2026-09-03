@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.pack;
 
+import art.arcane.volmlib.util.json.JSONObject;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -54,6 +56,14 @@ public final class PackValidator {
 
     public static PackValidationResult validateForPackaging(File packFolder) {
         return validate(packFolder, false);
+    }
+
+    public static void requireValidStaticObjects(File packFolder, String dimensionKey, JSONObject dimension) {
+        List<String> errors = new ArrayList<>();
+        PackDimensionValidator.validateStaticObjects(packFolder, dimensionKey, dimension, errors);
+        if (!errors.isEmpty()) {
+            throw new IllegalArgumentException(String.join("; ", errors));
+        }
     }
 
     private static PackValidationResult validate(File packFolder, boolean validateLiveRegistries) {

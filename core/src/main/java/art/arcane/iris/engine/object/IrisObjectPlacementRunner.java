@@ -514,7 +514,8 @@ final class IrisObjectPlacementRunner {
                                 if (j.isExact() ? k.matches(data) : IrisObjectShaping.materialKey(k).equals(IrisObjectShaping.materialKey(data))) {
                                     PlatformBlockState newData = j.getReplace(rng, i.getX() + x, i.getY() + y, i.getZ() + z, rdata);
 
-                                    if (IrisObjectShaping.materialKey(newData).equals(IrisObjectShaping.materialKey(data)) && !(newData.isCustom() || data.isCustom()))
+                                    boolean sameMaterial = IrisObjectShaping.materialKey(newData).equals(IrisObjectShaping.materialKey(data));
+                                    if (sameMaterial && !(newData.isCustom() || data.isCustom()))
                                         data = BlockDataMergeSupport.merge(data, newData);
                                     else
                                         data = newData;
@@ -522,6 +523,8 @@ final class IrisObjectPlacementRunner {
                                     Optional<TileData> t = j.getReplace().getTile(rng, x, y, z, rdata);
                                     if (t.isPresent()) {
                                         tile = t.get();
+                                    } else if (!sameMaterial) {
+                                        tile = null;
                                     }
                                 }
                             }
@@ -552,13 +555,13 @@ final class IrisObjectPlacementRunner {
                     data = data.withProperty("waterlogged", "true");
                 }
 
-                if (B.isVineBlock(data)) {
+                if (!rawStructurePiece && B.isVineBlock(data)) {
                     data = attachVineFaces(placer, data, xx, yy, zz);
                 }
 
                 // Short-circuit order matters for cost only: the mantle read is paid solely
                 // for vine blocks. Both operands are pure, so the value is unchanged.
-                boolean wouldReplace = B.isVineBlock(data) && B.isSolid(placer.get(xx, yy, zz));
+                boolean wouldReplace = !rawStructurePiece && B.isVineBlock(data) && B.isSolid(placer.get(xx, yy, zz));
                 String material = IrisObjectShaping.materialKey(data);
                 boolean air = material.equals("minecraft:air") || material.equals("minecraft:cave_air");
                 boolean place = shouldPlaceObjectBlock(rawStructurePiece, air, wouldReplace);

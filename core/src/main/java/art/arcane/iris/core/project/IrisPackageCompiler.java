@@ -35,6 +35,7 @@ import art.arcane.iris.engine.object.IrisLootTable;
 import art.arcane.iris.core.pack.PackExportClosure;
 import art.arcane.iris.engine.object.IrisMarker;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
+import art.arcane.iris.engine.object.IrisStaticObject;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.object.IrisSpawner;
 import art.arcane.iris.engine.object.IrisStructurePlacement;
@@ -132,6 +133,9 @@ public class IrisPackageCompiler {
         KList<IrisObjectPlacement> allPlacements = new KList<>();
         regions.forEach((r) -> allPlacements.addAll(r.getObjects()));
         biomes.forEach((i) -> allPlacements.addAll(i.getObjects()));
+        for (IrisStaticObject placement : dimension.getStaticObjects()) {
+            allPlacements.add(placement.toPlacement());
+        }
         KSet<IrisMarker> markers = new KSet<>();
         for (String markerKey : PackExportClosure.collectMarkerKeys(allPlacements)) {
             IrisMarker marker = dm.getMarkerLoader().load(markerKey);
@@ -170,6 +174,10 @@ public class IrisPackageCompiler {
             }
 
             j.setPlace(newNames);
+        }
+
+        for (IrisStaticObject placement : dimension.getStaticObjects()) {
+            placement.setObject(renameObjects.get(placement.getObject()));
         }
 
         KMap<String, KList<String>> lookupObjects = renameObjects.flip();

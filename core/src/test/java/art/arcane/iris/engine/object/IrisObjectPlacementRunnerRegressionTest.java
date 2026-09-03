@@ -7,6 +7,8 @@ import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformRegistries;
+import art.arcane.volmlib.util.collection.KList;
+import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.RNG;
 import org.junit.After;
 import org.junit.Before;
@@ -16,14 +18,18 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -188,6 +194,52 @@ public class IrisObjectPlacementRunnerRegressionTest {
         assertEquals("Object placement data is required.", error.getMessage());
     }
 
+    @Test
+    public void rawPlacementPreservesVineFacesAndReplacesSolidDestination() {
+        RecordingPlacer placer = new RecordingPlacer(null);
+        placer.set(0, ANCHOR_Y, 0, solid);
+        placer.set(1, ANCHOR_Y, 0, solid);
+        PlatformBlockState vine = state("minecraft:vine[east=false,north=true]", false);
+        when(vine.isVineBlock()).thenReturn(true);
+        IrisObject object = new IrisObject(1, 1, 1);
+        object.setUnsigned(0, 0, 0, vine);
+        IrisObjectPlacement placement = placement();
+        placement.setMode(ObjectPlaceMode.STRUCTURE_PIECE);
+        placement.setRotation(IrisObjectRotation.of(0, 0, 0));
+
+        object.place(0, ANCHOR_Y, 0, placer, placement, new RNG(2L), data);
+
+        assertSame(vine, placer.get(0, ANCHOR_Y, 0));
+        verify(vine, never()).withProperty(anyString(), anyString());
+    }
+
+    @Test
+    public void changingMaterialWithAnEditClearsOriginalTileData() {
+        RecordingPlacer placer = new RecordingPlacer(null);
+        PlatformBlockState chest = state("minecraft:chest", true);
+        IrisObject object = new IrisObject(1, 1, 1);
+        object.setUnsigned(0, 0, 0, chest);
+        object.setUnsignedTile(0, 0, 0, new TileData("minecraft:chest", new KMap<>()));
+        IrisObjectReplace edit = mock(IrisObjectReplace.class);
+        IrisMaterialPalette palette = mock(IrisMaterialPalette.class);
+        when(edit.getChance()).thenReturn(1F);
+        when(edit.getFind(data)).thenReturn(new KList<>(chest));
+        when(edit.getReplace(any(RNG.class), anyDouble(), anyDouble(), anyDouble(), any(IrisData.class)))
+                .thenReturn(solid);
+        when(edit.getReplace()).thenReturn(palette);
+        when(palette.getTile(any(RNG.class), anyDouble(), anyDouble(), anyDouble(), any(IrisData.class)))
+                .thenReturn(Optional.empty());
+        IrisObjectPlacement placement = placement();
+        placement.setMode(ObjectPlaceMode.STRUCTURE_PIECE);
+        placement.getEdit().add(edit);
+
+        object.place(0, ANCHOR_Y, 0, placer, placement, new RNG(2L), data);
+
+        assertSame(solid, placer.get(0, ANCHOR_Y, 0));
+        assertNull(placer.getData(0, ANCHOR_Y, 0, TileData.class));
+        assertEquals(1, object.getStates().size());
+    }
+
     private IrisObjectPlacement placement() {
         IrisObjectPlacement placement = new IrisObjectPlacement();
         placement.setMode(ObjectPlaceMode.CENTER_HEIGHT);
@@ -322,6 +374,7 @@ public class IrisObjectPlacementRunnerRegressionTest {
 
         @Override
         public void setTile(int x, int y, int z, TileData tile) {
+            setData(x, y, z, tile);
         }
 
         @Override

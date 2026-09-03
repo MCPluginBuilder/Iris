@@ -841,7 +841,7 @@ public class SchemaBuilder {
         anyOf.put("anyOf", arr);
         anyOf.put("description", prop.getString("description"));
         anyOf.put("x-intellij-html-description", prop.getString("x-intellij-html-description"));
-        anyOf.put("!required", type.isAnnotationPresent(Required.class));
+        anyOf.put("!required", Boolean.TRUE.equals(prop.remove("!required")) || type.isAnnotationPresent(Required.class));
 
         return anyOf;
     }

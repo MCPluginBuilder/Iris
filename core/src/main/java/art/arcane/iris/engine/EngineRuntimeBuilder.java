@@ -35,6 +35,7 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionMode;
 import art.arcane.iris.engine.object.IrisDimensionModeType;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
+import art.arcane.iris.engine.object.IrisStaticObjectLayer;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.util.project.context.IrisContext;
@@ -87,6 +88,9 @@ final class EngineRuntimeBuilder {
             IrisLogging.debug("[IrisEngine timing] mantle.hotload=" + (M.ms() - started) + "ms");
             started = M.ms();
             assembly.mode = createMode();
+            IrisStaticObjectLayer staticObjects = engine.getDimension().getStaticObjectLayer(engine.getData());
+            assembly.mode.registerStage((x, z, blocks, biomes, multicore, context) ->
+                    staticObjects.apply(engine, x, z, blocks));
             IrisLogging.debug("[IrisEngine timing] setupMode=" + (M.ms() - started) + "ms");
             started = M.ms();
             assembly.worldManager = IrisServices.get(EngineWorldManagerProvider.class).create(engine);

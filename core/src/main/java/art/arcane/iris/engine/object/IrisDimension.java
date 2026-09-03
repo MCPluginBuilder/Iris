@@ -80,6 +80,7 @@ public class IrisDimension extends IrisRegistrant {
     private static final Pattern RESOURCE_KEY_PATTERN = Pattern.compile("[a-z0-9_.-]+:[a-z0-9/._-]+");
 
     private final transient AtomicCache<Position2> parallaxSize = new AtomicCache<>();
+    private final transient AtomicCache<IrisStaticObjectLayer> staticObjectLayer = new AtomicCache<>();
     private final transient AtomicCache<CNG> rockLayerGenerator = new AtomicCache<>();
     private final transient AtomicCache<CNG> fluidLayerGenerator = new AtomicCache<>();
     private final transient AtomicCache<CNG> coordFracture = new AtomicCache<>();
@@ -196,6 +197,9 @@ public class IrisDimension extends IrisRegistrant {
     @ArrayType(type = IrisImageMapBinding.class)
     @Desc("Bind reusable image-map resources to typed world-generation inputs")
     private KList<IrisImageMapBinding> imageMaps = new KList<>();
+    @ArrayType(type = IrisStaticObject.class)
+    @Desc("Static objects placed at absolute world coordinates in newly generated chunks. Each entry transforms its own copy; later entries win where objects overlap. Reloading does not rewrite existing chunks or repair player edits.")
+    private KList<IrisStaticObject> staticObjects = new KList<>();
     @Desc("When true, sets the dimension's ambient light to maximum, making all blocks fully lit regardless of light level.")
     private boolean fullbright = false;
     @RegistryListResource(IrisDimension.class)
@@ -297,6 +301,16 @@ public class IrisDimension extends IrisRegistrant {
 
     public int getMinHeight() {
         return (int) getDimensionHeight().getMin();
+    }
+
+    public IrisStaticObjectLayer getStaticObjectLayer(IrisData data) {
+        return staticObjectLayer.aquire(() -> IrisStaticObjectLayer.compile(this, data));
+    }
+
+    public IrisDimension setStaticObjects(KList<IrisStaticObject> staticObjects) {
+        this.staticObjects = staticObjects;
+        staticObjectLayer.reset();
+        return this;
     }
 
     public Map<String, IrisDimensionCarvingEntry> getCarvingEntryIndex() {
