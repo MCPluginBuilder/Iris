@@ -333,7 +333,19 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default IrisBiome getSurfaceBiome(int x, int z) {
+        if (answersFromNaturalTerrain(x, z)) {
+            return getComplex().naturalSurfaceBiome(x, z);
+        }
         return getComplex().getTrueBiomeStream().get(x, z);
+    }
+
+    /**
+     * The server thread must never wait for a cold hydrology plan, so a height or biome query from it
+     * on a column whose tiles are not planned yet is answered from natural terrain (the tiles are
+     * requested from the planning pool meanwhile). Generation threads always wait for the real plan.
+     */
+    default boolean answersFromNaturalTerrain(int x, int z) {
+        return getPlatformHooks().isMainThread() && !getComplex().isHydrologyPlanned(x, z);
     }
 
     @BlockCoordinates
@@ -343,6 +355,10 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default int getHeight(int x, int z, boolean ignoreFluid) {
+        if (answersFromNaturalTerrain(x, z)) {
+            int natural = getComplex().naturalTrueHeight(x, z);
+            return ignoreFluid ? natural : Math.max(natural, getMantle().getFluidHeight());
+        }
         return getMantle().getHighest(x, z, getData(), ignoreFluid);
     }
 

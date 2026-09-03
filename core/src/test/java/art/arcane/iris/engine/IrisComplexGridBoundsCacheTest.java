@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertNotEquals;
 import static org.mockito.Answers.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
@@ -46,6 +47,20 @@ public class IrisComplexGridBoundsCacheTest {
 
         assertEquals(firstPacked, secondPacked);
         assertEquals(1, interpolator.getInvocations());
+    }
+
+    @Test
+    public void nonFiniteCornerBoundsAreNeverCached() throws Exception {
+        IrisComplex complex = createComplex();
+        Method cornerBounds = cornerBoundsMethod();
+        CountingInterpolator interpolator = new CountingInterpolator(Double.NaN, 7.25D);
+
+        long firstPacked = invokeCornerBounds(complex, cornerBounds, interpolator, 128, 96);
+        long secondPacked = invokeCornerBounds(complex, cornerBounds, interpolator, 128, 96);
+
+        assertTrue(Double.isNaN(unpackLow(firstPacked)));
+        assertTrue(Double.isNaN(unpackLow(secondPacked)));
+        assertEquals(2, interpolator.getInvocations());
     }
 
     @Test

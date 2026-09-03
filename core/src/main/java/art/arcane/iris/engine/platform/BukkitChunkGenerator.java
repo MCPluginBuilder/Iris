@@ -194,6 +194,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             INMS.get().inject(world.getSeed(), engine, world);
             engine.getPlatformHooks().applyWorldBoundary(engine);
             IrisLogging.debug("Injected Iris Biome Source into " + world.getName());
+            prefetchSpawnHydrology(engine, world);
             if (!studio) {
                 J.sfut(() -> updateSpawnLocation(world), 1)
                         .whenComplete((ignored, failure) -> {
@@ -237,6 +238,44 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         int maxY = world.getMaxHeight() - 2;
         int y = Math.max(minY, Math.min(maxY, 96));
         return new Location(world, 0.5D, y, 0.5D);
+    }
+
+    private int hydrologyTileSize() {
+        Engine activeEngine = engine;
+        if (activeEngine == null || activeEngine.getComplex() == null || activeEngine.getComplex().getHydrologyRuntime() == null) {
+            return 0;
+        }
+        return activeEngine.getComplex().getHydrologyRuntime().settings().routing().tileSize();
+    }
+
+    /**
+     * Starts planning the hydrology tiles around the initial spawn as soon as the generator is injected
+     * into a world whose spawn chunk does not exist yet. The first teleport there makes the chunk system
+     * generate chunks a few hundred blocks around the spawn, and each of those chunks' mantle windows
+     * reaches further still, so the area planned ahead is half a tile in every direction: every tile a
+     * cold entry can touch starts planning at once instead of one generation thread at a time finding
+     * it cold. A world that already generated its spawn (every existing world at boot, a hotloaded live
+     * world) skips it.
+     */
+    private void prefetchSpawnHydrology(Engine engine, World world) {
+        if (engine.getComplex() == null || engine.getComplex().getHydrologyRuntime() == null) {
+            return;
+        }
+        Location spawn = getInitialSpawnLocation(world);
+        int spawnX = spawn.getBlockX();
+        int spawnZ = spawn.getBlockZ();
+        if (world.isChunkGenerated(spawnX >> 4, spawnZ >> 4)) {
+            return;
+        }
+        int reach = Math.max(16, hydrologyTileSize() / 2);
+        engine.getComplex().getHydrologyRuntime().prefetchArea(
+                spawnX - reach,
+                spawnZ - reach,
+                spawnX + reach - 1,
+                spawnZ + reach - 1,
+                spawnX,
+                spawnZ
+        );
     }
 
     private void updateSpawnLocation(World world) {

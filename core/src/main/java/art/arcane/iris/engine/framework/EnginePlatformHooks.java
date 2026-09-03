@@ -53,6 +53,14 @@ public interface EnginePlatformHooks {
         return false;
     }
 
+    /**
+     * Whether the calling thread is the server's tick thread. Queries from there must never wait
+     * for hydrology planning, so they answer from natural terrain until the tiles are planned.
+     */
+    default boolean isMainThread() {
+        return false;
+    }
+
     default void shutdownPregenerator(Engine engine) {
     }
 

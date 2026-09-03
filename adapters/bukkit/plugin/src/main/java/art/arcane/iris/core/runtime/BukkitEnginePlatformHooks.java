@@ -42,6 +42,7 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KList;
+import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.WorldBorder;
 
@@ -110,6 +111,11 @@ public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
             IrisLogging.reportError(failure);
             throw failure;
         }
+    }
+
+    @Override
+    public boolean isMainThread() {
+        return Bukkit.isPrimaryThread();
     }
 
     @Override

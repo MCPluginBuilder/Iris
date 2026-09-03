@@ -20,7 +20,7 @@ public class MultiBurst extends MultiBurstSupport {
      * Long-running hydrology tile planning. Kept off {@link #burst} so a handful of twenty-second
      * plans never pin the workers that chunk generation's short stage and mantle tasks need.
      */
-    public static final MultiBurst hydrology = new MultiBurst("Iris Hydrology", () -> Math.max(2, IrisSettings.getThreadCount(IrisSettings.get().getConcurrency().getParallelism()) / 3));
+    public static final MultiBurst hydrology = new MultiBurst("Iris Hydrology", () -> Math.max(2, IrisSettings.getThreadCount(IrisSettings.get().getConcurrency().getParallelism())));
 
     public MultiBurst() {
         this("Iris");

@@ -692,6 +692,26 @@ public class IrisComplex implements DataProvider {
         return hydrologyRuntime == null ? null : hydrologyRuntime.sample(x, z).orElse(null);
     }
 
+    /** Whether the column's hydrology can be sampled without waiting for a plan (see Engine.answersFromNaturalTerrain). */
+    public boolean isHydrologyPlanned(int x, int z) {
+        return hydrologyRuntime == null || hydrologyRuntime.isPlanned(x, z);
+    }
+
+    /** The natural terrain height of a column, from the natural height stream only: never touches hydrology or its caches. */
+    public int naturalTrueHeight(int x, int z) {
+        return (int) Math.round(naturalHeightStream.getDouble(x, z));
+    }
+
+    /** The surface biome a column would have without any river content, from natural streams only. */
+    public IrisBiome naturalSurfaceBiome(int x, int z) {
+        IrisBiome mapped = imageMapRuntime.sampleBiome(x, z);
+        if (mapped != null) {
+            return mapped;
+        }
+        double terrainHeight = naturalHeightStream.getDouble(x, z);
+        return fixBiomeType(terrainHeight, baseBiomeStream.get(x, z), regionStream.get(x, z), (double) x, (double) z, fluidHeight);
+    }
+
     private HydrologyColumnLayer surfaceLayer(double x, double z) {
         HydrologyColumnSample sample = hydrologySample(x, z);
         return sample == null ? null : sample.primarySurfaceLayer().orElse(null);
@@ -928,15 +948,14 @@ public class IrisComplex implements DataProvider {
         // catches the same corner reached by another thread or by hydrology planning earlier.
         SharedCornerBounds shared = sharedCornerBounds();
         long sharedKey = SharedCornerBounds.key(gx, gz, interpolatorIndex);
-        long packed;
-        if (shared.contains(sharedKey)) {
-            packed = shared.get(sharedKey);
-            if (packed == Long.MIN_VALUE) {
-                packed = computePackedBounds(cache, engine, interpolator, generators, gx, gz);
-                shared.put(sharedKey, packed);
-            }
-        } else {
+        long packed = shared.contains(sharedKey) ? shared.get(sharedKey) : Long.MIN_VALUE;
+        if (packed == Long.MIN_VALUE) {
             packed = computePackedBounds(cache, engine, interpolator, generators, gx, gz);
+            if (!Double.isFinite(boundsLow(packed)) || !Double.isFinite(boundsHigh(packed))) {
+                // A non-finite corner is a transient sampling fault, not a fact about the terrain:
+                // hand it back uncached so the next sample recomputes it instead of pinning it.
+                return packed;
+            }
             shared.put(sharedKey, packed);
         }
         cache.gx[slot] = gx;

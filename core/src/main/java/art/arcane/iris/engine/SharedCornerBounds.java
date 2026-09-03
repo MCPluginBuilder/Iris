@@ -52,6 +52,7 @@ final class SharedCornerBounds {
             return false;
         }
         long storedKey = (long) LONGS.getAcquire(keys, slot);
+        VarHandle.loadLoadFence();
         int after = (int) STAMPS.getAcquire(stamps, slot);
         return before == after && storedKey == key;
     }
@@ -69,6 +70,8 @@ final class SharedCornerBounds {
         }
         long storedKey = (long) LONGS.getAcquire(keys, slot);
         long value = (long) LONGS.getAcquire(values, slot);
+        // The data loads above must not drift past the second stamp read, or a torn slot could pass.
+        VarHandle.loadLoadFence();
         int after = (int) STAMPS.getAcquire(stamps, slot);
         if (before != after || storedKey != key) {
             return Long.MIN_VALUE;
