@@ -226,7 +226,7 @@ public class NativeStructurePostProcessorEncaseTest {
         String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource"))).replace("\r\n", "\n");
         int prepareTerrain = source.indexOf("NativeStructurePostProcessor.prepareTerrain(");
         int placementLoop = source.indexOf("for (NativePlacementGroup group : placementGroups)", prepareTerrain);
-        int placement = source.indexOf("placeVanillaStructure(world, structureManager, random", placementLoop);
+        int placement = source.indexOf("placeVanillaStructure(boundedWorld, structureManager, random", placementLoop);
 
         assertTrue(prepareTerrain >= 0);
         assertTrue(placementLoop > prepareTerrain);

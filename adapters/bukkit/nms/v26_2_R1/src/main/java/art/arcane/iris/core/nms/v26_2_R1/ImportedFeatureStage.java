@@ -7,6 +7,7 @@ import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDecorationStep;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisImportedFeatureControl;
+import art.arcane.iris.engine.object.IrisStaticObjectLayer;
 import art.arcane.iris.spi.IrisLogging;
 import it.unimi.dsi.fastutil.ints.IntArraySet;
 import it.unimi.dsi.fastutil.ints.IntSet;
@@ -26,6 +27,7 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.RandomSupport;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
 import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
@@ -287,13 +289,20 @@ final class ImportedFeatureStage {
         WorldgenRandom random = new WorldgenRandom(new XoroshiroRandomSource(RandomSupport.generateUniqueSeed()));
         long decorationSeed = random.setDecorationSeed(level.getSeed(), origin.getX(), origin.getZ());
         Set<Holder<Biome>> chunkBiomes = chunkBiomes(level, sectionPos, table);
+        IrisStaticObjectLayer staticObjects = engine.getDimension().getStaticObjectLayer(engine.getData());
+        int staticMinY = engine.getMinHeight();
+        WorldGenLevel placementLevel = staticObjects.isEmpty() ? level : NativeStructureWorldgenAccess.create(
+                level, centerPos,
+                (x, z) -> level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z),
+                (x, z) -> level.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z),
+                position -> staticObjects.contains(position.getX(), position.getY() - staticMinY, position.getZ()));
 
         try {
             for (int stepIndex = 0; stepIndex < steps.size(); stepIndex++) {
                 if (!table.control().shouldGenerateStep(IrisDecorationStep.byOrdinal(stepIndex))) {
                     continue;
                 }
-                placeStep(level, table, steps.get(stepIndex), featureRegistry, chunkBiomes, owner,
+                placeStep(placementLevel, table, steps.get(stepIndex), featureRegistry, chunkBiomes, owner,
                         random, decorationSeed, origin, stepIndex);
             }
         } catch (Throwable error) {

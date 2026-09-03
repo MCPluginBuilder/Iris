@@ -13,6 +13,7 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
+import art.arcane.iris.engine.object.IrisStaticObjectLayer;
 import art.arcane.iris.nativegen.NativeStructureGenerationException;
 import art.arcane.iris.nativegen.NativeStructureStartInjector;
 import art.arcane.iris.nativegen.NativeStructureReferenceEnvelope;
@@ -873,9 +874,14 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                     "heightmap priming", nativeStructureBatchContext(placementGroups),
                     chunkPos.x(), chunkPos.z(), error);
         }
+        IrisStaticObjectLayer staticObjects = engine.getDimension().getStaticObjectLayer(engine.getData());
+        int staticMinY = engine.getMinHeight();
+        WorldGenLevel boundedWorld = staticObjects.isEmpty() ? world : NativeStructureWorldgenAccess.create(
+                world, chunkPos, worldgenSurfaceHeight(), worldgenFloorHeight(),
+                position -> staticObjects.contains(position.getX(), position.getY() - staticMinY, position.getZ()));
         try {
             NativeStructureVegetationClearer.clearIntersectingVegetation(
-                    world, chunk, area, vegetationTargets);
+                    boundedWorld, chunk, area, vegetationTargets);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "vegetation cleanup", nativeStructureBatchContext(placementGroups),
@@ -884,7 +890,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         NativeStructureSurfaceFitter.VacuumFoundationPlan vacuumFoundationPlan;
         try {
             vacuumFoundationPlan = NativeStructureSurfaceFitter.prepareSurfaceStructures(
-                    world, area, terrainTargets,
+                    boundedWorld, area, terrainTargets,
                     (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
@@ -893,7 +899,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         }
         try {
             NativeStructurePostProcessor.prepareTerrain(
-                    world, area, terrainTargets, this::resolvePaletteBlock);
+                    boundedWorld, area, terrainTargets, this::resolvePaletteBlock);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "terrain preparation", nativeStructureBatchContext(placementGroups),
@@ -903,7 +909,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             random.setFeatureSeed(decoSeed, group.featureIndex(), group.step());
             try {
                 for (NativePlacement placement : group.placements()) {
-                    placeVanillaStructure(world, structureManager, random, area, chunkPos,
+                    placeVanillaStructure(boundedWorld, structureManager, random, area, chunkPos,
                             group.structureId(), placement.start(), placement.decision());
                 }
             } catch (Throwable error) {
@@ -913,7 +919,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         }
         try {
             NativeStructureSurfaceFitter.repairVacuumFoundations(
-                    world, area, vacuumFoundationPlan);
+                    boundedWorld, area, vacuumFoundationPlan);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "foundation repair", nativeStructureBatchContext(placementGroups),
@@ -938,8 +944,8 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     private void placeVanillaStructure(WorldGenLevel world, StructureManager structureManager, WorldgenRandom random,
                                        BoundingBox area, ChunkPos chunkPos, String structureId, StructureStart start,
                                        IrisNativeStructureDecision decision) {
-        WorldGenLevel boundedWorld = NativeStructureWorldgenAccess.create(
-                world, chunkPos, worldgenSurfaceHeight(), worldgenFloorHeight());
+        WorldGenLevel boundedWorld = world instanceof NativeStructureWorldgenAccess ? world : NativeStructureWorldgenAccess.create(
+                world, chunkPos, worldgenSurfaceHeight(), worldgenFloorHeight(), position -> false);
         world.setCurrentlyGenerating(() -> "Iris native structure " + structureId);
         try {
             NativeStructurePostProcessor.place(boundedWorld, structureManager, this, random, area, chunkPos,

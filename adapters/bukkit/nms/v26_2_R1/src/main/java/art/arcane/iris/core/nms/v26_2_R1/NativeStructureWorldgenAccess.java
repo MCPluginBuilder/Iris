@@ -64,6 +64,7 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
     private final ChunkPos generationCenter;
     private final IntBinaryOperator surfaceFirstFreeY;
     private final IntBinaryOperator floorFirstFreeY;
+    private final Predicate<BlockPos> protectedPosition;
     private final Holder<Biome> fallbackBiome;
     private final BiomeManager biomeManager;
     private final AABB generationBounds;
@@ -80,6 +81,8 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
                 boundary.surfaceFirstFreeY(), "Native structure world access requires a surface resolver");
         this.floorFirstFreeY = Objects.requireNonNull(
                 boundary.floorFirstFreeY(), "Native structure world access requires an ocean-floor resolver");
+        this.protectedPosition = Objects.requireNonNull(
+                boundary.protectedPosition(), "World access requires a protected-position predicate");
         BlockPos biomeSample = generationCenter.getMiddleBlockPosition(delegate.getSeaLevel());
         this.fallbackBiome = delegate.getBiome(biomeSample);
         this.biomeManager = delegate.getBiomeManager().withDifferentSource(this);
@@ -99,9 +102,10 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
 
     static NativeStructureWorldgenAccess create(WorldGenLevel delegate, ChunkPos generationCenter,
                                                 IntBinaryOperator surfaceFirstFreeY,
-                                                IntBinaryOperator floorFirstFreeY) {
+                                                IntBinaryOperator floorFirstFreeY,
+                                                Predicate<BlockPos> protectedPosition) {
         return new NativeStructureWorldgenAccess(delegate, new Boundary(
-                generationCenter, surfaceFirstFreeY, floorFirstFreeY));
+                generationCenter, surfaceFirstFreeY, floorFirstFreeY, protectedPosition));
     }
 
     @Override
@@ -359,13 +363,13 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
 
     @Override
     public BlockEntity getBlockEntity(BlockPos position) {
-        return isReadable(position) ? delegate.getBlockEntity(position) : null;
+        return isWritable(position) ? delegate.getBlockEntity(position) : null;
     }
 
     @Override
     public <T extends BlockEntity> Optional<T> getBlockEntity(
             BlockPos position, BlockEntityType<T> type) {
-        return isReadable(position) ? delegate.getBlockEntity(position, type) : Optional.empty();
+        return isWritable(position) ? delegate.getBlockEntity(position, type) : Optional.empty();
     }
 
     @Override
@@ -453,7 +457,7 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
     }
 
     private boolean isWritable(BlockPos position) {
-        return isReadable(position);
+        return isReadable(position) && !protectedPosition.test(position);
     }
 
     private boolean isWritableNeighbourhood(BlockPos position) {
@@ -544,7 +548,8 @@ final class NativeStructureWorldgenAccess implements WorldGenLevel {
 
     private record Boundary(ChunkPos generationCenter,
                             IntBinaryOperator surfaceFirstFreeY,
-                            IntBinaryOperator floorFirstFreeY) {
+                            IntBinaryOperator floorFirstFreeY,
+                            Predicate<BlockPos> protectedPosition) {
     }
 
     private static final class BoundedTickAccess<T> implements LevelTickAccess<T> {

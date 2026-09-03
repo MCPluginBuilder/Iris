@@ -136,6 +136,34 @@ public class ModdedNativeStructureWorldgenAccessTest {
     }
 
     @Test
+    public void protectedCellsRemainReadableButRejectWritesTilesAndTicks() {
+        RecordingDelegate recording = new RecordingDelegate();
+        BlockPos position = generationCenter().getMiddleBlockPosition(70);
+        ModdedNativeStructureWorldgenAccess access = ModdedNativeStructureWorldgenAccess.create(
+                recording.world(), generationCenter(),
+                (x, z) -> SURFACE_FIRST_FREE_Y,
+                (x, z) -> FLOOR_FIRST_FREE_Y, position::equals);
+
+        assertSame(Blocks.DIRT, access.getBlockState(position).getBlock());
+        assertFalse(access.ensureCanWrite(position));
+        assertFalse(access.setBlock(position, Blocks.STONE.defaultBlockState(), 2));
+        assertFalse(access.removeBlock(position, false));
+        assertFalse(access.destroyBlock(position, false));
+        assertNull(access.getBlockEntity(position));
+        assertTrue(access.getBlockEntity(position, null).isEmpty());
+        access.getBlockTicks().schedule(new ScheduledTick<>(Blocks.DIRT, position, 1L, 0L));
+        access.updateNeighborsAt(position.east(), Blocks.DIRT);
+        access.neighborShapeChanged(
+                Direction.EAST, position, position.east(), Blocks.DIRT.defaultBlockState(), 2, 512);
+
+        assertEquals(1, recording.terrainReads);
+        assertEquals(0, recording.mutations);
+        assertEquals(0, recording.blockTicks.count());
+        assertTrue(access.setBlock(position.above(), Blocks.STONE.defaultBlockState(), 2));
+        assertEquals(1, recording.mutations);
+    }
+
+    @Test
     public void statuslessChunkReadsPreserveWorldgenDelegateSemantics() {
         RecordingDelegate recording = new RecordingDelegate();
         ModdedNativeStructureWorldgenAccess access = access(recording);
@@ -183,7 +211,7 @@ public class ModdedNativeStructureWorldgenAccessTest {
         return ModdedNativeStructureWorldgenAccess.create(
                 recording.world(), generationCenter(),
                 (x, z) -> SURFACE_FIRST_FREE_Y,
-                (x, z) -> FLOOR_FIRST_FREE_Y);
+                (x, z) -> FLOOR_FIRST_FREE_Y, position -> false);
     }
 
     private static ChunkPos generationCenter() {

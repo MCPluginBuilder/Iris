@@ -103,12 +103,12 @@ public class NativeStructureFailureContractTest {
     @Test
     public void nativeStructurePostProcessingUsesBoundedWorldgenAccess() throws IOException {
         String source = moddedSource("ModdedNativeStructureStage.java");
-        int placementStart = source.indexOf("private void placeVanillaStructure");
+        int placementStart = source.indexOf("void placeVanillaStructures");
         int placementEnd = source.indexOf("private List<List<Structure>> structuresByStep", placementStart);
         String placement = source.substring(placementStart, placementEnd);
 
         assertTrue(placement.contains("ModdedNativeStructureWorldgenAccess.create("));
-        assertTrue(placement.contains("NativeStructurePostProcessor.place(\n                    boundedWorld"));
+        assertTrue(placement.contains("placeVanillaStructure(boundedWorld, structureManager"));
         assertFalse(placement.contains("NativeStructurePostProcessor.place(world,"));
         assertTrue(placement.contains("world.setCurrentlyGenerating(null);"));
     }

@@ -25,6 +25,7 @@ import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
+import art.arcane.iris.engine.object.IrisStaticObjectLayer;
 import art.arcane.iris.nativegen.NativeStructureGenerationException;
 import art.arcane.iris.nativegen.NativeStructureLocatePersistence;
 import art.arcane.iris.nativegen.NativeStructureLocateResults;
@@ -365,9 +366,14 @@ final class ModdedNativeStructureStage {
                     "heightmap priming", nativeStructureBatchContext(placementGroups),
                     chunkPos.x(), chunkPos.z(), error);
         }
+        IrisStaticObjectLayer staticObjects = current.getDimension().getStaticObjectLayer(current.getData());
+        int staticMinY = current.getMinHeight();
+        WorldGenLevel boundedWorld = staticObjects.isEmpty() ? world : ModdedNativeStructureWorldgenAccess.create(
+                world, chunkPos, worldgenSurfaceHeight(current, world.getMinY()), worldgenFloorHeight(current, world.getMinY()),
+                position -> staticObjects.contains(position.getX(), position.getY() - staticMinY, position.getZ()));
         try {
             NativeStructureVegetationClearer.clearIntersectingVegetation(
-                    world, chunk, area, vegetationTargets);
+                    boundedWorld, chunk, area, vegetationTargets);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "vegetation cleanup", nativeStructureBatchContext(placementGroups),
@@ -376,7 +382,7 @@ final class ModdedNativeStructureStage {
         NativeStructureSurfaceFitter.VacuumFoundationPlan vacuumFoundationPlan;
         try {
             vacuumFoundationPlan = NativeStructureSurfaceFitter.prepareSurfaceStructures(
-                    world, area, terrainTargets,
+                    boundedWorld, area, terrainTargets,
                     (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
@@ -385,7 +391,7 @@ final class ModdedNativeStructureStage {
         }
         try {
             NativeStructurePostProcessor.prepareTerrain(
-                    world, area, terrainTargets, this::resolvePaletteBlock);
+                    boundedWorld, area, terrainTargets, this::resolvePaletteBlock);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "terrain preparation", nativeStructureBatchContext(placementGroups),
@@ -395,7 +401,7 @@ final class ModdedNativeStructureStage {
             random.setFeatureSeed(decorationSeed, group.featureIndex(), group.step());
             try {
                 for (NativePlacement placement : group.placements()) {
-                    placeVanillaStructure(world, structureManager, random, area, chunkPos,
+                    placeVanillaStructure(boundedWorld, structureManager, random, area, chunkPos,
                             group.structureId(), placement.start(), placement.decision());
                 }
             } catch (Throwable error) {
@@ -405,7 +411,7 @@ final class ModdedNativeStructureStage {
         }
         try {
             NativeStructureSurfaceFitter.repairVacuumFoundations(
-                    world, area, vacuumFoundationPlan);
+                    boundedWorld, area, vacuumFoundationPlan);
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "foundation repair", nativeStructureBatchContext(placementGroups),
@@ -436,11 +442,8 @@ final class ModdedNativeStructureStage {
                                        String structureId, StructureStart start,
                                        IrisNativeStructureDecision decision) {
         Engine current = generator.engine();
-        int runtimeMinY = world.getMinY();
-        WorldGenLevel boundedWorld = ModdedNativeStructureWorldgenAccess.create(
-                world, chunkPos,
-                worldgenSurfaceHeight(current, runtimeMinY),
-                worldgenFloorHeight(current, runtimeMinY));
+        WorldGenLevel boundedWorld = world instanceof ModdedNativeStructureWorldgenAccess ? world : ModdedNativeStructureWorldgenAccess.create(
+                world, chunkPos, worldgenSurfaceHeight(current, world.getMinY()), worldgenFloorHeight(current, world.getMinY()), position -> false);
         world.setCurrentlyGenerating(() -> "Iris native structure " + structureId);
         try {
             NativeStructurePostProcessor.place(
