@@ -18,36 +18,19 @@
 
 package art.arcane.iris.engine.object;
 
+import art.arcane.iris.core.compat.ContentGate;
 import art.arcane.iris.util.common.reflect.KeyedType;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
 import org.bukkit.potion.PotionEffectType;
 
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class PotionEffectTypes {
-    private static final Map<String, String> LEGACY_ALIASES;
     private static final Set<String> MISSING_WARNED = ConcurrentHashMap.newKeySet();
-
-    static {
-        Map<String, String> m = new HashMap<>();
-        m.put("SLOW", "SLOWNESS");
-        m.put("FAST_DIGGING", "HASTE");
-        m.put("SLOW_DIGGING", "MINING_FATIGUE");
-        m.put("INCREASE_DAMAGE", "STRENGTH");
-        m.put("HEAL", "INSTANT_HEALTH");
-        m.put("HARM", "INSTANT_DAMAGE");
-        m.put("JUMP", "JUMP_BOOST");
-        m.put("CONFUSION", "NAUSEA");
-        m.put("DAMAGE_RESISTANCE", "RESISTANCE");
-        LEGACY_ALIASES = Collections.unmodifiableMap(m);
-    }
 
     private PotionEffectTypes() {
     }
@@ -60,7 +43,8 @@ public final class PotionEffectTypes {
         if (upper.contains(":")) {
             upper = upper.substring(upper.indexOf(':') + 1);
         }
-        return LEGACY_ALIASES.getOrDefault(upper, upper);
+        String path = upper.toLowerCase(Locale.ROOT);
+        return ContentGate.POTION_EFFECT_ALIASES.getOrDefault(path, path).toUpperCase(Locale.ROOT);
     }
 
     public static PotionEffectType resolve(String rawName) {

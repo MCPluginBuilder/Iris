@@ -253,6 +253,17 @@ public class SchemaBuilderParityTest {
     }
 
     @Test
+    public void dimensionSchemaListsBlockFallbacksAsPlainObjectProperty() {
+        JSONObject properties = rootProperties(
+                new SchemaBuilder(IrisDimension.class, structureSchemaData()).construct());
+        JSONObject fallbacks = properties.getJSONObject("blockFallbacks");
+
+        assertEquals("object", fallbacks.getString("type"));
+        assertFalse(fallbacks.has("!top"));
+        assertFalse(fallbacks.has("anyOf"));
+    }
+
+    @Test
     public void jigsawStructureSchemaExposesBranchFailurePolicy() {
         JSONObject schema = new SchemaBuilder(IrisStructure.class, structureSchemaData()).construct();
         JSONObject policy = rootProperties(schema).getJSONObject("branchFailurePolicy");

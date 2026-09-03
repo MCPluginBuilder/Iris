@@ -71,3 +71,6 @@ AGENTS.md
 build-lt.sh
 BUILDS/
 .run/
+
+# Version-content compat lane worktree. Generated, never source.
+.compatwt/

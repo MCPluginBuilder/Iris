@@ -39,7 +39,9 @@ public final class ModdedDecoratorHooks implements DecoratorPlatformHooks.FaceFi
 
     @Override
     public PlatformBlockState fixFaces(PlatformBlockState state, Hunk<PlatformBlockState> hunk, int rX, int rZ, int x, int y, int z, EngineMantle mantle) {
-        ModdedBlockState fabric = (ModdedBlockState) state;
+        if (!(state instanceof ModdedBlockState fabric)) {
+            return state;
+        }
         BlockState cloned = fabric.handle();
         Map<String, BooleanProperty> allowed = faceProperties(cloned);
 
