@@ -107,7 +107,7 @@ public class PackDownloaderTest {
     @Test
     public void resolvesDefaultOverworldStableRelease() {
         assertEquals(
-                "https://github.com/IrisDimensions/overworld/releases/download/4002/overworld.zip",
+                "https://github.com/IrisDimensions/overworld/releases/latest/download/overworld.zip",
                 PackDownloader.builtInPackUrl("overworld")
         );
         assertTrue(PackDownloader.isDefaultOverworld("overworld"));
@@ -118,7 +118,7 @@ public class PackDownloaderTest {
     @Test
     public void resolvesUnderworldStableRelease() {
         assertEquals(
-                "https://github.com/IrisDimensions/underworld/releases/download/1005/underworld.zip",
+                "https://github.com/IrisDimensions/underworld/releases/latest/download/underworld.zip",
                 PackDownloader.builtInPackUrl("underworld")
         );
         assertTrue(PackDownloader.isBuiltInPack("underworld"));

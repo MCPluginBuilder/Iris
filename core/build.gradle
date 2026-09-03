@@ -35,7 +35,7 @@ plugins {
 
 def lib = 'art.arcane.iris.util'
 String volmLibCoordinate = providers.gradleProperty('volmLibCoordinate')
-    .orElse('com.github.VolmitSoftware:VolmLib:e6574cf814b3dd670385a4d632a63fde2038e186')
+    .orElse('com.github.VolmitSoftware:VolmLib:master-SNAPSHOT')
     .get()
 
 String languageSourceReference = providers.gradleProperty('languageRevision').orElse('master').get()
