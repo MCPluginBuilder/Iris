@@ -20,6 +20,7 @@ package art.arcane.iris.engine.modifier;
 
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.decorator.FloatingDecorator;
 import art.arcane.iris.engine.decorator.IrisSeaSurfaceDecorator;
@@ -285,7 +286,15 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
                     }
                 }
 
-                writeIslandSkyBiomes(parent, wx, wz, sample, chunkHeight, data);
+                writeIslandSkyBiomes(
+                        parent,
+                        wx,
+                        wz,
+                        sample,
+                        chunkHeight,
+                        data,
+                        context.getDimensionStackLayout(xf, zf)
+                );
             }
         }
 
@@ -367,7 +376,15 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
         }
     }
 
-    private void writeIslandSkyBiomes(IrisBiome parent, int wx, int wz, FloatingIslandSample sample, int chunkHeight, IrisData data) {
+    private void writeIslandSkyBiomes(
+            IrisBiome parent,
+            int wx,
+            int wz,
+            FloatingIslandSample sample,
+            int chunkHeight,
+            IrisData data,
+            DimensionStackLayout stackLayout
+    ) {
         try {
             IdentityHashMap<IrisFloatingChildBiomes, MatterBiomeInject> matterByEntry = new IdentityHashMap<>();
             for (int k = 0; k <= sample.topIdx; k++) {
@@ -376,6 +393,9 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
                 }
                 int y = sample.islandBaseY + k;
                 if (y < 0 || y >= chunkHeight) {
+                    continue;
+                }
+                if (!shouldWriteHostBiomeMarker(stackLayout, y)) {
                     continue;
                 }
                 IrisFloatingChildBiomes entry = sample.entryAt(k);
@@ -395,10 +415,15 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
         }
     }
 
+    static boolean shouldWriteHostBiomeMarker(DimensionStackLayout stackLayout, int y) {
+        return stackLayout == null || !stackLayout.isHostFeatureProtectedY(y);
+    }
+
     private MatterBiomeInject createSkyBiomeMatter(IrisBiome target, int wx, int wz) {
         if (target.isCustom()) {
             IrisBiomeCustom custom = target.getCustomBiome(rng, getEngine(), wx, 0, wz);
-            return BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(getDimension().getLoadKey() + ":" + custom.getId()));
+            return BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(
+                    getDimension().getCustomBiomeKey(custom.getId())));
         }
 
         return BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(target.getSkyBiomeKey(rng, getEngine(), wx, 0, wz)));

@@ -18,6 +18,43 @@ import static org.mockito.Mockito.when;
 public class IrisDimensionReachableBiomesTest {
     @Test
     @SuppressWarnings("unchecked")
+    public void includesOutOfPoolFocusBiomeAndRegion() {
+        IrisDimension dimension = new IrisDimension()
+                .setRegions(new KList<>("declared"))
+                .setFocus("focused-biome")
+                .setFocusRegion("focused-region");
+        IrisRegion declared = new IrisRegion().setLandBiomes(new KList<>("declared-biome"));
+        IrisRegion focused = new IrisRegion().setLandBiomes(new KList<>("focused-region-biome"));
+        declared.setLoadKey("declared");
+        focused.setLoadKey("focused-region");
+        IrisBiome declaredBiome = biome("declared-biome");
+        IrisBiome focusedBiome = biome("focused-biome");
+        IrisBiome focusedRegionBiome = biome("focused-region-biome");
+
+        IrisData data = mock(IrisData.class);
+        ResourceLoader<IrisRegion> regionLoader = mock(ResourceLoader.class);
+        ResourceLoader<IrisBiome> biomeLoader = mock(ResourceLoader.class);
+        when(data.getRegionLoader()).thenReturn(regionLoader);
+        when(data.getBiomeLoader()).thenReturn(biomeLoader);
+        when(regionLoader.load("declared")).thenReturn(declared);
+        when(regionLoader.load("focused-region")).thenReturn(focused);
+        when(biomeLoader.load("declared-biome")).thenReturn(declaredBiome);
+        when(biomeLoader.load("focused-biome")).thenReturn(focusedBiome);
+        when(biomeLoader.load("focused-region-biome")).thenReturn(focusedRegionBiome);
+
+        Set<String> regionKeys = dimension.getAllRegions(() -> data).stream()
+                .map(IrisRegion::getLoadKey)
+                .collect(Collectors.toSet());
+        Set<String> biomeKeys = dimension.getReachableBiomes(() -> data).stream()
+                .map(IrisBiome::getLoadKey)
+                .collect(Collectors.toSet());
+
+        assertEquals(Set.of("declared", "focused-region"), regionKeys);
+        assertEquals(Set.of("declared-biome", "focused-biome", "focused-region-biome"), biomeKeys);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     public void includesExactRecursiveGenerationClosure() {
         IrisDimensionCarvingEntry deepBand = new IrisDimensionCarvingEntry()
                 .setId("global-deep-band")

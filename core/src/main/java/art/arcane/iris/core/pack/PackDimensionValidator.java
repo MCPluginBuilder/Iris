@@ -26,7 +26,9 @@ import art.arcane.volmlib.util.json.JSONObject;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 final class PackDimensionValidator {
     private PackDimensionValidator() {
@@ -35,9 +37,14 @@ final class PackDimensionValidator {
     static void validateDimensions(File packFolder, File[] dimensionFiles, List<String> blockingErrors, List<String> warnings) {
         File regionsFolder = new File(packFolder, "regions");
         File biomesFolder = new File(packFolder, "biomes");
+        File dimensionsFolder = new File(packFolder, PackValidator.DIMENSIONS_FOLDER);
+        Set<String> dimensionKeys = new LinkedHashSet<>();
+        for (File dimensionFile : dimensionFiles) {
+            dimensionKeys.add(PackValidationIo.deriveKey(dimensionsFolder, dimensionFile));
+        }
 
         for (File dimFile : dimensionFiles) {
-            String dimensionKey = PackValidationIo.stripExtension(dimFile.getName());
+            String dimensionKey = PackValidationIo.deriveKey(dimensionsFolder, dimFile);
             JSONObject dimJson;
             try {
                 dimJson = new JSONObject(Files.readString(dimFile.toPath(), StandardCharsets.UTF_8));
@@ -50,6 +57,7 @@ final class PackDimensionValidator {
             validateDimensionHeights(packFolder, dimensionKey, dimJson, blockingErrors);
             validateWorldBoundary(dimensionKey, dimJson, blockingErrors);
             validateStaticObjects(packFolder, dimensionKey, dimJson, blockingErrors);
+            validateDimensionStack(packFolder, dimensionKey, dimJson, dimensionKeys, blockingErrors);
 
             JSONArray regionsArray = dimJson.optJSONArray("regions");
             if (regionsArray == null || regionsArray.length() == 0) {
@@ -91,6 +99,108 @@ final class PackDimensionValidator {
             if (resolvedRegions == 0) {
                 blockingErrors.add("Dimension '" + dimensionKey + "' has no resolvable regions.");
             }
+        }
+    }
+
+    static void validateDimensionStack(File packFolder, String dimensionKey, JSONObject dimension, Set<String> dimensionKeys,
+                                       List<String> blockingErrors) {
+        if (!dimension.has("dimensionStack")) {
+            return;
+        }
+        String context = "Dimension '" + dimensionKey + "' dimensionStack";
+        JSONObject stack = dimension.optJSONObject("dimensionStack");
+        if (stack == null) {
+            blockingErrors.add(context + " must be an object.");
+            return;
+        }
+
+        String upperDimension = dimension.optString("upperDimension", "none");
+        if (upperDimension != null && !upperDimension.isEmpty()
+                && !upperDimension.equalsIgnoreCase("none")) {
+            blockingErrors.add(context + " cannot be used with upperDimension.");
+        }
+
+        JSONArray dimensions = stack.optJSONArray("dimensions");
+        if (dimensions == null) {
+            blockingErrors.add(context + ".dimensions must be an array.");
+        } else {
+            int hostOccurrences = 0;
+            if (dimensions.length() < 2) {
+                blockingErrors.add(context + ".dimensions must contain at least two dimension keys.");
+            }
+            for (int index = 0; index < dimensions.length(); index++) {
+                Object rawKey = dimensions.opt(index);
+                if (!(rawKey instanceof String key) || key.isBlank()) {
+                    blockingErrors.add(context + ".dimensions[" + index + "] must be a nonblank dimension key.");
+                    continue;
+                }
+                if (!dimensionKeys.contains(key)) {
+                    blockingErrors.add(context + ".dimensions[" + index + "] references missing dimension '"
+                            + key + "'.");
+                }
+                if (dimensionKey.equals(key)) {
+                    hostOccurrences++;
+                }
+            }
+            if (hostOccurrences != 1) {
+                blockingErrors.add(context + ".dimensions must contain its host dimension key '"
+                        + dimensionKey + "' exactly once.");
+            }
+            if (dimensions.length() > 0) {
+                Object rawLast = dimensions.opt(dimensions.length() - 1);
+                if (rawLast instanceof String lastKey && !dimensionKey.equals(lastKey)) {
+                    blockingErrors.add(context + ".dimensions must end with its host dimension key '"
+                            + dimensionKey + "'.");
+                }
+            }
+        }
+
+        validateInteger(stack, "spacer", 0, 256, context, blockingErrors);
+        validateDimensionStackBlend(packFolder, context, stack, blockingErrors);
+    }
+
+    private static void validateDimensionStackBlend(File packFolder, String context, JSONObject stack,
+                                                    List<String> blockingErrors) {
+        if (!stack.has("blend")) {
+            return;
+        }
+        JSONObject blend = stack.optJSONObject("blend");
+        if (blend == null) {
+            blockingErrors.add(context + ".blend must be an object.");
+            return;
+        }
+        if (blend.has("amplitude")) {
+            validateInteger(blend, "amplitude", 0, 256, context + ".blend", blockingErrors);
+        }
+        if (blend.has("style")) {
+            Object rawStyle = blend.opt("style");
+            boolean styleObject = rawStyle instanceof JSONObject;
+            boolean styleSnippet = rawStyle instanceof String reference
+                    && reference.startsWith("snippet/style/");
+            if (!styleObject && !styleSnippet) {
+                blockingErrors.add(context + ".blend.style must be an object or style snippet reference.");
+                return;
+            }
+            if (styleSnippet) {
+                validateDimensionStackStyleSnippet(
+                        packFolder, context + ".blend.style", (String) rawStyle, blockingErrors);
+            }
+        }
+    }
+
+    private static void validateDimensionStackStyleSnippet(File packFolder, String context, String reference,
+                                                           List<String> blockingErrors) {
+        try {
+            File snippetRoot = new File(packFolder, "snippet/style").getCanonicalFile();
+            File snippetFile = new File(packFolder, reference + ".json").getCanonicalFile();
+            if (!snippetFile.toPath().startsWith(snippetRoot.toPath()) || !snippetFile.isFile()) {
+                blockingErrors.add(context + " references missing style snippet '" + reference + "'.");
+                return;
+            }
+            new JSONObject(Files.readString(snippetFile.toPath(), StandardCharsets.UTF_8));
+        } catch (Throwable error) {
+            blockingErrors.add(context + " references invalid style snippet '" + reference + "': "
+                    + error.getMessage());
         }
     }
 

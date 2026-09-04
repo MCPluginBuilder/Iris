@@ -95,8 +95,9 @@ public class NativeStructureFailureContractTest {
         assertTrue(placement.contains("heightmapStarts.add(start);"));
         assertTrue(placement.indexOf("WorldgenTerrainHeightmaps.primeStructurePlacement(")
                 < placement.indexOf("prepareSurfaceStructures"));
-        assertTrue(source.contains("generationEngine.getHeight(x, z, false) + runtimeMinY + 1"));
-        assertTrue(source.contains("generationEngine.getHeight(x, z, true) + runtimeMinY + 1"));
+        assertTrue(source.contains("Engine.hostHeight(generationEngine, x, z, false) + runtimeMinY + 1"));
+        assertTrue(source.contains("Engine.hostHeight(generationEngine, x, z, true) + runtimeMinY + 1"));
+        assertTrue(placement.contains("current.getDimensionStackContext() != null"));
         assertTrue(source.contains("int minY = chunk.getMinY() + 1;"));
     }
 
@@ -108,6 +109,8 @@ public class NativeStructureFailureContractTest {
         String placement = source.substring(placementStart, placementEnd);
 
         assertTrue(placement.contains("ModdedNativeStructureWorldgenAccess.create("));
+        assertTrue(placement.contains("nativeStructureProtection(current, staticObjects)"));
+        assertTrue(placement.contains("Engine.hostHeight(current, x, z, true)"));
         assertTrue(placement.contains("placeVanillaStructure(boundedWorld, structureManager"));
         assertFalse(placement.contains("NativeStructurePostProcessor.place(world,"));
         assertTrue(placement.contains("world.setCurrentlyGenerating(null);"));

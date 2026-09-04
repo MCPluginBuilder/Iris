@@ -1,5 +1,7 @@
 package art.arcane.iris.util.project.context;
 
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.EngineMetrics;
@@ -27,6 +29,8 @@ public class ChunkContext {
     private final ChunkedDataCache<PlatformBlockState> fluid;
     private final ChunkedDataCache<IrisRegion> region;
     private final FloatingIslandBoundarySampler floatingIslandBoundarySampler;
+    private final DimensionStackContext dimensionStackContext;
+    private final DimensionStackLayout[] dimensionStackLayouts;
 
     public ChunkContext(int x, int z, IrisComplex complex) {
         this(x, z, complex, 0L, true, PrefillPlan.NO_CAVE, null);
@@ -45,6 +49,19 @@ public class ChunkContext {
     }
 
     public ChunkContext(int x, int z, IrisComplex complex, long generationSessionId, boolean cache, PrefillPlan prefillPlan, EngineMetrics metrics) {
+        this(x, z, complex, generationSessionId, cache, prefillPlan, metrics, null);
+    }
+
+    public ChunkContext(
+            int x,
+            int z,
+            IrisComplex complex,
+            long generationSessionId,
+            boolean cache,
+            PrefillPlan prefillPlan,
+            EngineMetrics metrics,
+            DimensionStackContext dimensionStackContext
+    ) {
         this.x = x;
         this.z = z;
         this.complex = complex;
@@ -57,6 +74,8 @@ public class ChunkContext {
         this.fluid = new ChunkedDataCache<>(complex.getFluidStream(), x, z, cache);
         this.region = new ChunkedDataCache<>(complex.getRegionStream(), x, z, cache);
         this.floatingIslandBoundarySampler = new FloatingIslandBoundarySampler((wx, wz) -> complex.getTrueBiomeStream().get(wx, wz));
+        this.dimensionStackContext = dimensionStackContext;
+        this.dimensionStackLayouts = dimensionStackContext == null ? null : new DimensionStackLayout[256];
 
         if (cache) {
             PrefillPlan resolvedPlan = prefillPlan == null ? PrefillPlan.NO_CAVE : prefillPlan;
@@ -163,6 +182,19 @@ public class ChunkContext {
 
     public ChunkedDataCache<IrisRegion> getRegion() {
         return region;
+    }
+
+    public DimensionStackLayout getDimensionStackLayout(int localX, int localZ) {
+        if (dimensionStackContext == null) {
+            return null;
+        }
+        int index = (localZ << 4) | localX;
+        DimensionStackLayout layout = dimensionStackLayouts[index];
+        if (layout == null) {
+            layout = dimensionStackContext.sample(x + localX, z + localZ);
+            dimensionStackLayouts[index] = layout;
+        }
+        return layout;
     }
 
     public enum PrefillPlan {

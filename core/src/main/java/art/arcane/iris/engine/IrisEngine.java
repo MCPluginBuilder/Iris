@@ -501,8 +501,12 @@ public class IrisEngine implements Engine {
     }
 
     public void hotloadSilently() {
-        nativeStructureVolumeMemo.clear();
         hotloader.hotloadSilently();
+    }
+
+    void prepareRuntimeHotload() {
+        nativeStructureVolumeMemo.clear();
+        platformHooks.prepareRuntimeHotload(this);
     }
 
     @Override
@@ -630,6 +634,16 @@ public class IrisEngine implements Engine {
         }
         EngineRuntime current = runtime;
         return current == null ? null : current.upperContext();
+    }
+
+    @Override
+    public DimensionStackContext getDimensionStackContext() {
+        RuntimeAssembly assembly = runtimeAssembly.get();
+        if (assembly != null) {
+            return assembly.dimensionStackContext;
+        }
+        EngineRuntime current = runtime;
+        return current == null ? null : current.dimensionStackContext();
     }
 
     @Override

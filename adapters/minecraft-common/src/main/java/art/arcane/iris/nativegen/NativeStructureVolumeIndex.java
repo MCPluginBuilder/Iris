@@ -89,6 +89,18 @@ public final class NativeStructureVolumeIndex {
         }
     }
 
+    public static void invalidate(Engine engine) {
+        if (engine == null) {
+            return;
+        }
+        synchronized (INDEXES) {
+            NativeStructureVolumeIndex current = INDEXES.get(engine);
+            if (current != null) {
+                INDEXES.put(engine, current.fresh());
+            }
+        }
+    }
+
     public static KList<NativeStructureVolume> volumes(Engine engine, int minX, int minZ, int maxX, int maxZ) {
         NativeStructureVolumeIndex index = engine == null ? null : INDEXES.get(engine);
         return index == null ? NativeStructureVolume.NONE : index.resolve(engine, minX, minZ, maxX, maxZ);
@@ -100,6 +112,12 @@ public final class NativeStructureVolumeIndex {
 
     static int originReachChunks() {
         return ORIGIN_REACH_CHUNKS;
+    }
+
+    private NativeStructureVolumeIndex fresh() {
+        return context == null
+                ? new NativeStructureVolumeIndex(origins)
+                : new NativeStructureVolumeIndex(context);
     }
 
     KList<NativeStructureVolume> resolve(Engine engine, int minX, int minZ, int maxX, int maxZ) {
@@ -323,7 +341,7 @@ public final class NativeStructureVolumeIndex {
     }
 
     private static IntBinaryOperator surfaceHeight(Engine engine) {
-        return (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight();
+        return (x, z) -> Engine.hostHeight(engine, x, z, true) + engine.getMinHeight();
     }
 
     static KList<NativeStructureVolume> appendPieces(KList<NativeStructureVolume> volumes,

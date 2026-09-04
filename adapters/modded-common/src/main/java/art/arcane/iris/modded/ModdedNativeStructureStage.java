@@ -18,6 +18,8 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
@@ -78,6 +80,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.function.IntBinaryOperator;
+import java.util.function.Predicate;
 
 /**
  * Native (vanilla registry) structure stage for {@link IrisModdedChunkGenerator}. The generator keeps the
@@ -266,7 +269,7 @@ final class ModdedNativeStructureStage {
                         undergroundStep,
                         decision.preserveSourceY(),
                         decision.yBand(),
-                        (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
+                        (x, z) -> Engine.hostHeight(current, x, z, true) + current.getMinHeight());
                 StructureStart wrapped = NativeStructureReferenceEnvelope.wrapForPublication(
                         start, structure, start.getReferences(),
                         NativeStructureTerrainIntegrator.resolveNativeTerrain(start, decision.terrain()),
@@ -367,10 +370,14 @@ final class ModdedNativeStructureStage {
                     chunkPos.x(), chunkPos.z(), error);
         }
         IrisStaticObjectLayer staticObjects = current.getDimension().getStaticObjectLayer(current.getData());
-        int staticMinY = current.getMinHeight();
-        WorldGenLevel boundedWorld = staticObjects.isEmpty() ? world : ModdedNativeStructureWorldgenAccess.create(
+        Predicate<BlockPos> protectedPosition = nativeStructureProtection(current, staticObjects);
+        WorldGenLevel boundedWorld = staticObjects.isEmpty()
+                && current.getDimensionStackContext() == null
+                ? world
+                : ModdedNativeStructureWorldgenAccess.create(
                 world, chunkPos, worldgenSurfaceHeight(current, world.getMinY()), worldgenFloorHeight(current, world.getMinY()),
-                position -> staticObjects.contains(position.getX(), position.getY() - staticMinY, position.getZ()));
+                current.getDimensionStackContext() != null,
+                protectedPosition);
         try {
             NativeStructureVegetationClearer.clearIntersectingVegetation(
                     boundedWorld, chunk, area, vegetationTargets);
@@ -383,7 +390,7 @@ final class ModdedNativeStructureStage {
         try {
             vacuumFoundationPlan = NativeStructureSurfaceFitter.prepareSurfaceStructures(
                     boundedWorld, area, terrainTargets,
-                    (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
+                    (x, z) -> Engine.hostHeight(current, x, z, true) + current.getMinHeight());
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "terrain integration", nativeStructureBatchContext(placementGroups),
@@ -443,16 +450,48 @@ final class ModdedNativeStructureStage {
                                        IrisNativeStructureDecision decision) {
         Engine current = generator.engine();
         WorldGenLevel boundedWorld = world instanceof ModdedNativeStructureWorldgenAccess ? world : ModdedNativeStructureWorldgenAccess.create(
-                world, chunkPos, worldgenSurfaceHeight(current, world.getMinY()), worldgenFloorHeight(current, world.getMinY()), position -> false);
+                world,
+                chunkPos,
+                worldgenSurfaceHeight(current, world.getMinY()),
+                worldgenFloorHeight(current, world.getMinY()),
+                current.getDimensionStackContext() != null,
+                nativeStructureProtection(
+                        current,
+                        current.getDimension().getStaticObjectLayer(current.getData())));
         world.setCurrentlyGenerating(() -> "Iris native structure " + structureId);
         try {
             NativeStructurePostProcessor.place(
                     boundedWorld, structureManager, generator, random, area, chunkPos,
                     structureId, start, decision, this::resolvePaletteBlock,
-                    (x, z) -> current.getHeight(x, z, true) + current.getMinHeight());
+                    (x, z) -> Engine.hostHeight(current, x, z, true) + current.getMinHeight());
         } finally {
             world.setCurrentlyGenerating(null);
         }
+    }
+
+    private static Predicate<BlockPos> nativeStructureProtection(
+            Engine engine,
+            IrisStaticObjectLayer staticObjects
+    ) {
+        DimensionStackContext stackContext = engine.getDimensionStackContext();
+        int minimumY = engine.getMinHeight();
+        Map<Long, DimensionStackLayout> layouts = new ConcurrentHashMap<>();
+        return position -> {
+            if (!staticObjects.isEmpty() && staticObjects.contains(
+                    position.getX(), position.getY() - minimumY, position.getZ())) {
+                return true;
+            }
+            if (stackContext == null) {
+                return false;
+            }
+            long columnKey = ((long) position.getX() << 32)
+                    ^ (position.getZ() & 0xFFFFFFFFL);
+            DimensionStackLayout layout = layouts.computeIfAbsent(
+                    columnKey,
+                    ignored -> stackContext.sample(position.getX(), position.getZ())
+            );
+            return layout.isHostFeatureProtectedY(position.getY() - minimumY);
+        };
     }
 
     private List<List<Structure>> structuresByStep(Registry<Structure> registry) {
@@ -523,11 +562,11 @@ final class ModdedNativeStructureStage {
     }
 
     private IntBinaryOperator worldgenSurfaceHeight(Engine generationEngine, int runtimeMinY) {
-        return (x, z) -> generationEngine.getHeight(x, z, false) + runtimeMinY + 1;
+        return (x, z) -> Engine.hostHeight(generationEngine, x, z, false) + runtimeMinY + 1;
     }
 
     private IntBinaryOperator worldgenFloorHeight(Engine generationEngine, int runtimeMinY) {
-        return (x, z) -> generationEngine.getHeight(x, z, true) + runtimeMinY + 1;
+        return (x, z) -> Engine.hostHeight(generationEngine, x, z, true) + runtimeMinY + 1;
     }
 
     private record NativeStructureStartKey(String structureId, long chunkPosition) {

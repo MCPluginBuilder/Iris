@@ -62,7 +62,6 @@ final class ModdedDimensionMetadata {
 
     static Set<String> collectConfiguredBiomeKeys(Iterable<IrisBiome> biomes, String dimensionLoadKey) {
         LinkedHashSet<String> keys = new LinkedHashSet<>();
-        String namespace = dimensionLoadKey.toLowerCase(Locale.ROOT);
         for (IrisBiome irisBiome : biomes) {
             if (irisBiome == null) {
                 continue;
@@ -75,7 +74,7 @@ final class ModdedDimensionMetadata {
                 continue;
             }
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                keys.add(namespace + ":" + customBiome.getId().toLowerCase(Locale.ROOT));
+                keys.add(IrisDimension.customBiomeKey(dimensionLoadKey, customBiome.getId()));
             }
         }
         return Set.copyOf(keys);

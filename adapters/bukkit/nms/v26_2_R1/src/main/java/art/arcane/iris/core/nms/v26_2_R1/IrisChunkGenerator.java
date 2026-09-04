@@ -1,5 +1,7 @@
 package art.arcane.iris.core.nms.v26_2_R1;
 
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
@@ -115,6 +117,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntBinaryOperator;
+import java.util.function.Predicate;
 
 public class IrisChunkGenerator extends CustomChunkGenerator {
     private static final WrappedField<ChunkGenerator, BiomeSource> BIOME_SOURCE;
@@ -429,7 +432,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                         undergroundStep,
                         decision.preserveSourceY(),
                         decision.yBand(),
-                        (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
+                        (x, z) -> Engine.hostHeight(engine, x, z, true) + engine.getMinHeight());
                 StructureStart wrapped = NativeStructureReferenceEnvelope.wrapForPublication(
                         start, structure, start.getReferences(),
                         NativeStructureTerrainIntegrator.resolveNativeTerrain(start, decision.terrain()),
@@ -726,6 +729,14 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         return (x, z) -> engine.getHeight(x, z, true) + runtimeMinY + 1;
     }
 
+    private IntBinaryOperator hostWorldgenSurfaceHeight() {
+        return (x, z) -> Engine.hostHeight(engine, x, z, false) + runtimeMinY + 1;
+    }
+
+    private IntBinaryOperator hostWorldgenFloorHeight() {
+        return (x, z) -> Engine.hostHeight(engine, x, z, true) + runtimeMinY + 1;
+    }
+
     @Override
     public WeightedList<MobSpawnSettings.SpawnerData> getMobsAt(Holder<Biome> holder, StructureManager structuremanager, MobCategory enumcreaturetype, BlockPos blockposition) {
         Holder<Biome> vanillaSpawnBiome = customBiomeSource.getVanillaSpawnBiome(holder);
@@ -868,17 +879,22 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         }
         try {
             WorldgenTerrainHeightmaps.primeStructurePlacement(
-                    world, chunkPos, heightmapStarts, worldgenSurfaceHeight(), worldgenFloorHeight());
+                    world, chunkPos, heightmapStarts,
+                    hostWorldgenSurfaceHeight(), hostWorldgenFloorHeight());
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "heightmap priming", nativeStructureBatchContext(placementGroups),
                     chunkPos.x(), chunkPos.z(), error);
         }
         IrisStaticObjectLayer staticObjects = engine.getDimension().getStaticObjectLayer(engine.getData());
-        int staticMinY = engine.getMinHeight();
-        WorldGenLevel boundedWorld = staticObjects.isEmpty() ? world : NativeStructureWorldgenAccess.create(
-                world, chunkPos, worldgenSurfaceHeight(), worldgenFloorHeight(),
-                position -> staticObjects.contains(position.getX(), position.getY() - staticMinY, position.getZ()));
+        Predicate<BlockPos> protectedPosition = nativeStructureProtection(staticObjects);
+        WorldGenLevel boundedWorld = staticObjects.isEmpty()
+                && engine.getDimensionStackContext() == null
+                ? world
+                : NativeStructureWorldgenAccess.create(
+                world, chunkPos, hostWorldgenSurfaceHeight(), hostWorldgenFloorHeight(),
+                engine.getDimensionStackContext() != null,
+                protectedPosition);
         try {
             NativeStructureVegetationClearer.clearIntersectingVegetation(
                     boundedWorld, chunk, area, vegetationTargets);
@@ -891,7 +907,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         try {
             vacuumFoundationPlan = NativeStructureSurfaceFitter.prepareSurfaceStructures(
                     boundedWorld, area, terrainTargets,
-                    (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
+                    (x, z) -> Engine.hostHeight(engine, x, z, true) + engine.getMinHeight());
         } catch (Throwable error) {
             throw NativeStructureGenerationException.failure(
                     "terrain integration", nativeStructureBatchContext(placementGroups),
@@ -945,15 +961,43 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                                        BoundingBox area, ChunkPos chunkPos, String structureId, StructureStart start,
                                        IrisNativeStructureDecision decision) {
         WorldGenLevel boundedWorld = world instanceof NativeStructureWorldgenAccess ? world : NativeStructureWorldgenAccess.create(
-                world, chunkPos, worldgenSurfaceHeight(), worldgenFloorHeight(), position -> false);
+                world,
+                chunkPos,
+                hostWorldgenSurfaceHeight(),
+                hostWorldgenFloorHeight(),
+                engine.getDimensionStackContext() != null,
+                nativeStructureProtection(
+                        engine.getDimension().getStaticObjectLayer(engine.getData())));
         world.setCurrentlyGenerating(() -> "Iris native structure " + structureId);
         try {
             NativeStructurePostProcessor.place(boundedWorld, structureManager, this, random, area, chunkPos,
                     structureId, start, decision, this::resolvePaletteBlock,
-                    (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight());
+                    (x, z) -> Engine.hostHeight(engine, x, z, true) + engine.getMinHeight());
         } finally {
             world.setCurrentlyGenerating(null);
         }
+    }
+
+    private Predicate<BlockPos> nativeStructureProtection(IrisStaticObjectLayer staticObjects) {
+        DimensionStackContext stackContext = engine.getDimensionStackContext();
+        int minimumY = engine.getMinHeight();
+        Map<Long, DimensionStackLayout> layouts = new ConcurrentHashMap<>();
+        return position -> {
+            if (!staticObjects.isEmpty() && staticObjects.contains(
+                    position.getX(), position.getY() - minimumY, position.getZ())) {
+                return true;
+            }
+            if (stackContext == null) {
+                return false;
+            }
+            long columnKey = ((long) position.getX() << 32)
+                    ^ (position.getZ() & 0xFFFFFFFFL);
+            DimensionStackLayout layout = layouts.computeIfAbsent(
+                    columnKey,
+                    ignored -> stackContext.sample(position.getX(), position.getZ())
+            );
+            return layout.isHostFeatureProtectedY(position.getY() - minimumY);
+        };
     }
 
     private List<List<Structure>> structuresByStep(Registry<Structure> registry) {
@@ -1041,7 +1085,17 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     @Override
     public void spawnOriginalMobs(WorldGenRegion region) {
         ChunkPos center = region.getCenter();
-        Holder<Biome> visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
+        Holder<Biome> visibleBiome;
+        if (engine.getDimensionStackContext() == null) {
+            visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
+        } else {
+            visibleBiome = customBiomeSource.getVisibleSurfaceBiome(
+                    center.getMinBlockX() + 8,
+                    center.getMinBlockZ() + 8);
+            if (visibleBiome == null) {
+                visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
+            }
+        }
         Holder<Biome> vanillaBiome = customBiomeSource.getVanillaSpawnBiome(visibleBiome);
         WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
         random.setDecorationSeed(region.getSeed(), center.getMinBlockX(), center.getMinBlockZ());
@@ -1081,9 +1135,12 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     public int getBaseHeight(int i, int j, Heightmap.Types heightmap_type, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
         try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_height");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            boolean ignoreFluid = !heightmap_type.isOpaque().test(Blocks.WATER.defaultBlockState());
+            int height = engine.getDimensionStackContext() == null
+                    ? engine.getHeight(i, j, ignoreFluid)
+                    : Engine.hostHeight(engine, i, j, ignoreFluid);
             return levelheightaccessor.getMinY()
-                    + engine.getHeight(i, j, !heightmap_type.isOpaque().test(Blocks.WATER.defaultBlockState()))
-                    + 1;
+                    + height + 1;
         } catch (GenerationSessionException e) {
             throw new IllegalStateException("Iris base height query could not acquire its engine runtime.", e);
         }
@@ -1093,8 +1150,13 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     public NoiseColumn getBaseColumn(int i, int j, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
         try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_column");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-            int block = engine.getHeight(i, j, true);
-            int water = engine.getHeight(i, j, false);
+            boolean dimensionStack = engine.getDimensionStackContext() != null;
+            int block = dimensionStack
+                    ? Engine.hostHeight(engine, i, j, true)
+                    : engine.getHeight(i, j, true);
+            int water = dimensionStack
+                    ? Engine.hostHeight(engine, i, j, false)
+                    : engine.getHeight(i, j, false);
             BlockState[] column = new BlockState[levelheightaccessor.getHeight()];
             for (int k = 0; k < column.length; k++) {
                 if (k <= block) {

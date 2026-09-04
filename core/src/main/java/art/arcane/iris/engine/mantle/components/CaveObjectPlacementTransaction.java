@@ -227,7 +227,7 @@ final class CaveObjectPlacementTransaction implements IObjectPlacer {
         if (cached != CACHE_MISS) {
             return cached;
         }
-        int surfaceY = engine.getHeight(x, z, true);
+        int surfaceY = Engine.hostHeight(engine, x, z, true);
         surfaceHeights.put(key, surfaceY);
         return surfaceY;
     }

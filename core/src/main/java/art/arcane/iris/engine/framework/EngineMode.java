@@ -151,7 +151,16 @@ public interface EngineMode extends Staged {
     default void generate(int x, int z, Hunk<PlatformBlockState> blocks, Hunk<PlatformBiome> biomes, boolean multicore, long generationSessionId) {
         boolean cacheContext = !getEngine().getPlatformHooks().shouldDisableChunkContextCache(getEngine());
         ChunkContext.PrefillPlan prefillPlan = cacheContext ? ChunkContext.PrefillPlan.NO_CAVE : ChunkContext.PrefillPlan.NONE;
-        ChunkContext ctx = new ChunkContext(x, z, getComplex(), generationSessionId, cacheContext, prefillPlan, getEngine().getMetrics());
+        ChunkContext ctx = new ChunkContext(
+                x,
+                z,
+                getComplex(),
+                generationSessionId,
+                cacheContext,
+                prefillPlan,
+                getEngine().getMetrics(),
+                getEngine().getDimensionStackContext()
+        );
 
         EngineStage[] stages = getStages().toArray(new EngineStage[0]);
         try (IrisContext.Scope chunkScope = IrisContext.open(getEngine(), generationSessionId, ctx)) {

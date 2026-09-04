@@ -21,6 +21,7 @@ package art.arcane.iris.core.project;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.volmlib.util.format.Form;
 import art.arcane.volmlib.util.io.IO;
+import art.arcane.volmlib.util.json.JSONArray;
 import art.arcane.volmlib.util.json.JSONObject;
 
 import java.io.File;
@@ -179,17 +180,56 @@ public final class IrisProjectCopier {
     }
 
     private static void transformDimension(Path stage, String sourceKey, String targetKey) throws IOException {
-        Path oldDimension = stage.resolve("dimensions").resolve(sourceKey + ".json");
-        Path newDimension = stage.resolve("dimensions").resolve(targetKey + ".json");
+        Path dimensionsRoot = stage.resolve("dimensions");
+        Path oldDimension = dimensionsRoot.resolve(sourceKey + ".json");
+        Path newDimension = dimensionsRoot.resolve(targetKey + ".json");
         if (!oldDimension.equals(newDimension)) {
             Files.move(oldDimension, newDimension);
         }
 
-        JSONObject json = new JSONObject(IO.readAll(newDimension.toFile()));
-        if (json.has("name")) {
-            json.put("name", Form.capitalizeWords(targetKey.replace('-', ' ')));
-            IO.writeAll(newDimension.toFile(), json.toString(4));
+        try (Stream<Path> files = Files.walk(dimensionsRoot)) {
+            for (Path dimensionFile : files.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                    .filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .sorted()
+                    .toList()) {
+                JSONObject json = new JSONObject(IO.readAll(dimensionFile.toFile()));
+                boolean changed = false;
+                if (dimensionFile.equals(newDimension) && json.has("name")) {
+                    json.put("name", Form.capitalizeWords(targetKey.replace('-', ' ')));
+                    changed = true;
+                }
+                if (rewriteDimensionStackReferences(json, sourceKey, targetKey)) {
+                    changed = true;
+                }
+                if (changed) {
+                    IO.writeAll(dimensionFile.toFile(), json.toString(4));
+                }
+            }
         }
+    }
+
+    private static boolean rewriteDimensionStackReferences(JSONObject json, String sourceKey, String targetKey) {
+        JSONObject stack = json.optJSONObject("dimensionStack");
+        JSONArray dimensions = stack == null ? null : stack.optJSONArray("dimensions");
+        if (dimensions == null) {
+            return false;
+        }
+
+        boolean changed = false;
+        JSONArray rewritten = new JSONArray();
+        for (int index = 0; index < dimensions.length(); index++) {
+            Object value = dimensions.opt(index);
+            if (sourceKey.equals(value)) {
+                rewritten.put(targetKey);
+                changed = true;
+            } else {
+                rewritten.put(value == null ? JSONObject.NULL : value);
+            }
+        }
+        if (changed) {
+            stack.put("dimensions", rewritten);
+        }
+        return changed;
     }
 
     private static void publish(Path stage, Path target) throws IOException {

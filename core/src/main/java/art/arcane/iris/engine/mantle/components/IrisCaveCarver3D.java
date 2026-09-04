@@ -286,7 +286,7 @@ public class IrisCaveCarver3D {
                     if (precomputedSurfaceHeights != null && precomputedSurfaceHeights.length > index) {
                         columnSurfaceY = precomputedSurfaceHeights[index];
                     } else {
-                        columnSurfaceY = engine.getHeight(x, z);
+                        columnSurfaceY = Engine.hostHeight(engine, x, z, true);
                     }
                     int unclampedClearanceTopY = columnSurfaceY - surfaceClearance;
                     int clearanceTopY = Math.min(maxY, Math.max(minY, unclampedClearanceTopY));

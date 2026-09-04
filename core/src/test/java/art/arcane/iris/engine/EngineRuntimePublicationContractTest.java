@@ -37,6 +37,20 @@ public class EngineRuntimePublicationContractTest {
         assertBefore(publish, "sealAndAwait(", "closeRuntime(next, e)");
     }
 
+    @Test
+    public void dimensionStackRunsAfterHostStaticObjects() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/engine/EngineRuntimeBuilder.java")).replace("\r\n", "\n");
+        int buildStart = source.indexOf("EngineRuntime buildRuntime(EngineTarget runtimeTarget)");
+        int buildEnd = source.indexOf("DimensionStackContext buildDimensionStackContext", buildStart);
+        String build = source.substring(buildStart, buildEnd);
+
+        assertBefore(build, "staticObjects.apply(engine, x, z, blocks)",
+                "dimensionStack.actuate(x, z, blocks, multicore, context)");
+        assertBefore(build, "dimensionStack.actuate(x, z, blocks, multicore, context)",
+                "stackCustom.modify(x, z, blocks, multicore, context)");
+    }
+
     private static void assertBefore(String source, String first, String second) {
         int firstIndex = source.indexOf(first);
         int secondIndex = source.indexOf(second);

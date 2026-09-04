@@ -59,15 +59,22 @@ final class EngineHotloader {
             IrisComplex nextComplex = null;
             try {
                 engine.sealForTransition("complex hotload", false);
+                engine.prepareRuntimeHotload();
                 RuntimeAssembly assembly = new RuntimeAssembly(RuntimeAssembly.nextRuntimeId(), previous.target());
                 engine.runtimeAssembly.set(assembly);
                 EngineRuntime next;
                 try (IrisContext.Scope ignored = IrisContext.open(engine, engine.getGenerationSessions().currentSessionId(), null)) {
                     assembly.complex = new IrisComplex(engine);
                     nextComplex = assembly.complex;
+                    assembly.dimensionStackContext = engine.runtimeBuilder.buildDimensionStackContext();
                     assembly.upperContext = engine.runtimeBuilder.buildUpperContext();
                     BiomeMaxes biomeMaxes = engine.runtimeBuilder.computeBiomeMaxes();
-                    next = previous.withComplex(assembly.cacheId, assembly.complex, assembly.upperContext, biomeMaxes);
+                    next = previous.withComplex(
+                            assembly.cacheId,
+                            assembly.complex,
+                            assembly.upperContext,
+                            assembly.dimensionStackContext,
+                            biomeMaxes);
                 } finally {
                     engine.runtimeAssembly.remove();
                 }
@@ -110,6 +117,7 @@ final class EngineHotloader {
             boolean published = false;
             try {
                 engine.sealForTransition("hotload", false);
+                engine.prepareRuntimeHotload();
                 replacementData = IrisData.openRuntime(previousData.getDataFolder());
                 IrisDimension replacement = replacementData.getDimensionLoader().load(previousDimension.getLoadKey());
                 if (replacement == null) {

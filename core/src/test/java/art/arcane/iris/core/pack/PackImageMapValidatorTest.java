@@ -318,6 +318,48 @@ public class PackImageMapValidatorTest {
     }
 
     @Test
+    public void validatesStackLayerCoverageAgainstHostBoundary() throws Exception {
+        File pack = createPack("stack-host-boundary", """
+                {
+                  "regions": ["region"],
+                  "worldBoundary": {"center": {"x": 0, "z": 0}, "size": 16},
+                  "dimensionStack": {
+                    "dimensions": ["upper", "upper", "main"],
+                    "spacer": 24
+                  }
+                }
+                """);
+        write(pack, "dimensions/upper.json", """
+                {
+                  "regions": ["region"],
+                  "worldBoundary": {"center": {"x": 0, "z": 0}, "size": 2},
+                  "imageMaps": [
+                    {"key": "terrain", "map": "upper-terrain", "application": "TERRAIN_HEIGHT"}
+                  ]
+                }
+                """);
+        writeGray(pack, "upper-terrain", 4, 4);
+        write(pack, "image-maps/upper-terrain.json", """
+                {
+                  "source": "upper-terrain",
+                  "type": "GRAYSCALE_HEIGHT",
+                  "origin": {"x": -2, "z": -2},
+                  "outOfBounds": "ERROR"
+                }
+                """);
+
+        PackImageMapValidator.Validation validation = validate(pack, false);
+
+        assertTrue(validation.errors().toString(), contains(validation.errors(),
+                "Dimension 'main' dimension stack layer 'upper' image-map 'terrain' source footprint does not cover"));
+        assertEquals(1L, validation.errors().stream()
+                .filter(error -> error.contains("Dimension 'main' dimension stack layer 'upper'"))
+                .count());
+        assertFalse(validation.errors().toString(), contains(validation.errors(),
+                "Dimension 'upper' image-map 'terrain' source footprint does not cover"));
+    }
+
+    @Test
     public void acceptsUpperDimensionWithoutStandaloneBoundaryWhenParentIsCovered() throws Exception {
         File pack = createPack("upper-parent-only-boundary", """
                 {

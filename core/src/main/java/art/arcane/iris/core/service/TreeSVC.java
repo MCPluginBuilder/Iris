@@ -326,7 +326,10 @@ public class TreeSVC implements IrisService {
 
         // Add more or find any in the region
         if (isUseAll || placements.isEmpty()) {
-            IrisRegion region = worldAccess.getEngine().getRegion(location.getBlockX(), location.getBlockZ());
+            IrisRegion region = worldAccess.getEngine().getRegion(
+                    location.getBlockX(),
+                    location.getBlockY() - worldAccess.getTarget().getWorld().minHeight(),
+                    location.getBlockZ());
             placements.addAll(matchObjectPlacements(region.getObjects(), size, type, worldAccess.getData()));
         }
 

@@ -1,8 +1,10 @@
 package art.arcane.iris.core;
 
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.IrisGeneratorBinding;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.v1217.DataFixerV1217;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.json.JSONObject;
 import org.junit.Rule;
@@ -86,6 +88,26 @@ public class IrisDatapackCompilerTest {
         assertTrue(result.dimensionCount() > 0);
         assertTrue(result.biomeCount() > 0);
         assertTrue(Files.isRegularFile(datapackRoot.resolve("pack.mcmeta")));
+    }
+
+    @Test
+    public void compilesRecursiveDimensionBiomeToCanonicalRegistryPath() throws Exception {
+        Path packRoot = temporaryFolder.newFolder("recursive-dimension-pack").toPath();
+        Path datapackRoot = temporaryFolder.newFolder("recursive-dimension-datapack").toPath();
+        createPack(packRoot, "layers/sky", "Aurora");
+
+        IrisDatapackCompiler.compile(
+                List.of(packRoot.toFile()),
+                new KList<File>().qadd(datapackRoot.toFile()),
+                List.of(),
+                new DataFixerV1217(),
+                false
+        );
+
+        assertTrue(Files.isRegularFile(
+                datapackRoot.resolve("data/layers/worldgen/biome/sky/aurora.json")));
+        assertTrue(Files.isRegularFile(
+                datapackRoot.resolve("data/iris/dimension_type/layers_sky.json")));
     }
 
     @Test
@@ -253,6 +275,57 @@ public class IrisDatapackCompilerTest {
     }
 
     @Test
+    public void stackRuntimeRequirementsIncludeSourceDimensionRegistries() throws Exception {
+        Path pack = temporaryFolder.newFolder("registry-stack-pack").toPath();
+        createPack(pack, "host", "stack_custom", "NORMAL");
+        Files.writeString(
+                pack.resolve("dimensions/host.json"),
+                """
+                        {
+                          "name": "Host",
+                          "environment": "NORMAL",
+                          "logicalHeight": 256,
+                          "dimensionHeight": {"min": -64, "max": 320},
+                          "dimensionStack": {
+                            "dimensions": ["layers/source", "host"],
+                            "spacer": 8
+                          }
+                        }
+                        """,
+                StandardCharsets.UTF_8
+        );
+        Files.createDirectories(pack.resolve("dimensions/layers"));
+        Files.writeString(
+                pack.resolve("dimensions/layers/source.json"),
+                """
+                        {
+                          "name": "Source",
+                          "environment": "NORMAL",
+                          "logicalHeight": 256,
+                          "dimensionHeight": {"min": -64, "max": 320}
+                        }
+                        """,
+                StandardCharsets.UTF_8
+        );
+
+        IrisData data = IrisData.openDatapackCompiler(pack.toFile());
+        try {
+            IrisDimension host = data.getDimensionLoader().load("host");
+            Map<String, String> requirements = IrisDatapackCompiler.computeRegistryRequirements(
+                    host,
+                    new DataFixerV1217()
+            );
+
+            assertTrue(requirements.containsKey("dimension_type/iris:host"));
+            assertTrue(requirements.containsKey("dimension_type/iris:layers_source"));
+            assertTrue(requirements.containsKey("worldgen/biome/host:stack_custom"));
+            assertTrue(requirements.containsKey("worldgen/biome/layers:source/stack_custom"));
+        } finally {
+            data.close();
+        }
+    }
+
+    @Test
     public void rejectsBindingToMissingDimension() throws Exception {
         Path packRoot = temporaryFolder.newFolder("missing-binding-pack").toPath();
         Path datapackRoot = temporaryFolder.newFolder("missing-binding-datapack").toPath();
@@ -325,6 +398,7 @@ public class IrisDatapackCompilerTest {
     ) throws Exception {
         Files.createDirectories(root.resolve("dimensions"));
         Files.createDirectories(root.resolve("biomes"));
+        Files.createDirectories(root.resolve("dimensions").resolve(dimensionKey).getParent());
         Files.writeString(
                 root.resolve("dimensions").resolve(dimensionKey + ".json"),
                 """

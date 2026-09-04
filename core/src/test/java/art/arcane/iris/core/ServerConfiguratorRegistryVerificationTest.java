@@ -80,6 +80,7 @@ public class ServerConfiguratorRegistryVerificationTest {
         IrisDimension dimension = mock(IrisDimension.class);
         when(dimension.getAllBiomes(any())).thenReturn(new KList<>(biome));
         when(dimension.getLoadKey()).thenReturn("overworld");
+        when(dimension.getCustomBiomeKey("missing")).thenReturn("overworld:missing");
         when(dimension.getLoadFile()).thenReturn(
                 new File("packs/overworld/dimensions/overworld.json"));
         when(dimension.getDimensionTypeKey()).thenReturn("iris:overworld");

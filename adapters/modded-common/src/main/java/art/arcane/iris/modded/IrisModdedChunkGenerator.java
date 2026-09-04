@@ -30,6 +30,7 @@ import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.nativegen.NativeStructureStartInjector;
 import art.arcane.iris.nativegen.NativeStructureReferenceRepair;
 import art.arcane.iris.nativegen.NativeStructureVanillaLocator;
+import art.arcane.iris.nativegen.NativeStructureVolumeIndex;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -89,7 +90,9 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -181,11 +184,18 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         }
         requireGlobalStructureGeneration(
                 level.getServer().getWorldGenSettings().options().generateStructures(), dimensionKey);
+        Engine activeEngine = engineIfBound();
         Engine replacement = ModdedWorldEngines.prepareReplacement(level, pack, packDimensionKey, seed);
         try {
+            if (activeEngine != null) {
+                requireStructureBiomeUniverseCompatible(
+                        activeEngine.getDimension(), replacement.getDimension());
+            }
+            nativeStructures.installVolumeIndex(level, replacement);
             ModdedWorldEngines.installReplacement(level, replacement);
             replacement.getPlatformHooks().applyWorldBoundary(replacement);
         } catch (Throwable error) {
+            NativeStructureVolumeIndex.uninstall(replacement);
             try {
                 ModdedWorldEngines.closeUnregistered(replacement);
             } catch (Throwable cleanupError) {
@@ -203,17 +213,14 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         this.activePack = pack;
         this.activeDimensionKey = packDimensionKey;
         this.seedOverride = seed;
-        this.engine = replacement;
         this.configuredStructureBiomeKeys = null;
         this.configuredPack = null;
         this.heightMetadata = engineHeights(replacement);
         this.engineBinding.reset();
-        this.engineBinding.complete(replacement);
         this.announced.set(false);
-        this.structureBiomeSource.clearCaches();
-        this.importedFeatures.invalidate();
-        this.nativeStructures.clearWorldCheckStructureShifts();
-        this.spawnTables.resetVanillaSpawnBiomes();
+        resetRuntimeCaches();
+        this.engine = replacement;
+        this.engineBinding.complete(replacement);
         // Bind time: a feature-order cycle in the new pack is reported here, once, and degrades to features-off.
         // Never waits on a build owned by another thread: this method owns the generator monitor and the build
         // path can need it.
@@ -751,7 +758,38 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         return lastChunkGenAt;
     }
 
-    public void onHotload() {
+    public void prepareRuntimeHotload(ServerLevel level, Engine current) {
+        if (this.engine != current || level.getChunkSource().getGenerator() != this) {
+            throw new IllegalStateException("Iris generator '" + dimensionKey
+                    + "' cannot prepare caches for an unrelated engine hotload");
+        }
+        resetRuntimeCaches();
+        nativeStructures.installVolumeIndex(level, current);
+    }
+
+    public static void requireStructureBiomeUniverseCompatible(
+            IrisDimension active,
+            IrisDimension replacement
+    ) {
+        IrisData activeData = Objects.requireNonNull(active.getLoader(),
+                "Active Iris dimension has no pack loader");
+        IrisData replacementData = Objects.requireNonNull(replacement.getLoader(),
+                "Replacement Iris dimension has no pack loader");
+        requireStructureBiomeUniverseCompatible(
+                IrisModdedBiomeSource.collectStructureBiomeKeys(active, activeData),
+                IrisModdedBiomeSource.collectStructureBiomeKeys(replacement, replacementData));
+    }
+
+    static void requireStructureBiomeUniverseCompatible(Set<String> active, Set<String> replacement) {
+        if (active.equals(replacement)) {
+            return;
+        }
+        throw new IllegalArgumentException("Iris cannot hotload a changed host structure-biome derivative set "
+                + "from " + new TreeSet<>(active) + " to " + new TreeSet<>(replacement)
+                + ". Restart the server so Minecraft can rebuild its immutable structure state.");
+    }
+
+    private void resetRuntimeCaches() {
         configuredStructureBiomeKeys = null;
         structureBiomeSource.clearCaches();
         importedFeatures.invalidate();
@@ -986,7 +1024,17 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         Registry<Biome> registry = region.registryAccess().lookupOrThrow(Registries.BIOME);
         spawnTables.initializeVanillaSpawnBiomes(registry);
         ChunkPos center = region.getCenter();
-        Holder<Biome> visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
+        Holder<Biome> visibleBiome;
+        if (engine == null || engine.getDimensionStackContext() == null) {
+            visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
+        } else {
+            visibleBiome = structureBiomeSource.getVisibleSurfaceBiome(
+                    center.getMinBlockX() + 8,
+                    center.getMinBlockZ() + 8);
+            if (visibleBiome == null) {
+                visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
+            }
+        }
         Holder<Biome> vanillaBiome = spawnTables.vanillaSpawnBiome(visibleBiome.value());
         WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
         random.setDecorationSeed(region.getSeed(), center.getMinBlockX(), center.getMinBlockZ());
@@ -1029,7 +1077,10 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         boolean ignoreFluid = !type.isOpaque().test(Blocks.WATER.defaultBlockState());
         try (GenerationSessionLease lease = current.acquireGenerationLease("modded_base_height");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
-            return heightAccessor.getMinY() + current.getHeight(x, z, ignoreFluid) + 1;
+            int height = current.getDimensionStackContext() == null
+                    ? current.getHeight(x, z, ignoreFluid)
+                    : Engine.hostHeight(current, x, z, ignoreFluid);
+            return heightAccessor.getMinY() + height + 1;
         } catch (GenerationSessionException e) {
             throw new IllegalStateException("Iris base height query could not acquire its engine runtime.", e);
         }
@@ -1043,8 +1094,13 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         try (GenerationSessionLease lease = current.acquireGenerationLease("modded_base_column");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
             BlockState airState = Blocks.AIR.defaultBlockState();
-            int surface = current.getHeight(x, z, true);
-            int fluid = current.getHeight(x, z, false);
+            boolean dimensionStack = current.getDimensionStackContext() != null;
+            int surface = dimensionStack
+                    ? Engine.hostHeight(current, x, z, true)
+                    : current.getHeight(x, z, true);
+            int fluid = dimensionStack
+                    ? Engine.hostHeight(current, x, z, false)
+                    : current.getHeight(x, z, false);
             BlockState stone = Blocks.STONE.defaultBlockState();
             BlockState water = Blocks.WATER.defaultBlockState();
             int solidEnd = Math.max(0, Math.min(states.length, surface + 1));

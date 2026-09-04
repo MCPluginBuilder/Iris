@@ -156,6 +156,9 @@ public interface INMSBinding {
         return NativeStructureVolume.NONE;
     }
 
+    default void invalidateNativeStructureVolumeIndex(Engine engine) {
+    }
+
     int getBiomeId(Biome biome);
 
     MCABiomeContainer newBiomeContainer(int min, int max, int[] data);

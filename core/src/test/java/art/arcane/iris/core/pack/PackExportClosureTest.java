@@ -1,5 +1,7 @@
 package art.arcane.iris.core.pack;
 
+import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisDimensionStack;
 import art.arcane.iris.engine.object.IrisObjectMarker;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisStaticObject;
@@ -9,6 +11,7 @@ import org.junit.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -63,6 +66,38 @@ public class PackExportClosureTest {
                 PackExportClosure.collectStaticObjectKeys(placements).stream().sorted().toList());
     }
 
+    @Test
+    public void collectsRootAndStackedDimensionKeys() {
+        IrisDimension dimension = new IrisDimension();
+        dimension.setLoadKey("main");
+        dimension.setDimensionStack(new IrisDimensionStack()
+                .setDimensions(new KList<>("sky", "middle", "main", "sky")));
+
+        assertEquals(List.of("main", "middle", "sky"),
+                PackExportClosure.collectDimensionKeys(dimension).stream().sorted().toList());
+    }
+
+    @Test
+    public void collectsTransitiveStackDimensionsWithoutLooping() {
+        IrisDimension main = dimension("main", "sky", "main");
+        IrisDimension sky = dimension("sky", "cloud", "sky");
+        IrisDimension cloud = dimension("cloud", "main", "cloud");
+        Map<String, IrisDimension> dimensions = Map.of(
+                "main", main,
+                "sky", sky,
+                "cloud", cloud);
+
+        assertEquals(List.of("cloud", "main", "sky"),
+                PackExportClosure.collectDimensionKeys(main, dimensions::get).stream().sorted().toList());
+    }
+
+    private static IrisDimension dimension(String key, String... stackKeys) {
+        IrisDimension dimension = new IrisDimension();
+        dimension.setLoadKey(key);
+        dimension.setDimensionStack(new IrisDimensionStack().setDimensions(new KList<>(stackKeys)));
+        return dimension;
+    }
+
     /**
      * Source guard: both packagers must export the ambient-spawning graph. Spawner and marker
      * folders were silently omitted from exports, leaving dangling entitySpawners references.
@@ -75,10 +110,16 @@ public class PackExportClosureTest {
         assertTrue("Bukkit packager must write markers/", bukkit.contains("\"markers/\""));
         assertTrue("Bukkit packager must export region objects alongside biome objects",
                 bukkit.contains("regions.forEach((r) -> allPlacements.addAll(r.getObjects()))"));
-        assertTrue("Bukkit packager must export static objects", bukkit.contains("dimension.getStaticObjects()"));
+        assertTrue("Bukkit packager must export static objects",
+                bukkit.contains("exportedDimension.getStaticObjects()"));
         assertTrue("Bukkit obfuscation must rewrite static object references",
                 bukkit.contains("placement.setObject(renameObjects.get(placement.getObject()))"));
         assertTrue("Bukkit packager must export entity loot tables", bukkit.contains("getLoot().getTables()"));
+        assertTrue("Bukkit packager must include dimension-stack resources",
+                bukkit.contains("PackExportClosure.collectDimensionKeys(dimension)"));
+        assertTrue("Bukkit packager must export expression-backed stack blend styles",
+                bukkit.contains("dm.getExpressionLoader().getPossibleKeys()")
+                        && bukkit.contains("\"expressions/\""));
         int bukkitValidation = bukkit.indexOf("PackValidator.validateForPackaging(project.getPath())");
         assertTrue("Bukkit packager must validate before opening or mutating package state",
                 bukkitValidation >= 0
@@ -92,7 +133,14 @@ public class PackExportClosureTest {
         assertTrue("modded packager must include initial spawns", modded.contains("getInitialSpawns"));
         assertTrue("modded packager must export region objects", modded.contains("region.getObjects()"));
         assertTrue("modded packager must export static objects",
-                modded.contains("PackExportClosure.collectStaticObjectKeys(dimension.getStaticObjects())"));
+                modded.contains("PackExportClosure.collectStaticObjectKeys(exportedDimension.getStaticObjects())"));
+        assertTrue("modded packager must include dimension-stack resources",
+                modded.contains("PackExportClosure.collectDimensionKeys(dimension)"));
+        assertTrue("modded packager must export expression-backed stack blend styles",
+                modded.contains("dm.getExpressionLoader().getPossibleKeys()")
+                        && modded.contains("\"expressions\""));
+        assertTrue("modded packager must retain referenced style snippets",
+                modded.contains("copyStyleSnippets(packFolder, folder)"));
         int moddedValidation = modded.indexOf("PackValidator.validateForPackaging(packFolder)");
         assertTrue("modded packager must validate before mutating package state",
                 moddedValidation >= 0 && moddedValidation < modded.indexOf("IO.delete(folder)"));

@@ -40,6 +40,7 @@ import art.arcane.iris.util.common.data.DataProvider;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.iris.util.project.context.IrisContext;
+import art.arcane.iris.util.project.stream.ProceduralStream;
 import lombok.AccessLevel;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -493,6 +494,10 @@ public class IrisBiome extends IrisRegistrant implements IRare {
 
     public KList<PlatformBlockState> generateLayers(IrisDimension dim, double wx, double wz, RNG random, int maxDepth, int height, IrisData rdata, IrisComplex complex) {
         return IrisBiomeLayerGenerator.generateLayers(this, dim, wx, wz, random, maxDepth, height, rdata, complex);
+    }
+
+    public KList<PlatformBlockState> generateLayersWithSlope(IrisDimension dim, double wx, double wz, RNG random, int maxDepth, int height, IrisData rdata, ProceduralStream<Double> slopeStream) {
+        return IrisBiomeLayerGenerator.generateLayers(this, dim, wx, wz, random, maxDepth, height, rdata, slopeStream);
     }
 
     public KList<PlatformBlockState> generateCeilingLayers(IrisDimension dim, double wx, double wz, RNG random, int maxDepth, int height, IrisData rdata, IrisComplex complex) {

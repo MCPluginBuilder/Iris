@@ -4,6 +4,9 @@ import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.MapCodec;
 import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionStackLayout;
+import art.arcane.iris.engine.DimensionTerrainContext;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.GenerationSessionException;
@@ -16,6 +19,7 @@ import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.RNG;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
 import net.minecraft.core.Registry;
@@ -24,6 +28,8 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.RandomSource;
+import net.minecraft.util.Mth;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
@@ -80,27 +86,31 @@ public class CustomBiomeSource extends BiomeSource {
         this.cacheRuntimeId = engine.getCacheID();
     }
 
-    private static List<Holder<Biome>> getAllBiomes(Registry<Biome> customRegistry, Registry<Biome> registry, Engine engine) {
+    private static List<Holder<Biome>> getAllBiomes(
+            Registry<Biome> customRegistry,
+            Registry<Biome> registry,
+            Engine engine,
+            boolean includeDimensionStack
+    ) {
         LinkedHashSet<Holder<Biome>> biomes = new LinkedHashSet<>();
 
-        for (IrisBiome i : engine.getAllBiomes()) {
+        for (OwnedBiome ownedBiome : getHostOwnedBiomes(engine)) {
+            IrisBiome i = ownedBiome.biome();
             Holder<Biome> vanillaHolder = resolveBiomeHolder(registry, i.getStructureDerivativeKey());
             if (vanillaHolder == null) {
                 throw new IllegalStateException("Iris structure biome derivative '"
                         + i.getStructureDerivativeKey() + "' is not registered for biome '" + i.getLoadKey() + "'");
             }
             biomes.add(vanillaHolder);
+        }
 
-            if (i.isCustom()) {
-                for (IrisBiomeCustom j : i.getCustomDerivitives()) {
-                    Holder<Biome> customHolder = resolveCustomBiomeHolder(customRegistry, engine, j.getId());
-                    if (customHolder == null) {
-                        throw new IllegalStateException("Iris custom structure biome '"
-                                + engine.getDimension().getLoadKey() + ":" + j.getId() + "' is not registered");
-                    }
-                    biomes.add(customHolder);
-                }
-            }
+        if (includeDimensionStack) {
+            biomes.addAll(getVisibleBiomes(
+                    customRegistry,
+                    registry,
+                    engine,
+                    resolveFallbackBiome(registry, customRegistry)
+            ));
         }
 
         if (biomes.isEmpty()) {
@@ -108,6 +118,57 @@ public class CustomBiomeSource extends BiomeSource {
                     + "' has no registered structure biomes");
         }
         return new ArrayList<>(biomes);
+    }
+
+    private static List<Holder<Biome>> getVisibleBiomes(
+            Registry<Biome> customRegistry,
+            Registry<Biome> registry,
+            Engine engine,
+            Holder<Biome> fallback
+    ) {
+        LinkedHashSet<Holder<Biome>> biomes = new LinkedHashSet<>();
+        boolean fallbackPossible = false;
+        for (OwnedBiome ownedBiome : getOwnedBiomes(engine)) {
+            IrisBiome irisBiome = ownedBiome.biome();
+            if (irisBiome.isCustom()) {
+                for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
+                    Holder<Biome> customHolder = resolveCustomBiomeHolder(
+                            customRegistry, ownedBiome.dimension(), customBiome.getId());
+                    if (customHolder == null) {
+                        throw new IllegalStateException("Iris custom visible biome '"
+                                + customBiomeKey(ownedBiome.dimension(), customBiome.getId())
+                                + "' is not registered");
+                    }
+                    biomes.add(customHolder);
+                }
+                continue;
+            }
+            fallbackPossible |= !addVisibleBiomeHolder(
+                    biomes, registry, irisBiome.getDerivativeKey());
+            for (String scatter : irisBiome.getBiomeScatter()) {
+                fallbackPossible |= !addVisibleBiomeHolder(biomes, registry, scatter);
+            }
+            for (String scatter : irisBiome.getBiomeSkyScatter()) {
+                fallbackPossible |= !addVisibleBiomeHolder(biomes, registry, scatter);
+            }
+        }
+        if (fallbackPossible && fallback != null) {
+            biomes.add(fallback);
+        }
+        return new ArrayList<>(biomes);
+    }
+
+    private static boolean addVisibleBiomeHolder(
+            Set<Holder<Biome>> biomes,
+            Registry<Biome> registry,
+            String biomeKey
+    ) {
+        Holder<Biome> holder = resolveBiomeHolder(registry, biomeKey);
+        if (holder == null) {
+            return false;
+        }
+        biomes.add(holder);
+        return true;
     }
 
     private static Object getFor(Class<?> type, Object source) {
@@ -175,10 +236,19 @@ public class CustomBiomeSource extends BiomeSource {
 
     @Override
     protected Stream<Holder<Biome>> collectPossibleBiomes() {
-        return possibleStructureBiomes().stream();
+        return possibleBiomes(true).stream();
+    }
+
+    @Override
+    public Set<Holder<Biome>> possibleBiomes() {
+        return possibleBiomes(true);
     }
 
     Set<Holder<Biome>> possibleStructureBiomes() {
+        return possibleBiomes(false);
+    }
+
+    private Set<Holder<Biome>> possibleBiomes(boolean includeDimensionStack) {
         GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_possible_biomes");
         if (lease == null) {
             throw new IllegalStateException("Iris possible biome lookup was rejected during an engine transition");
@@ -197,7 +267,8 @@ public class CustomBiomeSource extends BiomeSource {
                     .lookup(Registries.BIOME).orElse(null);
             Registry<Biome> worldRegistry = ((CraftWorld) world).getHandle().registryAccess()
                     .lookup(Registries.BIOME).orElse(null);
-            return Set.copyOf(getAllBiomes(customRegistry, worldRegistry, engine));
+            return Set.copyOf(getAllBiomes(
+                    customRegistry, worldRegistry, engine, includeDimensionStack));
         }
     }
 
@@ -207,18 +278,22 @@ public class CustomBiomeSource extends BiomeSource {
             return m;
         }
 
-        for (IrisBiome i : engine.getAllBiomes()) {
+        for (OwnedBiome ownedBiome : getOwnedBiomes(engine)) {
+            IrisBiome i = ownedBiome.biome();
             if (i.isCustom()) {
                 for (IrisBiomeCustom j : i.getCustomDerivitives()) {
-                    Holder<Biome> holder = resolveCustomBiomeHolder(customRegistry, engine, j.getId());
+                    String key = customBiomeKey(ownedBiome.dimension(), j.getId());
+                    Holder<Biome> holder = resolveCustomBiomeHolder(
+                            customRegistry, ownedBiome.dimension(), j.getId());
                     if (holder == null) {
                         if (fallback != null) {
-                            m.put(j.getId(), fallback);
+                            m.put(key, fallback);
                         }
-                        IrisLogging.error("Cannot find biome for IrisBiomeCustom " + j.getId() + " from engine " + engine.getName());
+                        IrisLogging.error("Cannot find biome for IrisBiomeCustom " + key
+                                + " from engine " + engine.getName());
                         continue;
                     }
-                    m.put(j.getId(), holder);
+                    m.put(key, holder);
                 }
             }
         }
@@ -232,7 +307,8 @@ public class CustomBiomeSource extends BiomeSource {
             return Collections.unmodifiableMap(spawnBiomes);
         }
 
-        for (IrisBiome irisBiome : engine.getAllBiomes()) {
+        for (OwnedBiome ownedBiome : getOwnedBiomes(engine)) {
+            IrisBiome irisBiome = ownedBiome.biome();
             if (!irisBiome.isCustom()) {
                 continue;
             }
@@ -241,7 +317,8 @@ public class CustomBiomeSource extends BiomeSource {
                 continue;
             }
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                Holder<Biome> customHolder = resolveCustomBiomeHolder(customRegistry, engine, customBiome.getId());
+                Holder<Biome> customHolder = resolveCustomBiomeHolder(
+                        customRegistry, ownedBiome.dimension(), customBiome.getId());
                 if (customHolder != null) {
                     spawnBiomes.putIfAbsent(customHolder.value(), vanillaHolder);
                 }
@@ -265,6 +342,34 @@ public class CustomBiomeSource extends BiomeSource {
             }
             ensureCachesCurrent();
             return vanillaSpawnBiomes.get(biome.value());
+        }
+    }
+
+    Holder<Biome> getVisibleSurfaceBiome(int blockX, int blockZ) {
+        GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_surface_spawn_biome");
+        if (lease == null) {
+            return null;
+        }
+        try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!isRuntimeAvailable()) {
+                return null;
+            }
+            ensureCachesCurrent();
+            int quartX = QuartPos.fromBlock(blockX);
+            int quartZ = QuartPos.fromBlock(blockZ);
+            int sampleX = QuartPos.toBlock(quartX);
+            int sampleZ = QuartPos.toBlock(quartZ);
+            boolean cacheable = isBiomeCacheable(engine, sampleX, sampleZ);
+            DimensionStackContext stackContext = engine.getDimensionStackContext();
+            DimensionStackLayout.Layer layer = stackContext == null
+                    ? null
+                    : stackContext.getLayout(sampleX, sampleZ).surfaceLayer();
+            int internalY = layer == null
+                    ? Engine.hostHeight(engine, sampleX, sampleZ, true)
+                    : layer.clippedSurfaceY();
+            int quartY = QuartPos.fromBlock(internalY + engine.getWorld().minHeight());
+            return getVisibleNoiseBiomeWithActiveGenerationLease(
+                    quartX, quartY, quartZ, null, null, cacheable);
         }
     }
 
@@ -294,28 +399,38 @@ public class CustomBiomeSource extends BiomeSource {
                 throw new IllegalStateException("Iris structure biome lookup has no active engine runtime");
             }
             ensureCachesCurrent();
-            if (isGuaranteedSurfaceBiome(y)) {
-                return getSurfaceStructureBiomeHolder(x, z);
-            }
+            return getStructureNoiseBiomeWithActiveGenerationLease(x, y, z);
+        }
+    }
 
-            long cacheKey = packNoiseKey(x, y, z);
+    private Holder<Biome> getStructureNoiseBiomeWithActiveGenerationLease(int x, int y, int z) {
+        if (isGuaranteedSurfaceBiome(y)) {
+            return getSurfaceStructureBiomeHolder(x, z);
+        }
+
+        boolean cacheable = isBiomeCacheable(x, z);
+        long cacheKey = packNoiseKey(x, y, z);
+        if (cacheable) {
             Holder<Biome> cachedHolder = structureBiomeCache.get(cacheKey);
             if (cachedHolder != null) {
                 return cachedHolder;
             }
+        }
 
-            Holder<Biome> resolvedHolder = resolveStructureBiomeHolder(x, y, z);
-            Holder<Biome> existingHolder = structureBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
-            if (existingHolder != null) {
-                return existingHolder;
-            }
-
-            if (structureBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
-                structureBiomeCache.clear();
-            }
-
+        Holder<Biome> resolvedHolder = resolveStructureBiomeHolder(x, y, z);
+        if (!cacheable) {
             return resolvedHolder;
         }
+        Holder<Biome> existingHolder = structureBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
+        if (existingHolder != null) {
+            return existingHolder;
+        }
+
+        if (structureBiomeCache.size() > NOISE_BIOME_CACHE_MAX) {
+            structureBiomeCache.clear();
+        }
+
+        return resolvedHolder;
     }
 
     @Override
@@ -343,6 +458,62 @@ public class CustomBiomeSource extends BiomeSource {
             ensureCachesCurrent();
             return findNaturalSurfaceBiomeHorizontal(
                     x, y, z, searchRadius, quartStep, allowed, random);
+        }
+    }
+
+    @Override
+    public Pair<BlockPos, Holder<Biome>> findClosestBiome3d(
+            BlockPos origin,
+            int searchRadius,
+            int sampleResolutionHorizontal,
+            int sampleResolutionVertical,
+            Predicate<Holder<Biome>> allowed,
+            Climate.Sampler sampler,
+            LevelReader level
+    ) {
+        GenerationSessionLease lease = tryAcquireGenerationLease("bukkit_locate_visible_biome");
+        if (lease == null) {
+            throw new IllegalStateException("Iris visible biome search was rejected during an engine transition");
+        }
+        try (lease; IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            prepareVisibleBiomeBatch();
+            DimensionStackContext stackContext = engine.getDimensionStackContext();
+            if (stackContext == null) {
+                return super.findClosestBiome3d(
+                        origin, searchRadius, sampleResolutionHorizontal, sampleResolutionVertical,
+                        allowed, sampler, level);
+            }
+            Set<Holder<Biome>> candidates = new HashSet<>();
+            for (Holder<Biome> biome : getVisibleBiomes(
+                    biomeCustomRegistry, biomeRegistry, engine, fallbackBiome)) {
+                if (allowed.test(biome)) {
+                    candidates.add(biome);
+                }
+            }
+            if (candidates.isEmpty()) {
+                return null;
+            }
+            int sampleRadius = Math.floorDiv(searchRadius, sampleResolutionHorizontal);
+            int[] sampleYs = Mth.outFromOrigin(
+                    origin.getY(), level.getMinY() + 1, level.getMaxY() + 1, sampleResolutionVertical).toArray();
+            for (BlockPos.MutableBlockPos sampleColumn : BlockPos.spiralAround(
+                    BlockPos.ZERO, sampleRadius, Direction.EAST, Direction.SOUTH)) {
+                int blockX = origin.getX() + sampleColumn.getX() * sampleResolutionHorizontal;
+                int blockZ = origin.getZ() + sampleColumn.getZ() * sampleResolutionHorizontal;
+                int quartX = QuartPos.fromBlock(blockX);
+                int quartZ = QuartPos.fromBlock(blockZ);
+                DimensionStackLayout stackLayout = stackContext.sample(
+                        QuartPos.toBlock(quartX), QuartPos.toBlock(quartZ));
+                for (int blockY : sampleYs) {
+                    int quartY = QuartPos.fromBlock(blockY);
+                    Holder<Biome> visibleBiome = resolveVisibleBiomeHolder(
+                            quartX, quartY, quartZ, null, stackLayout);
+                    if (candidates.contains(visibleBiome)) {
+                        return Pair.of(new BlockPos(blockX, blockY, blockZ), visibleBiome);
+                    }
+                }
+            }
+            return null;
         }
     }
 
@@ -468,7 +639,7 @@ public class CustomBiomeSource extends BiomeSource {
     private Holder<Biome> resolveSurfaceStructureBiomeHolder(int x, int z) {
         int blockX = x << 2;
         int blockZ = z << 2;
-        IrisBiome irisBiome = engine.getComplex().getTrueBiomeStream().get(blockX, blockZ);
+        IrisBiome irisBiome = resolveSurfaceStructureBiome(engine, blockX, blockZ);
         if (irisBiome == null) {
             throw new IllegalStateException("Iris returned no surface structure biome at block "
                     + blockX + "," + blockZ);
@@ -533,13 +704,31 @@ public class CustomBiomeSource extends BiomeSource {
             Climate.Sampler sampler,
             IrisDimensionCarvingResolver.State resolverState
     ) {
+        boolean cacheable = isBiomeCacheable(x, z);
+        return getVisibleNoiseBiomeWithActiveGenerationLease(
+                x, y, z, sampler, resolverState, cacheable);
+    }
+
+    private Holder<Biome> getVisibleNoiseBiomeWithActiveGenerationLease(
+            int x,
+            int y,
+            int z,
+            Climate.Sampler sampler,
+            IrisDimensionCarvingResolver.State resolverState,
+            boolean cacheable
+    ) {
         long cacheKey = packNoiseKey(x, y, z);
-        Holder<Biome> cachedHolder = noiseBiomeCache.get(cacheKey);
-        if (cachedHolder != null) {
-            return cachedHolder;
+        if (cacheable) {
+            Holder<Biome> cachedHolder = noiseBiomeCache.get(cacheKey);
+            if (cachedHolder != null) {
+                return cachedHolder;
+            }
         }
 
         Holder<Biome> resolvedHolder = resolveVisibleBiomeHolder(x, y, z, resolverState);
+        if (!cacheable) {
+            return resolvedHolder;
+        }
         Holder<Biome> existingHolder = noiseBiomeCache.putIfAbsent(cacheKey, resolvedHolder);
         if (existingHolder != null) {
             return existingHolder;
@@ -550,6 +739,18 @@ public class CustomBiomeSource extends BiomeSource {
         }
 
         return resolvedHolder;
+    }
+
+    private boolean isBiomeCacheable(int quartX, int quartZ) {
+        return isBiomeCacheable(
+                engine,
+                QuartPos.toBlock(quartX),
+                QuartPos.toBlock(quartZ)
+        );
+    }
+
+    static boolean isBiomeCacheable(Engine engine, int blockX, int blockZ) {
+        return !engine.answersFromNaturalTerrain(blockX, blockZ);
     }
 
     private GenerationSessionLease tryAcquireGenerationLease(String operation) {
@@ -597,7 +798,7 @@ public class CustomBiomeSource extends BiomeSource {
     }
 
     private Holder<Biome> resolveStructureBiomeHolder(int x, int y, int z) {
-        BiomeResolution resolution = resolveBiomeResolution(x, y, z);
+        BiomeResolution resolution = resolveStructureBiomeResolution(x, y, z);
         if (resolution == null) {
             throw new IllegalStateException("Iris returned no structure biome at quart "
                     + x + "," + y + "," + z);
@@ -619,11 +820,26 @@ public class CustomBiomeSource extends BiomeSource {
             int z,
             IrisDimensionCarvingResolver.State resolverState
     ) {
-        BiomeResolution resolution = resolveBiomeResolution(x, y, z, resolverState);
+        return resolveVisibleBiomeHolder(x, y, z, resolverState, null);
+    }
+
+    private Holder<Biome> resolveVisibleBiomeHolder(
+            int x,
+            int y,
+            int z,
+            IrisDimensionCarvingResolver.State resolverState,
+            DimensionStackLayout stackLayout
+    ) {
+        BiomeResolution resolution = resolveBiomeResolution(
+                x, y, z, resolverState, true, stackLayout);
         if (resolution == null) {
             return getFallbackBiome();
         }
 
+        return resolveVisibleBiomeHolder(resolution);
+    }
+
+    private Holder<Biome> resolveVisibleBiomeHolder(BiomeResolution resolution) {
         if (resolution.irisBiome.isCustom()) {
             return resolveCustomHolder(resolution);
         }
@@ -642,7 +858,8 @@ public class CustomBiomeSource extends BiomeSource {
     private Holder<Biome> resolveCustomHolder(BiomeResolution resolution) {
         IrisBiomeCustom customBiome = resolution.irisBiome.getCustomBiome(resolution.rng, engine, resolution.blockX, resolution.blockY, resolution.blockZ);
         if (customBiome != null) {
-            Holder<Biome> holder = customBiomes.get(customBiome.getId());
+            Holder<Biome> holder = customBiomes.get(customBiomeKey(
+                    resolution.dimension, customBiome.getId()));
             if (holder != null) {
                 return holder;
             }
@@ -651,8 +868,8 @@ public class CustomBiomeSource extends BiomeSource {
         return getFallbackBiome();
     }
 
-    private BiomeResolution resolveBiomeResolution(int x, int y, int z) {
-        return resolveBiomeResolution(x, y, z, null);
+    private BiomeResolution resolveStructureBiomeResolution(int x, int y, int z) {
+        return resolveBiomeResolution(x, y, z, null, false);
     }
 
     private BiomeResolution resolveBiomeResolution(
@@ -660,6 +877,28 @@ public class CustomBiomeSource extends BiomeSource {
             int y,
             int z,
             IrisDimensionCarvingResolver.State resolverState
+    ) {
+        return resolveBiomeResolution(x, y, z, resolverState, true);
+    }
+
+    private BiomeResolution resolveBiomeResolution(
+            int x,
+            int y,
+            int z,
+            IrisDimensionCarvingResolver.State resolverState,
+            boolean includeDimensionStack
+    ) {
+        return resolveBiomeResolution(
+                x, y, z, resolverState, includeDimensionStack, null);
+    }
+
+    private BiomeResolution resolveBiomeResolution(
+            int x,
+            int y,
+            int z,
+            IrisDimensionCarvingResolver.State resolverState,
+            boolean includeDimensionStack,
+            DimensionStackLayout stackLayout
     ) {
         if (engine == null || engine.isClosed()) {
             return null;
@@ -675,31 +914,63 @@ public class CustomBiomeSource extends BiomeSource {
         int worldMinHeight = engine.getWorld().minHeight();
         int internalY = blockY - worldMinHeight;
         int caveSwitchInternalY = Math.max(-8 - worldMinHeight, 40);
+        DimensionStackLayout.Layer stackLayer = includeDimensionStack
+                ? stackLayout == null
+                        ? resolveDimensionStackLayer(engine, blockX, internalY, blockZ)
+                        : stackLayout.layerAt(internalY)
+                : null;
+        IrisDimension owningDimension = stackLayer == null
+                ? engine.getDimension()
+                : stackLayer.terrainContext().getDimension();
+        if (stackLayer != null && !stackLayer.terrainContext().isSelfReferencing()) {
+            IrisBiome stackedBiome = stackLayer.biome();
+            return stackedBiome == null
+                    ? null
+                    : createBiomeResolution(
+                            stackedBiome, false, owningDimension, blockX, blockY, blockZ);
+        }
         boolean deepUnderground = internalY <= caveSwitchInternalY;
         boolean underground = false;
         IrisBiome irisBiome;
-        if (deepUnderground) {
-            int surfaceInternalY = engine.getComplex().getHeightStream().get(blockX, blockZ).intValue();
+        if (stackLayer != null) {
+            int surfaceInternalY = stackLayer.surfaceY();
+            underground = internalY <= surfaceInternalY - 8;
+            irisBiome = underground
+                    ? engine.getCaveBiome(
+                            blockX,
+                            internalY,
+                            blockZ,
+                            resolverState,
+                            stackLayer.biome(),
+                            surfaceInternalY
+                    )
+                    : stackLayer.biome();
+        } else if (deepUnderground) {
+            int surfaceInternalY = Engine.hostHeight(engine, blockX, blockZ, true);
             underground = internalY <= surfaceInternalY - 8;
             irisBiome = underground
                     ? engine.getCaveBiome(blockX, internalY, blockZ, resolverState)
-                    : engine.getComplex().getTrueBiomeStream().get(blockX, blockZ);
+                    : engine.getHostSurfaceBiome(blockX, blockZ);
         } else {
-            irisBiome = engine.getComplex().getTrueBiomeStream().get(blockX, blockZ);
+            irisBiome = engine.getHostSurfaceBiome(blockX, blockZ);
         }
         if (irisBiome == null && underground) {
-            irisBiome = engine.getComplex().getTrueBiomeStream().get(blockX, blockZ);
+            irisBiome = stackLayer == null
+                    ? engine.getHostSurfaceBiome(blockX, blockZ)
+                    : stackLayer.biome();
         }
         if (irisBiome == null) {
             return null;
         }
 
-        return createBiomeResolution(irisBiome, underground, blockX, blockY, blockZ);
+        return createBiomeResolution(
+                irisBiome, underground, owningDimension, blockX, blockY, blockZ);
     }
 
     private BiomeResolution createBiomeResolution(
             IrisBiome irisBiome,
             boolean underground,
+            IrisDimension dimension,
             int blockX,
             int blockY,
             int blockZ
@@ -708,7 +979,8 @@ public class CustomBiomeSource extends BiomeSource {
                 ^ (((long) blockX) * 341873128712L)
                 ^ (((long) blockY) * 132897987541L)
                 ^ (((long) blockZ) * 42317861L));
-        return new BiomeResolution(irisBiome, underground, blockX, blockY, blockZ, noiseRng);
+        return new BiomeResolution(
+                irisBiome, underground, dimension, blockX, blockY, blockZ, noiseRng);
     }
 
     private Holder<Biome> getFallbackBiome() {
@@ -734,15 +1006,20 @@ public class CustomBiomeSource extends BiomeSource {
         return ((long) x << 32) ^ ((long) z & 4294967295L);
     }
 
-    private static Holder<Biome> resolveCustomBiomeHolder(Registry<Biome> customRegistry, Engine engine, String customBiomeId) {
-        if (customRegistry == null || engine == null || customBiomeId == null || customBiomeId.isBlank()) {
+    private static Holder<Biome> resolveCustomBiomeHolder(
+            Registry<Biome> customRegistry,
+            IrisDimension dimension,
+            String customBiomeId
+    ) {
+        if (customRegistry == null || dimension == null
+                || customBiomeId == null || customBiomeId.isBlank()) {
             return null;
         }
 
-        Identifier resourceLocation = Identifier.fromNamespaceAndPath(
-                engine.getDimension().getLoadKey().toLowerCase(java.util.Locale.ROOT),
-                customBiomeId.toLowerCase(java.util.Locale.ROOT)
-        );
+        Identifier resourceLocation = Identifier.tryParse(customBiomeKey(dimension, customBiomeId));
+        if (resourceLocation == null) {
+            return null;
+        }
         Biome biome = customRegistry.getValue(resourceLocation);
         if (biome == null) {
             return null;
@@ -759,6 +1036,63 @@ public class CustomBiomeSource extends BiomeSource {
         }
 
         return optionalReferenceHolder.get();
+    }
+
+    static String customBiomeKey(IrisDimension dimension, String customBiomeId) {
+        return dimension.getCustomBiomeKey(customBiomeId);
+    }
+
+    private static List<OwnedBiome> getOwnedBiomes(Engine engine) {
+        ArrayList<OwnedBiome> biomes = new ArrayList<>(getHostOwnedBiomes(engine));
+        DimensionStackContext stackContext = engine.getDimensionStackContext();
+        if (stackContext == null) {
+            return biomes;
+        }
+        for (DimensionTerrainContext terrainContext : stackContext.getLayersBottomToTop()) {
+            if (terrainContext.isSelfReferencing()) {
+                continue;
+            }
+            IrisDimension dimension = terrainContext.getDimension();
+            addOwnedBiomes(
+                    biomes,
+                    dimension,
+                    dimension.getReachableBiomes(terrainContext)
+            );
+        }
+        return biomes;
+    }
+
+    private static List<OwnedBiome> getHostOwnedBiomes(Engine engine) {
+        IrisDimension hostDimension = engine.getDimension();
+        ArrayList<OwnedBiome> biomes = new ArrayList<>();
+        addOwnedBiomes(biomes, hostDimension, hostDimension.getReachableBiomes(engine));
+        return biomes;
+    }
+
+    private static void addOwnedBiomes(
+            List<OwnedBiome> target,
+            IrisDimension dimension,
+            Iterable<IrisBiome> biomes
+    ) {
+        for (IrisBiome biome : biomes) {
+            if (biome != null) {
+                target.add(new OwnedBiome(dimension, biome));
+            }
+        }
+    }
+
+    private static DimensionStackLayout.Layer resolveDimensionStackLayer(
+            Engine engine,
+            int blockX,
+            int internalY,
+            int blockZ
+    ) {
+        DimensionStackContext stackContext = engine.getDimensionStackContext();
+        return stackContext == null ? null : stackContext.getLayerAt(blockX, internalY, blockZ);
+    }
+
+    private static IrisBiome resolveSurfaceStructureBiome(Engine engine, int blockX, int blockZ) {
+        return engine.getComplex().getTrueBiomeStream().get(blockX, blockZ);
     }
 
     private static Holder<Biome> resolveBiomeHolder(Registry<Biome> registry, String biomeKey) {
@@ -809,18 +1143,31 @@ public class CustomBiomeSource extends BiomeSource {
     private static final class BiomeResolution {
         private final IrisBiome irisBiome;
         private final boolean underground;
+        private final IrisDimension dimension;
         private final int blockX;
         private final int blockY;
         private final int blockZ;
         private final RNG rng;
 
-        private BiomeResolution(IrisBiome irisBiome, boolean underground, int blockX, int blockY, int blockZ, RNG rng) {
+        private BiomeResolution(
+                IrisBiome irisBiome,
+                boolean underground,
+                IrisDimension dimension,
+                int blockX,
+                int blockY,
+                int blockZ,
+                RNG rng
+        ) {
             this.irisBiome = irisBiome;
             this.underground = underground;
+            this.dimension = dimension;
             this.blockX = blockX;
             this.blockY = blockY;
             this.blockZ = blockZ;
             this.rng = rng;
         }
+    }
+
+    private record OwnedBiome(IrisDimension dimension, IrisBiome biome) {
     }
 }

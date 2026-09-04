@@ -655,7 +655,7 @@ public final class IrisStructureLocator {
             return null;
         }
         if (placement.resolvedAnchor() == IrisStructureAnchorMode.SURFACE) {
-            int surfaceY = engine.getHeight(originX, originZ, true) + engine.getMinHeight();
+            int surfaceY = Engine.hostHeight(engine, originX, originZ, true) + engine.getMinHeight();
             return surfaceY < placement.getMinHeight() || surfaceY > placement.getMaxHeight() ? null : surfaceY;
         }
         int bandMin = Math.max(worldMin, Math.min(placement.getMinHeight(), placement.getMaxHeight()));
@@ -766,7 +766,7 @@ public final class IrisStructureLocator {
                     if (surfaceHeights.size() >= MAX_BURIAL_COLUMNS) {
                         return Integer.MIN_VALUE;
                     }
-                    surfaceY = engine.getHeight(x, z, true) + engine.getMinHeight();
+                    surfaceY = Engine.hostHeight(engine, x, z, true) + engine.getMinHeight();
                     surfaceHeights.put(columnKey, surfaceY);
                 }
                 int allowedTopY = surfaceY - UNDERGROUND_SURFACE_CLEARANCE;

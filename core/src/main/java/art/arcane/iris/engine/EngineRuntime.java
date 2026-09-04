@@ -34,6 +34,7 @@ record EngineRuntime(
         EngineTarget target,
         IrisComplex complex,
         UpperDimensionContext upperContext,
+        DimensionStackContext dimensionStackContext,
         EngineEffects effects,
         EngineMode mode,
         EngineWorldManager worldManager,
@@ -44,6 +45,7 @@ record EngineRuntime(
             int nextCacheId,
             IrisComplex nextComplex,
             UpperDimensionContext nextUpperContext,
+            DimensionStackContext nextDimensionStackContext,
             BiomeMaxes nextBiomeMaxes
     ) {
         return new EngineRuntime(
@@ -51,6 +53,7 @@ record EngineRuntime(
                 target,
                 nextComplex,
                 nextUpperContext,
+                nextDimensionStackContext,
                 effects,
                 mode,
                 worldManager,

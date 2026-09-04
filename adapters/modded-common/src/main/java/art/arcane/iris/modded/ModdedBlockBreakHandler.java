@@ -258,7 +258,7 @@ public final class ModdedBlockBreakHandler {
         if (skipsParents(providers)) {
             return providers;
         }
-        IrisRegion region = engine.getRegion(position.getX(), position.getZ());
+        IrisRegion region = engine.getRegion(position.getX(), relativeY, position.getZ());
         if (region != null) {
             addMatching(providers, region.getBlockDrops(), brokenState, data);
         }

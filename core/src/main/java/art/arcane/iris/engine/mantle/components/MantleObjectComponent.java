@@ -189,7 +189,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
         int zzz = 8 + (z << 4);
         IrisRegion region = complex.getRegionStream().get(xxx, zzz);
         IrisBiome surfaceBiome = complex.getTrueBiomeStream().get(xxx, zzz);
-        int surfaceY = getEngineMantle().getEngine().getHeight(xxx, zzz, true);
+        int surfaceY = complex.getRoundedHeighteightStream().get(xxx, zzz);
         IrisBiome caveBiome = resolveCaveObjectBiome(xxx, zzz, surfaceY, surfaceBiome);
         if (IrisSettings.get().getGeneral().isDebug() && (x & 31) == 0 && (z & 31) == 0) {
             int carvedBlocks = 0;
@@ -948,7 +948,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
         }
         Engine engine = getEngineMantle().getEngine();
         IrisBiome at = engine.getCaveBiome(x, y, z);
-        IrisBiome surface = engine.getSurfaceBiome(x, z);
+        IrisBiome surface = engine.getComplex().getTrueBiomeStream().get(x, z);
         return caveAnchorBiomeConflicts(at, surface, expectedCaveBiomeKey);
     }
 
@@ -1631,8 +1631,10 @@ public class MantleObjectComponent extends IrisMantleComponent {
     public Set<String> guess(int x, int z) {
         // todo The guess doesnt bring into account that the placer may return -1
         RNG rng = applyNoise(x, z, Cache.key(x, z) + seed());
-        IrisBiome biome = getEngineMantle().getEngine().getSurfaceBiome((x << 4) + 8, (z << 4) + 8);
-        IrisRegion region = getEngineMantle().getEngine().getRegion((x << 4) + 8, (z << 4) + 8);
+        int blockX = (x << 4) + 8;
+        int blockZ = (z << 4) + 8;
+        IrisBiome biome = getComplex().getTrueBiomeStream().get(blockX, blockZ);
+        IrisRegion region = getComplex().getRegionStream().get(blockX, blockZ);
         Set<String> v = new KSet<>();
         for (IrisObjectPlacement i : biome.getSurfaceObjects()) {
             if (rng.chance(i.getChance() + rng.d(-0.005, 0.005)) && !i.isCompatExcluded(getData())) {
@@ -1879,7 +1881,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 return surfaceY;
             }
 
-            surfaceY = getEngineMantle().getEngine().getHeight(x, z);
+            surfaceY = getEngineMantle().trueHeight(x, z);
             surfaceHeights.put(columnKey, surfaceY);
             return surfaceY;
         }

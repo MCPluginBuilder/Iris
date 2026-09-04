@@ -46,6 +46,9 @@ public interface EnginePlatformHooks {
     default void validateDimensionHotload(Engine engine, IrisDimension replacement) {
     }
 
+    default void prepareRuntimeHotload(Engine engine) {
+    }
+
     default void applyWorldBoundary(Engine engine) {
     }
 

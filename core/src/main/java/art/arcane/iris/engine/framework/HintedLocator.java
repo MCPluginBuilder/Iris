@@ -19,6 +19,8 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionTerrainContext;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -282,6 +284,13 @@ public final class HintedLocator<T> implements Locator<T> {
         if (engine.getFocus() != null || engine.getFocusRegion() != null) {
             return SearchPlan.unpruned();
         }
+        if (engine.getDimensionStackContext() != null) {
+            for (IrisBiome biome : engine.getAllBiomes()) {
+                if (biome != null && biomeKey.equals(biome.getLoadKey())) {
+                    return SearchPlan.unpruned();
+                }
+            }
+        }
 
         IrisComplex complex = engine.getComplex();
         BiomeSource source = new BiomeSource(engine);
@@ -378,6 +387,17 @@ public final class HintedLocator<T> implements Locator<T> {
     public static SearchPlan regionPlan(Engine engine, String regionKey) {
         if (engine.getFocus() != null || engine.getFocusRegion() != null) {
             return SearchPlan.unpruned();
+        }
+
+        DimensionStackContext stackContext = engine.getDimensionStackContext();
+        if (stackContext != null) {
+            for (DimensionTerrainContext terrainContext : stackContext.getLayersTopToBottom()) {
+                for (IrisRegion region : terrainContext.getDimension().getAllRegions(terrainContext)) {
+                    if (region != null && regionKey.equals(region.getLoadKey())) {
+                        return SearchPlan.unpruned();
+                    }
+                }
+            }
         }
 
         if (!engine.getDimension().getRegions().contains(regionKey)) {

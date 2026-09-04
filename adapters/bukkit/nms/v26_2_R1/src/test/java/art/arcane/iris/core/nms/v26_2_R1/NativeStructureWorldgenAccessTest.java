@@ -136,13 +136,33 @@ public class NativeStructureWorldgenAccessTest {
     }
 
     @Test
+    public void virtualizedHeightsHideInRegionTerrainFromTheDelegate() {
+        RecordingDelegate recording = new RecordingDelegate();
+        ChunkPos generationCenter = generationCenter();
+        NativeStructureWorldgenAccess access = NativeStructureWorldgenAccess.create(
+                recording.world(), generationCenter,
+                (x, z) -> SURFACE_FIRST_FREE_Y,
+                (x, z) -> FLOOR_FIRST_FREE_Y,
+                true,
+                position -> false);
+        int x = generationCenter.getMiddleBlockX();
+        int z = generationCenter.getMiddleBlockZ();
+
+        assertEquals(SURFACE_FIRST_FREE_Y, access.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z));
+        assertEquals(FLOOR_FIRST_FREE_Y, access.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z));
+        assertEquals(0, recording.heightReads);
+    }
+
+    @Test
     public void protectedCellsRemainReadableButRejectWritesTilesAndTicks() {
         RecordingDelegate recording = new RecordingDelegate();
         BlockPos position = generationCenter().getMiddleBlockPosition(70);
         NativeStructureWorldgenAccess access = NativeStructureWorldgenAccess.create(
                 recording.world(), generationCenter(),
                 (x, z) -> SURFACE_FIRST_FREE_Y,
-                (x, z) -> FLOOR_FIRST_FREE_Y, position::equals);
+                (x, z) -> FLOOR_FIRST_FREE_Y,
+                false,
+                position::equals);
 
         assertSame(Blocks.DIRT, access.getBlockState(position).getBlock());
         assertFalse(access.ensureCanWrite(position));
@@ -211,7 +231,9 @@ public class NativeStructureWorldgenAccessTest {
         return NativeStructureWorldgenAccess.create(
                 recording.world(), generationCenter(),
                 (x, z) -> SURFACE_FIRST_FREE_Y,
-                (x, z) -> FLOOR_FIRST_FREE_Y, position -> false);
+                (x, z) -> FLOOR_FIRST_FREE_Y,
+                false,
+                position -> false);
     }
 
     private static ChunkPos generationCenter() {

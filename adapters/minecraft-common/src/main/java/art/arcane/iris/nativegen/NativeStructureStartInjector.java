@@ -90,7 +90,7 @@ public final class NativeStructureStartInjector {
                             chunk,
                             biome -> true,
                             context.generator().getSeaLevel(),
-                            (x, z) -> context.engine().getHeight(x, z, true)
+                            (x, z) -> Engine.hostHeight(context.engine(), x, z, true)
                                     + context.engine().getMinHeight()
                     );
             StructureStart generated = NativeStructureFactory.generate(

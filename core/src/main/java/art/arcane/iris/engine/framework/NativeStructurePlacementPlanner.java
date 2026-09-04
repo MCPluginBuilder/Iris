@@ -142,7 +142,7 @@ public final class NativeStructurePlacementPlanner {
             return null;
         }
         if (!placement.isUnderground()) {
-            int surfaceY = engine.getHeight(blockX, blockZ, true) + engine.getMinHeight();
+            int surfaceY = Engine.hostHeight(engine, blockX, blockZ, true) + engine.getMinHeight();
             if (surfaceY < placement.getMinHeight() || surfaceY > placement.getMaxHeight()) {
                 return null;
             }
@@ -160,7 +160,7 @@ public final class NativeStructurePlacementPlanner {
         int localFluidHeight = engine.getComplex() == null
                 ? engine.getDimension().getFluidHeight()
                 : (int) Math.round(engine.getComplex().getRiverWaterSurfaceStream().get(blockX, blockZ));
-        return engine.getHeight(blockX, blockZ, true) < localFluidHeight;
+        return Engine.hostHeight(engine, blockX, blockZ, true) < localFluidHeight;
     }
 
     private static int comparePlacementPriority(IrisStructurePlacement left, IrisStructurePlacement right) {

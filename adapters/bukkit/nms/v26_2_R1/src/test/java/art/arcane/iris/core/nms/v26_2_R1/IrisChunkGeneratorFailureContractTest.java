@@ -78,6 +78,8 @@ public class IrisChunkGeneratorFailureContractTest {
                 < placement.indexOf("for (NativePlacementGroup group"));
         assertTrue(placement.indexOf("repairVacuumFoundations")
                 > placement.indexOf("for (NativePlacementGroup group"));
+        assertTrue(placement.contains("nativeStructureProtection(staticObjects)"));
+        assertTrue(placement.contains("Engine.hostHeight(engine, x, z, true)"));
         assertFalse(placement.contains("IrisLogging.reportError"));
     }
 
@@ -542,8 +544,8 @@ public class IrisChunkGeneratorFailureContractTest {
         String spawn = source.substring(spawnStart, spawnEnd);
 
         assertTrue(spawn.contains("customBiomeSource.getVanillaSpawnBiome(visibleBiome)"));
+        assertTrue(spawn.contains("customBiomeSource.getVisibleSurfaceBiome("));
         assertTrue(spawn.contains("NaturalSpawner.spawnMobsForChunkGeneration("));
-        assertTrue(spawn.contains("region.getBiome(center.getWorldPosition().atY(region.getMaxY()))"));
         assertTrue(spawn.contains("new LegacyRandomSource(RandomSupport.generateUniqueSeed())"));
         assertTrue(spawn.contains("random.setDecorationSeed(region.getSeed()"));
         assertFalse(spawn.contains("delegate.spawnOriginalMobs"));

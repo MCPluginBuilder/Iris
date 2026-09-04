@@ -12,6 +12,8 @@ import art.arcane.iris.engine.hydrology.RiverFootprint;
 import art.arcane.iris.engine.hydrology.cave.CavePosition;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisBiomeCustom;
+import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.hunk.Hunk;
@@ -245,6 +247,24 @@ public final class HydrologyPackProbeTest {
                         null,
                         19L,
                         "overworld",
+                        32,
+                        -48
+                )
+        );
+    }
+
+    @Test
+    public void generatedCustomSurfaceBiomeUsesRecursiveDimensionRegistryPath() {
+        IrisBiome biome = new IrisBiome()
+                .setCustomDerivitives(new KList<>(new IrisBiomeCustom().setId("Aurora")));
+
+        assertEquals(
+                "layers:sky/aurora",
+                HydrologyPackProbe.generatedSurfaceBiomeKey(
+                        biome,
+                        null,
+                        19L,
+                        "Layers/Sky",
                         32,
                         -48
                 )

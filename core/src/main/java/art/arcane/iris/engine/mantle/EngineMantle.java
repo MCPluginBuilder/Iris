@@ -21,6 +21,8 @@ package art.arcane.iris.engine.mantle;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineTarget;
@@ -36,6 +38,7 @@ import art.arcane.iris.util.common.data.B;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.iris.util.project.hunk.Hunk;
+import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
@@ -196,17 +199,37 @@ public interface EngineMantle extends MatterGenerator {
     }
 
     @ChunkCoordinates
-    default void insertMatter(int x, int z, Hunk<PlatformBlockState> blocks, boolean multicore) {
+    default void insertMatter(
+            int x,
+            int z,
+            Hunk<PlatformBlockState> blocks,
+            boolean multicore,
+            ChunkContext context
+    ) {
         if (!getEngine().getDimension().isUseMantle()) {
             return;
         }
 
         UpperDimensionContext upperCtx = getEngine().getUpperContext();
         boolean protectUpper = upperCtx != null;
+        DimensionStackContext stackContext = getEngine().getDimensionStackContext();
 
         MantleChunk<Matter> chunk = getMantle().getChunk(x, z).use();
         try {
-            if (protectUpper) {
+            if (stackContext != null) {
+                DimensionStackLayout[] layouts = new DimensionStackLayout[256];
+                for (int i = 0; i < layouts.length; i++) {
+                    int localX = i >> 4;
+                    int localZ = i & 15;
+                    layouts[i] = context.getDimensionStackLayout(localX, localZ);
+                }
+                chunk.iterate(PlatformBlockState.class, (localX, y, localZ, value) -> {
+                    DimensionStackLayout layout = layouts[(localX << 4) | (localZ & 15)];
+                    if (!layout.isHostFeatureProtectedY(y)) {
+                        blocks.set(localX, y, localZ, value);
+                    }
+                });
+            } else if (protectUpper) {
                 int chunkBlockX = x << 4;
                 int chunkBlockZ = z << 4;
                 int gap = getEngine().getDimension().getUpperDimensionGap();

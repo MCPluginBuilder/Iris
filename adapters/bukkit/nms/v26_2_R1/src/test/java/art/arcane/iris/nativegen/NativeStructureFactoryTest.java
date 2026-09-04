@@ -333,6 +333,18 @@ public class NativeStructureFactoryTest {
     }
 
     @Test
+    public void manualNativeStructureGenerationUsesTheRootTerrainHeight() throws Exception {
+        String source = Files.readString(
+                Path.of(System.getProperty("iris.nativeStructureStartInjectorSource")),
+                StandardCharsets.UTF_8);
+
+        assertTrue(source.contains(
+                "Engine.hostHeight(context.engine(), x, z, true)"));
+        assertFalse(source.contains(
+                "context.engine().getHeight(x, z, true)"));
+    }
+
+    @Test
     public void failedManualStartPublicationClearsRecordedOwnershipAndPreservesTheFailure() throws Exception {
         String source = Files.readString(
                 Path.of(System.getProperty("iris.nativeStructureStartInjectorSource")),

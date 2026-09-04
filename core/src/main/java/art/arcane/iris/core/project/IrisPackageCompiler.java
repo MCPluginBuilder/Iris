@@ -30,6 +30,7 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBlockData;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisEntity;
+import art.arcane.iris.engine.object.IrisExpression;
 import art.arcane.iris.engine.object.IrisGenerator;
 import art.arcane.iris.engine.object.IrisLootTable;
 import art.arcane.iris.core.pack.PackExportClosure;
@@ -106,11 +107,19 @@ public class IrisPackageCompiler {
             throw new IllegalStateException("Failed to create structure package staging folder " + folder.getAbsolutePath());
         }
         IrisLogging.info("Packaging Dimension " + dimension.getName() + " " + (obfuscate ? "(Obfuscated)" : ""));
+        KList<IrisDimension> dimensions = new KList<>();
+        for (String dimensionKey : PackExportClosure.collectDimensionKeys(dimension).stream().sorted().toList()) {
+            IrisDimension exportedDimension = dm.getDimensionLoader().load(dimensionKey);
+            if (exportedDimension != null) {
+                dimensions.add(exportedDimension);
+            }
+        }
         KSet<IrisRegion> regions = new KSet<>();
         KSet<IrisBiome> biomes = new KSet<>();
         KSet<IrisEntity> entities = new KSet<>();
         KSet<IrisSpawner> spawners = new KSet<>();
         KSet<IrisGenerator> generators = new KSet<>();
+        KSet<IrisExpression> expressions = new KSet<>();
         KSet<IrisLootTable> loot = new KSet<>();
         KSet<IrisBlockData> blocks = new KSet<>();
 
@@ -119,22 +128,30 @@ public class IrisPackageCompiler {
         for (String i : dm.getBlockLoader().getPossibleKeys()) {
             addIfPresent(blocks, dm.getBlockLoader().load(i));
         }
+        for (String key : dm.getExpressionLoader().getPossibleKeys()) {
+            addIfPresent(expressions, dm.getExpressionLoader().load(key));
+        }
 
-        dimension.getAllRegions(() -> dm).forEach((region) -> addIfPresent(regions, region));
-        dimension.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i)));
+        for (IrisDimension exportedDimension : dimensions) {
+            exportedDimension.getAllRegions(() -> dm).forEach((region) -> addIfPresent(regions, region));
+            exportedDimension.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i)));
+            exportedDimension.getReachableBiomes(() -> dm).forEach((biome) -> addIfPresent(biomes, biome));
+            exportedDimension.getEntitySpawners().forEach((sp) ->
+                    addIfPresent(spawners, dm.getSpawnerLoader().load(sp)));
+        }
         regions.forEach((i) -> biomes.addAll(i.getAllBiomes(() -> dm)));
-        dimension.getReachableBiomes(() -> dm).forEach((biome) -> addIfPresent(biomes, biome));
         regions.forEach((r) -> r.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i))));
         regions.forEach((r) -> r.getEntitySpawners().forEach((sp) -> addIfPresent(spawners, dm.getSpawnerLoader().load(sp))));
-        dimension.getEntitySpawners().forEach((sp) -> addIfPresent(spawners, dm.getSpawnerLoader().load(sp)));
         biomes.forEach((i) -> i.getGenerators().forEach((j) -> addIfPresent(generators, j.getCachedGenerator(() -> dm))));
         biomes.forEach((r) -> r.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i))));
         biomes.forEach((r) -> r.getEntitySpawners().forEach((sp) -> addIfPresent(spawners, dm.getSpawnerLoader().load(sp))));
         KList<IrisObjectPlacement> allPlacements = new KList<>();
         regions.forEach((r) -> allPlacements.addAll(r.getObjects()));
         biomes.forEach((i) -> allPlacements.addAll(i.getObjects()));
-        for (IrisStaticObject placement : dimension.getStaticObjects()) {
-            allPlacements.add(placement.toPlacement());
+        for (IrisDimension exportedDimension : dimensions) {
+            for (IrisStaticObject placement : exportedDimension.getStaticObjects()) {
+                allPlacements.add(placement.toPlacement());
+            }
         }
         KSet<IrisMarker> markers = new KSet<>();
         for (String markerKey : PackExportClosure.collectMarkerKeys(allPlacements)) {
@@ -148,7 +165,9 @@ public class IrisPackageCompiler {
         collectSpawnerEntityKeys(spawners).forEach((i) -> addIfPresent(entities, dm.getEntityLoader().load(i)));
         entities.forEach((e) -> e.getLoot().getTables().forEach((i) -> addIfPresent(loot, dm.getLootLoader().load(i))));
         Set<String> structureKeys = new LinkedHashSet<>();
-        collectStructureKeys(structureKeys, dimension.getStructures());
+        for (IrisDimension exportedDimension : dimensions) {
+            collectStructureKeys(structureKeys, exportedDimension.getStructures());
+        }
         regions.forEach((region) -> collectStructureKeys(structureKeys, region.getStructures()));
         biomes.forEach((biome) -> collectStructureKeys(structureKeys, biome.getStructures()));
         KMap<String, String> renameObjects = new KMap<>();
@@ -176,8 +195,10 @@ public class IrisPackageCompiler {
             j.setPlace(newNames);
         }
 
-        for (IrisStaticObject placement : dimension.getStaticObjects()) {
-            placement.setObject(renameObjects.get(placement.getObject()));
+        for (IrisDimension exportedDimension : dimensions) {
+            for (IrisStaticObject placement : exportedDimension.getStaticObjects()) {
+                placement.setObject(renameObjects.get(placement.getObject()));
+            }
         }
 
         KMap<String, KList<String>> lookupObjects = renameObjects.flip();
@@ -230,13 +251,23 @@ public class IrisPackageCompiler {
             }
             b.append(structureClosure.writeTo(folder, minify));
             b.append(ImageMapPackageClosure.writeAll(dm, folder, minify));
-            a = new JSONObject(new Gson().toJson(dimension)).toString(minify ? 0 : 4);
-            IO.writeAll(new File(folder, "dimensions/" + dimension.getLoadKey() + ".json"), a);
-            b.append(IO.hash(a));
+            for (IrisDimension exportedDimension : dimensions.stream()
+                    .sorted(Comparator.comparing(IrisDimension::getLoadKey)).toList()) {
+                a = new JSONObject(new Gson().toJson(exportedDimension)).toString(minify ? 0 : 4);
+                IO.writeAll(new File(folder, "dimensions/" + exportedDimension.getLoadKey() + ".json"), a);
+                b.append(IO.hash(a));
+            }
 
             for (IrisGenerator i : generators) {
                 a = new JSONObject(new Gson().toJson(i)).toString(minify ? 0 : 4);
                 IO.writeAll(new File(folder, "generators/" + i.getLoadKey() + ".json"), a);
+                b.append(IO.hash(a));
+            }
+
+            for (IrisExpression i : expressions.stream()
+                    .sorted(Comparator.comparing(IrisExpression::getLoadKey)).toList()) {
+                a = new JSONObject(new Gson().toJson(i)).toString(minify ? 0 : 4);
+                IO.writeAll(new File(folder, "expressions/" + i.getLoadKey() + ".json"), a);
                 b.append(IO.hash(a));
             }
 

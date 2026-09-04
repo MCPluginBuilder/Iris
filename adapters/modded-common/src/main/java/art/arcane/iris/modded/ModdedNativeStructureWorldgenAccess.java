@@ -63,6 +63,7 @@ final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel {
     private final ChunkPos generationCenter;
     private final IntBinaryOperator surfaceFirstFreeY;
     private final IntBinaryOperator floorFirstFreeY;
+    private final boolean virtualizeHeights;
     private final Predicate<BlockPos> protectedPosition;
     private final Holder<Biome> fallbackBiome;
     private final BiomeManager biomeManager;
@@ -80,6 +81,7 @@ final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel {
                 boundary.surfaceFirstFreeY(), "Native structure world access requires a surface resolver");
         this.floorFirstFreeY = Objects.requireNonNull(
                 boundary.floorFirstFreeY(), "Native structure world access requires an ocean-floor resolver");
+        this.virtualizeHeights = boundary.virtualizeHeights();
         this.protectedPosition = Objects.requireNonNull(
                 boundary.protectedPosition(), "World access requires a protected-position predicate");
         BlockPos biomeSample = generationCenter.getMiddleBlockPosition(delegate.getSeaLevel());
@@ -102,9 +104,10 @@ final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel {
     static ModdedNativeStructureWorldgenAccess create(WorldGenLevel delegate, ChunkPos generationCenter,
                                                 IntBinaryOperator surfaceFirstFreeY,
                                                 IntBinaryOperator floorFirstFreeY,
+                                                boolean virtualizeHeights,
                                                 Predicate<BlockPos> protectedPosition) {
         return new ModdedNativeStructureWorldgenAccess(delegate, new Boundary(
-                generationCenter, surfaceFirstFreeY, floorFirstFreeY, protectedPosition));
+                generationCenter, surfaceFirstFreeY, floorFirstFreeY, virtualizeHeights, protectedPosition));
     }
 
     @Override
@@ -241,7 +244,7 @@ final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel {
 
     @Override
     public int getHeight(Heightmap.Types type, int x, int z) {
-        if (isInsideGenerationRegion(x >> 4, z >> 4)) {
+        if (!virtualizeHeights && isInsideGenerationRegion(x >> 4, z >> 4)) {
             return delegate.getHeight(type, x, z);
         }
         return height(type, x, z);
@@ -526,6 +529,7 @@ final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel {
     private record Boundary(ChunkPos generationCenter,
                             IntBinaryOperator surfaceFirstFreeY,
                             IntBinaryOperator floorFirstFreeY,
+                            boolean virtualizeHeights,
                             Predicate<BlockPos> protectedPosition) {
     }
 
