@@ -18,43 +18,69 @@
 
 package art.arcane.iris.engine.framework;
 
-import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.nms.container.BlockPos;
 import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
+import art.arcane.iris.engine.history.GenerationSemanticIndex;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.volmlib.util.math.Position2;
-import art.arcane.volmlib.util.math.Spiraler;
 import art.arcane.volmlib.util.matter.MatterCavern;
-import art.arcane.iris.util.common.parallel.BurstExecutor;
-import art.arcane.iris.util.common.parallel.MultiBurst;
-import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 
+import java.math.BigInteger;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 @FunctionalInterface
 public interface Locator<T> {
+    record SearchCandidate(Position2 chunk, int blockX, int blockZ) {
+        public SearchCandidate {
+            if (chunk == null) {
+                throw new IllegalArgumentException("Locator candidate chunk cannot be null.");
+            }
+        }
+
+        public static SearchCandidate atChunkCenter(Position2 chunk) {
+            long blockX = (long) chunk.getX() * 16L + 8L;
+            long blockZ = (long) chunk.getZ() * 16L + 8L;
+            return new SearchCandidate(
+                    chunk,
+                    (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, blockX)),
+                    (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, blockZ))
+            );
+        }
+    }
+
     static Locator<IrisRegion> region(String loadKey) {
-        Locator<IrisRegion> exact = (e, c) -> e.getRegion((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
+        Locator<IrisRegion> exact = new HistoryAwareLocator<>(
+                GenerationSemanticIndex.SemanticKind.REGION,
+                loadKey,
+                (e, c) -> e.getRegion((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey)
+        );
         return new HintedLocator<>(exact, (engine) -> HintedLocator.regionPlan(engine, loadKey));
     }
 
     static Locator<IrisObject> object(String loadKey) {
-        Locator<IrisObject> exact = (e, c) -> e.getObjectsAt(c.getX(), c.getZ()).contains(loadKey);
+        Locator<IrisObject> exact = new HistoryAwareLocator<>(
+                GenerationSemanticIndex.SemanticKind.OBJECT,
+                loadKey,
+                (e, c) -> e.getObjectsAt(c.getX(), c.getZ()).contains(loadKey)
+        );
         return new HintedLocator<>(exact, (engine) -> HintedLocator.objectPlan(engine, loadKey));
     }
 
     static Locator<IrisBiome> surfaceBiome(String loadKey) {
-        Locator<IrisBiome> exact = (e, c) -> chunkContainsSurfaceBiome(e, c, loadKey);
+        Locator<IrisBiome> exact = new HistoryAwareLocator<>(
+                GenerationSemanticIndex.SemanticKind.SURFACE_BIOME,
+                loadKey,
+                (e, c) -> chunkContainsSurfaceBiome(e, c, loadKey)
+        );
         return new HintedLocator<>(exact, (engine) -> HintedLocator.biomePlan(engine, loadKey));
     }
 
@@ -71,7 +97,11 @@ public interface Locator<T> {
     }
 
     static Locator<art.arcane.iris.engine.object.IrisStructure> structure(String key) {
-        return (e, c) -> IrisStructureLocator.startsInChunk(e, key, c.getX(), c.getZ());
+        return new HistoryAwareLocator<>(
+                GenerationSemanticIndex.SemanticKind.STRUCTURE,
+                key,
+                (e, c) -> IrisStructureLocator.startsInChunk(e, key, c.getX(), c.getZ())
+        );
     }
 
     static Locator<BlockPos> poi(String type) {
@@ -82,12 +112,16 @@ public interface Locator<T> {
     }
 
     static Locator<IrisBiome> caveBiome(String loadKey) {
-        Locator<IrisBiome> exact = (e, c) -> e.getCaveBiome((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey);
+        Locator<IrisBiome> exact = new HistoryAwareLocator<>(
+                GenerationSemanticIndex.SemanticKind.CAVE_BIOME,
+                loadKey,
+                (e, c) -> e.getCaveBiome((c.getX() << 4) + 8, (c.getZ() << 4) + 8).getLoadKey().equals(loadKey)
+        );
         return new HintedLocator<>(exact, (engine) -> HintedLocator.caveBiomePlan(engine, loadKey));
     }
 
     static Locator<IrisBiome> caveOrMantleBiome(String loadKey) {
-        return (e, c) -> {
+        Locator<IrisBiome> active = (e, c) -> {
             AtomicBoolean found = new AtomicBoolean(false);
             try (GenerationSessionLease lease = e.acquireGenerationLease("locator_generate_matter")) {
                 ChunkContext chunkContext = new ChunkContext(c.getX() << 4, c.getZ() << 4, e.getComplex(), lease.sessionId(), false, ChunkContext.PrefillPlan.NONE, null);
@@ -109,58 +143,114 @@ public interface Locator<T> {
 
             return found.get();
         };
+        return new HistoryAwareLocator<>(
+                GenerationSemanticIndex.SemanticKind.CAVE_BIOME,
+                loadKey,
+                active
+        );
     }
 
     boolean matches(Engine engine, Position2 chunk);
 
-    default CompletableFuture<Position2> find(Engine engine, Position2 pos, long timeout, Consumer<Integer> checks) throws WrongEngineBroException {
-        if (engine.isClosed()) {
-            throw new WrongEngineBroException();
+    default boolean matchesForSearch(Engine engine, Position2 chunk) {
+        if (!GenerationLocatorPolicy.allowsActivePrediction(engine, chunk)) {
+            return false;
         }
+        return GenerationLocatorPolicy.evaluateScoped(
+                engine,
+                chunk,
+                () -> matches(engine, chunk)
+        );
+    }
 
-        AtomicBoolean stop = new AtomicBoolean(false);
-        CompletableFuture<Position2> search = MultiBurst.burst.completeValueAsync(() -> {
-            try (GenerationSessionLease lease = engine.acquireGenerationLease("locator_search");
-                 IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-                int tc = IrisSettings.getThreadCount(IrisSettings.get().getConcurrency().getParallelism()) * 32;
-                MultiBurst burst = MultiBurst.burst;
-                AtomicBoolean found = new AtomicBoolean(false);
-                AtomicInteger searched = new AtomicInteger();
-                AtomicReference<Position2> foundPos = new AtomicReference<>();
-                PrecisionStopwatch px = PrecisionStopwatch.start();
-                AtomicReference<Position2> next = new AtomicReference<>(pos);
-                Spiraler s = new Spiraler(100000, 100000, (x, z) -> next.set(new Position2(x, z)));
-                s.setOffset(pos.getX(), pos.getZ());
-                s.next();
-                while (!found.get() && !stop.get() && !engine.isClosing() && px.getMilliseconds() < timeout) {
-                    BurstExecutor e = burst.burst(tc);
+    default Position2 nearestRecorded(Engine engine, Position2 origin, int maxChunkRadius) {
+        SearchCandidate candidate = nearestRecordedCandidate(engine, origin, maxChunkRadius);
+        return candidate == null ? null : candidate.chunk();
+    }
 
-                    for (int i = 0; i < tc; i++) {
-                        Position2 p = next.get();
-                        s.next();
-                        e.queue(() -> {
-                            if (found.get() || stop.get() || engine.isClosing()) {
-                                return;
-                            }
-                            if (matches(engine, p)) {
-                                foundPos.compareAndSet(null, p);
-                                found.set(true);
-                            }
-                            searched.incrementAndGet();
-                        });
-                    }
+    default SearchCandidate nearestRecordedCandidate(Engine engine, Position2 origin, int maxChunkRadius) {
+        return null;
+    }
 
-                    e.complete();
-                    checks.accept(searched.get());
-                }
+    default SearchCandidate candidateForMatchedChunk(Engine engine, Position2 chunk) {
+        return SearchCandidate.atChunkCenter(chunk);
+    }
 
-                if (found.get() && foundPos.get() != null) {
-                    return foundPos.get();
-                }
+    default CompletableFuture<Position2> find(Engine engine, Position2 pos, long timeout, Consumer<Integer> checks) throws WrongEngineBroException {
+        return new HintedLocator<>(this, ignored -> HintedLocator.SearchPlan.unpruned())
+                .find(engine, pos, timeout, checks);
+    }
 
-                return null;
+    static int activeSearchRadius(
+            Position2 origin,
+            SearchCandidate recorded,
+            int maximumRadius
+    ) {
+        if (recorded == null) {
+            return maximumRadius;
+        }
+        BigInteger distance = distanceSquared(origin, recorded).sqrt();
+        BigInteger chunks = distance.add(BigInteger.valueOf(15L)).divide(BigInteger.valueOf(16L));
+        return Math.min(maximumRadius, chunks.min(BigInteger.valueOf(Integer.MAX_VALUE - 2L)).intValue() + 2);
+    }
+
+    static void updateNearest(
+            AtomicReference<SearchCandidate> nearest,
+            SearchCandidate candidate,
+            Position2 origin
+    ) {
+        SearchCandidate current = nearest.get();
+        while (current == null || compareCandidates(origin, candidate, current) < 0) {
+            if (nearest.compareAndSet(current, candidate)) {
+                return;
             }
-        });
-        return LocatorCanceller.requestScoped(search, stop);
+            current = nearest.get();
+        }
+    }
+
+    static SearchCandidate nearer(
+            Position2 origin,
+            SearchCandidate first,
+            SearchCandidate second
+    ) {
+        if (first == null) {
+            return second;
+        }
+        if (second == null) {
+            return first;
+        }
+        return compareCandidates(origin, first, second) <= 0 ? first : second;
+    }
+
+    private static int compareCandidates(
+            Position2 origin,
+            SearchCandidate first,
+            SearchCandidate second
+    ) {
+        int distanceComparison = distanceSquared(origin, first).compareTo(distanceSquared(origin, second));
+        if (distanceComparison != 0) {
+            return distanceComparison;
+        }
+        int xComparison = Integer.compare(first.blockX(), second.blockX());
+        if (xComparison != 0) {
+            return xComparison;
+        }
+        int zComparison = Integer.compare(first.blockZ(), second.blockZ());
+        if (zComparison != 0) {
+            return zComparison;
+        }
+        int chunkXComparison = Integer.compare(first.chunk().getX(), second.chunk().getX());
+        if (chunkXComparison != 0) {
+            return chunkXComparison;
+        }
+        return Integer.compare(first.chunk().getZ(), second.chunk().getZ());
+    }
+
+    private static BigInteger distanceSquared(Position2 origin, SearchCandidate candidate) {
+        BigInteger originX = BigInteger.valueOf((long) origin.getX() * 16L + 8L);
+        BigInteger originZ = BigInteger.valueOf((long) origin.getZ() * 16L + 8L);
+        BigInteger deltaX = originX.subtract(BigInteger.valueOf(candidate.blockX()));
+        BigInteger deltaZ = originZ.subtract(BigInteger.valueOf(candidate.blockZ()));
+        return deltaX.multiply(deltaX).add(deltaZ.multiply(deltaZ));
     }
 }

@@ -71,7 +71,7 @@ public final class ModdedRuntimeRegistry {
                 if (!seen.add(biomeId)) {
                     continue;
                 }
-                String biomeRef = ModdedWorldgenIds.biomeRef(pack, dimension.getLoadKey(), biomeId);
+                String biomeRef = data.customBiomeResourceKey(dimension, customBiome);
                 ResourceKey<Biome> biomeKey = ResourceKey.create(Registries.BIOME, Identifier.parse(biomeRef));
                 if (registry.get(biomeKey).isEmpty()) {
                     missing.add(biomeRef);

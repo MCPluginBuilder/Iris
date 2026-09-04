@@ -26,7 +26,9 @@ public class ModdedGenerationLeaseContractTest {
         assertTrue(source.contains("catch (GenerationSessionException e)"));
         assertTrue(source.contains("e.isExpectedTeardown()"));
         assertTrue(source.contains("Iris structure biome key lookup was rejected during an engine transition"));
-        assertTrue(source.contains("source.clearCache()"));
+        assertTrue(source.contains("int runtimeIdentity = engine.getCacheID();"));
+        assertTrue(source.contains("cache.get(runtimeIdentity, key)"));
+        assertTrue(source.contains("cache.put(runtimeIdentity, key, resolved)"));
     }
 
     @Test
@@ -203,7 +205,7 @@ public class ModdedGenerationLeaseContractTest {
         String jobSource = source("art/arcane/iris/modded/command/ModdedPregenJob.java");
         String start = method(jobSource, "public static boolean start(");
         int taskConstruction = start.indexOf("PregenTask task = PregenTask.builder()");
-        int profileMutation = start.indexOf("PregenPerformanceProfile.apply(engine);");
+        int profileMutation = start.indexOf("PregenPerformanceProfile.apply(engine)");
 
         assertTrue(taskConstruction >= 0);
         assertTrue(profileMutation > taskConstruction);

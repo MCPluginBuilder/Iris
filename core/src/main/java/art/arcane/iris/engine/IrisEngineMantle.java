@@ -23,6 +23,7 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.MantleComponent;
 import art.arcane.iris.engine.mantle.MantlePass;
@@ -63,11 +64,13 @@ import lombok.ToString;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 @Data
@@ -76,6 +79,9 @@ import java.util.function.Supplier;
 public class IrisEngineMantle implements EngineMantle {
     public static final String STORAGE_FOLDER_NAME = "mantle-hydrology";
     private final Engine engine;
+    private final Path storageDirectory;
+    @Getter(AccessLevel.NONE)
+    private final AtomicReference<IrisData> runtimeData;
     private final Mantle<Matter> mantle;
     @Getter(AccessLevel.NONE)
     private final KMap<Integer, KList<MantleComponent>> components;
@@ -85,15 +91,32 @@ public class IrisEngineMantle implements EngineMantle {
     private final MantleObjectComponent object;
 
     public IrisEngineMantle(Engine engine) {
-        this.engine = engine;
-        this.mantle = createMantle(engine);
+        this(engine, legacyStorageDirectory(engine.getTarget()));
+    }
+
+    public IrisEngineMantle(Engine engine, Path storageDirectory) {
+        this.engine = Objects.requireNonNull(engine, "Iris engine");
+        this.storageDirectory = normalizeStorageDirectory(storageDirectory);
+        this.runtimeData = new AtomicReference<>(Objects.requireNonNull(engine.getData(), "Iris mantle data"));
+        this.mantle = createMantle(engine, this.storageDirectory, runtimeData::get);
         components = new KMap<>();
-        registerComponent(new MantleCarvingComponent(this));
-        registerComponent(new MantleHydrologyComponent(this));
-        object = new MantleObjectComponent(this);
-        registerComponent(object);
-        registerComponent(new MantleFloatingObjectComponent(this));
-        registerComponent(new IrisStructureComponent(this));
+        MantleObjectComponent createdObject;
+        try {
+            registerComponent(new MantleCarvingComponent(this));
+            registerComponent(new MantleHydrologyComponent(this));
+            createdObject = new MantleObjectComponent(this);
+            registerComponent(createdObject);
+            registerComponent(new MantleFloatingObjectComponent(this));
+            registerComponent(new IrisStructureComponent(this));
+        } catch (Throwable failure) {
+            try {
+                mantle.close();
+            } catch (Throwable closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw EngineShutdownSequence.propagate(failure);
+        }
+        object = createdObject;
     }
 
     @Override
@@ -163,6 +186,7 @@ public class IrisEngineMantle implements EngineMantle {
 
     @Override
     public void hotload() {
+        runtimeData.set(Objects.requireNonNull(engine.getData(), "Iris mantle data"));
         disabledFlags.reset();
         for (MantleComponent component : registeredComponents.values()) {
             component.hotload();
@@ -195,11 +219,24 @@ public class IrisEngineMantle implements EngineMantle {
         return object;
     }
 
-    private static Mantle<Matter> createMantle(Engine engine) {
+    static Path legacyStorageDirectory(EngineTarget target) {
+        EngineTarget requiredTarget = Objects.requireNonNull(target, "Iris engine target");
+        return normalizeStorageDirectory(requiredTarget.getWorld().worldFolder().toPath().resolve(STORAGE_FOLDER_NAME));
+    }
+
+    static Path normalizeStorageDirectory(Path storageDirectory) {
+        return Objects.requireNonNull(storageDirectory, "mantle storage directory").toAbsolutePath().normalize();
+    }
+
+    private static Mantle<Matter> createMantle(
+            Engine engine,
+            Path storageDirectory,
+            Supplier<IrisData> dataSupplier
+    ) {
         IrisMatterSupport.ensureRegistered();
-        File dataFolder = new File(engine.getWorld().worldFolder(), STORAGE_FOLDER_NAME);
+        File dataFolder = storageDirectory.toFile();
         int worldHeight = engine.getTarget().getHeight();
-        MantleDataAdapter<Matter> adapter = createDataAdapter(engine::getData);
+        MantleDataAdapter<Matter> adapter = createDataAdapter(dataSupplier);
         MantleHooks hooks = createHooks(EnginePanic.scoped("world " + engine.getWorld().name()));
         art.arcane.volmlib.util.mantle.Mantle.RegionIO<TectonicPlate<Matter>> regionIO =
                 createRegionIO(dataFolder, worldHeight, adapter, hooks);

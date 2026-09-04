@@ -444,6 +444,26 @@ public class StudioSVCWorldPackPublishTest {
         assertEquals("second", second.join());
     }
 
+    @Test
+    public void productionWorldPublicationUsesImmutableGenerationHistory() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/service/StudioSVC.java"
+        )).replace("\r\n", "\n");
+        int productionStart = source.indexOf("private IrisDimension publishGenerationHistory(");
+        int transientStart = source.indexOf("private IrisDimension installIntoDirectory(", productionStart);
+        String production = source.substring(productionStart, transientStart);
+
+        assertTrue(production.contains("GenerationHistory.create("));
+        assertTrue(production.contains("GenerationHistory.openIfPresent(dimensionRoot, worldSeed)"));
+        assertTrue(production.contains("GenerationHistory.adoptLegacyPack("));
+        assertTrue(production.contains("history.stageUpdate("));
+        assertTrue(production.contains("getGenerationTransitionWidthBlocks()"));
+        assertTrue(production.contains("history.activePackRoot()"));
+        assertFalse(production.contains("AtomicDirectoryPublisher.publish("));
+        assertTrue(source.contains("installIntoTransientWorld("));
+        assertTrue(source.contains("new File(dimensionRoot, \"iris/pack\")"));
+    }
+
     private static void writeValidPack(Path packRoot) throws Exception {
         Files.createDirectories(packRoot.resolve("dimensions"));
         Files.createDirectories(packRoot.resolve("regions"));

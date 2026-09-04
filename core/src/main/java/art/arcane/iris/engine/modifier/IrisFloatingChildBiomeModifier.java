@@ -286,15 +286,17 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
                     }
                 }
 
-                writeIslandSkyBiomes(
-                        parent,
-                        wx,
-                        wz,
-                        sample,
-                        chunkHeight,
-                        data,
-                        context.getDimensionStackLayout(xf, zf)
-                );
+                if (complex.allowsNewDiscreteContentAt(wx, wz)) {
+                    writeIslandSkyBiomes(
+                            parent,
+                            wx,
+                            wz,
+                            sample,
+                            chunkHeight,
+                            data,
+                            context.getDimensionStackLayout(xf, zf)
+                    );
+                }
             }
         }
 
@@ -312,6 +314,9 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
             for (int zf = 0; zf < 16; zf++) {
                 int wx = x + xf;
                 int wz = z + zf;
+                if (!complex.allowsNewDiscreteContentAt(wx, wz)) {
+                    continue;
+                }
                 IrisBiome parent = boundarySampler.parent(wx, wz);
                 if (parent == null || parent.getFloatingChildBiomes() == null || parent.getFloatingChildBiomes().isEmpty()) {
                     continue;
@@ -422,8 +427,11 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
     private MatterBiomeInject createSkyBiomeMatter(IrisBiome target, int wx, int wz) {
         if (target.isCustom()) {
             IrisBiomeCustom custom = target.getCustomBiome(rng, getEngine(), wx, 0, wz);
-            return BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(
-                    getDimension().getCustomBiomeKey(custom.getId())));
+            String resourceKey = getEngine().getData().customBiomeResourceKey(
+                    getEngine().getDimension(),
+                    custom
+            );
+            return BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(resourceKey));
         }
 
         return BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(target.getSkyBiomeKey(rng, getEngine(), wx, 0, wz)));

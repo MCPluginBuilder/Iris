@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "半径为中心周围的块",
     "iris.director.commanddeveloper.param.center_chunk_x": "居中块 X",
     "iris.director.commanddeveloper.param.center_chunk_z": "居中块 Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "更新世界的内容包（不安全！）",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "准备世界生成更新",
     "iris.director.commanddeveloper.param.world_update": "更新世界",
     "iris.director.commanddeveloper.param.pack_install_into_world": "加载世界的包",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "一定要做备份 & 先读一下警告!",
@@ -1053,15 +1053,13 @@
       "other": "§7    ...  和 {count} 更多的警告。 更多警告。",
       "one": "§7    ...  和 {count} 更多的警告。 更多警告。"
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§c在使用之前,你应该先做备份",
-      "§e由此产生的问题可以是,但不限于:",
-      "§e - 新旧块之间的断块(断块)(以前 & 更新后)",
-      "§e - 重新生成不适合旧的块",
-      "§e - 结构在再生时不再产生",
-      "§e - 洞穴不排队",
-      "§e - 地层不排队",
-      "§c现在,你意识到了风险, 并做了一个备份:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§c准备此更新前，请备份整个世界。",
+      "§e现有区块不会重新生成或被覆盖。",
+      "§e重启后，新区块将使用已准备的包，并在保存的边界处逐渐衔接地形。",
+      "§e世界的种子、高度、环境和维度类型不能更改。",
+      "§e每份备份都必须包含完整的 iris/generation 目录。",
+      "§c要准备更新并请求正常重启，请执行：",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§a导入 §f{total}§a 原版 & 数据包结构(模式={mode}, includeNonJigsaw={includeNonJigsaw})...",

@@ -78,6 +78,7 @@ public final class ModdedWorldCommands {
 
         root.then(enableTree("enable"));
         root.then(enableTree("create"));
+        root.then(updateTree());
         root.then(replaceOverworldTree());
         root.then(mainWorldTree());
 
@@ -108,6 +109,20 @@ public final class ModdedWorldCommands {
         return Commands.literal("disable")
                 .then(Commands.argument("dimension", IdentifierArgument.id()).suggests(LOADED_DIMENSIONS)
                         .executes(ModdedCommandTree.localized((CommandContext<CommandSourceStack> context) -> disable(context.getSource(), dimensionArgument(context), false))));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> updateTree() {
+        return Commands.literal("update")
+                .then(Commands.argument("dimension", IdentifierArgument.id()).suggests(LOADED_DIMENSIONS)
+                        .then(Commands.argument("pack", StringArgumentType.string())
+                                .suggests(IrisModdedCommands.PACK_NAMES)
+                                .executes(ModdedCommandTree.localized(
+                                        (CommandContext<CommandSourceStack> context) -> update(
+                                                context.getSource(),
+                                                dimensionArgument(context),
+                                                StringArgumentType.getString(context, "pack")
+                                        )
+                                ))));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> deleteTree(String name) {
@@ -195,6 +210,47 @@ public final class ModdedWorldCommands {
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_CREATED_IRIS_WORLD_FROM_PACK_DIMENSION_SEED, MessageArgument.untrusted("dimensionId", dimensionId), MessageArgument.untrusted("pack", pack), MessageArgument.untrusted("packDimension", packDimension), MessageArgument.untrusted("seed", seed)));
         IrisModdedCommands.ok(source, IrisLanguage.plain(ModdedCommandMessages.MODDED_WORLD_COMMANDS_IT_IS_LIVE_NOW_RE_INJECTED_ON_EVERY_STARTUP_TELEPORT));
         return 1;
+    }
+
+    private static int update(CommandSourceStack source, String targetDimension, String packRaw) {
+        String dimensionId;
+        try {
+            dimensionId = normalizeDimensionId(targetDimension);
+        } catch (IllegalArgumentException failure) {
+            IrisModdedCommands.fail(source, failure.getMessage());
+            return 0;
+        }
+        String[] packRef = parsePackRef(packRaw);
+        String pack = packRef[0];
+        String packDimension = packRef[1];
+        if (!validPackRef(source, pack, packDimension)
+                || blockIfPackBroken(source, dimensionId, pack)
+                || !loadPackDimension(source, pack, packDimension)) {
+            return 0;
+        }
+        try {
+            ModdedDimensionManager.UpdateResult result = ModdedDimensionManager.stagePersistentUpdate(
+                    source.getServer(),
+                    dimensionId,
+                    pack,
+                    packDimension
+            );
+            if (result.restartRequired()) {
+                IrisModdedCommands.ok(source, "Iris world update staged for " + dimensionId
+                        + " from " + pack + ":" + packDimension
+                        + ". Restart the server to activate it; the running world remains on its current pack.");
+            } else {
+                IrisModdedCommands.ok(source, "Iris world " + dimensionId
+                        + " already uses this immutable pack; no restart is required.");
+            }
+            return 1;
+        } catch (Throwable failure) {
+            ModdedIrisLog.error("Iris world update staging failed for {} (pack={} dim={})",
+                    dimensionId, pack, packDimension, failure);
+            IrisModdedCommands.fail(source, "Iris world update failed for " + dimensionId
+                    + ": " + IrisLanguage.errorDetail(failure));
+            return 0;
+        }
     }
 
     private static int replaceOverworld(CommandSourceStack source, String packRaw, String seedRaw) {

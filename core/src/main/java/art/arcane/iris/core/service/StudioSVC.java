@@ -19,6 +19,7 @@
 package art.arcane.iris.core.service;
 
 import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.IrisStartupValidation;
@@ -46,6 +47,14 @@ import art.arcane.iris.core.runtime.WorldDeletionQueue;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioActivation;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.engine.history.GenerationActivation;
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationEpochContractFactory;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationHistoryPaths;
+import art.arcane.iris.engine.history.GenerationPackFingerprint;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
+import art.arcane.iris.engine.history.GenerationRegistryContractFactory;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
@@ -166,16 +175,195 @@ public class StudioSVC implements IrisService {
         queueStudioWorldDeletionOnStartup(worldNamesToDelete);
     }
 
-    public IrisDimension installIntoWorld(VolmitSender sender, IrisDimension dimension, File folder) {
-        return installIntoDirectory(sender, dimension, new File(folder, "iris/pack"), false);
+    public IrisDimension installIntoWorld(
+            VolmitSender sender,
+            IrisDimension dimension,
+            File dimensionRoot,
+            long worldSeed
+    ) {
+        return publishGenerationHistory(sender, dimension, dimensionRoot, worldSeed, false);
     }
 
-    public IrisDimension replaceIntoWorld(VolmitSender sender, IrisDimension dimension, File folder) {
-        return installIntoDirectory(sender, dimension, new File(folder, "iris/pack"), true);
+    public IrisDimension replaceIntoWorld(
+            VolmitSender sender,
+            IrisDimension dimension,
+            File dimensionRoot,
+            long worldSeed
+    ) {
+        return publishGenerationHistory(sender, dimension, dimensionRoot, worldSeed, true);
+    }
+
+    public IrisDimension installIntoTransientWorld(
+            VolmitSender sender,
+            IrisDimension dimension,
+            File dimensionRoot
+    ) {
+        return installIntoDirectory(sender, dimension, new File(dimensionRoot, "iris/pack"), false);
     }
 
     public IrisDimension replaceIntoPackDirectory(VolmitSender sender, IrisDimension dimension, File folder) {
         return installIntoDirectory(sender, dimension, folder, true);
+    }
+
+    private IrisDimension publishGenerationHistory(
+            VolmitSender sender,
+            IrisDimension dimension,
+            File dimensionRoot,
+            long worldSeed,
+            boolean stageUpdate
+    ) {
+        if (J.isPrimaryThread()) {
+            sender.sendMessage(IrisLanguage.text(
+                    BukkitRuntimeMessages.STUDIO_S_V_C_PACK_COPY_REQUIRES_ASYNC_THREAD
+            ));
+            return null;
+        }
+        String dimensionKey = dimension.getLoadKey();
+        try {
+            Path source = resolveSafePackSource(dimension.getLoader().getDataFolder());
+            GenerationCandidate candidate = captureGenerationCandidate(source, dimensionKey);
+            Path root = Objects.requireNonNull(dimensionRoot, "dimensionRoot")
+                    .toPath()
+                    .toAbsolutePath()
+                    .normalize();
+            if (!stageUpdate && !Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
+                Path parent = Objects.requireNonNull(root.getParent(), "dimensionRoot parent");
+                Files.createDirectories(parent);
+                Files.createDirectory(root);
+            }
+            GenerationHistory history;
+            long previousActivationId = 0L;
+            boolean restartRequired = false;
+            if (stageUpdate) {
+                history = openOrAdoptGenerationHistory(root, dimensionKey, worldSeed);
+                previousActivationId = history.activeActivation().activationId();
+                GenerationActivation activation = history.stageUpdate(
+                        source,
+                        candidate.packFingerprint(),
+                        candidate.dimensionContract(),
+                        candidate.registryContract(),
+                        IrisSettings.get().getGenerator().getGenerationTransitionWidthBlocks()
+                );
+                restartRequired = activation.activationId() != previousActivationId;
+            } else {
+                history = GenerationHistory.create(
+                        root,
+                        source,
+                        candidate.packFingerprint(),
+                        worldSeed,
+                        candidate.dimensionContract(),
+                        candidate.registryContract()
+                );
+            }
+            Path installedPack = stageUpdate && history.pendingActivation().isPresent()
+                    ? history.packRoot(history.pendingActivation().orElseThrow().activationId())
+                    : history.activePackRoot();
+            IrisDimension installed = loadInstalledDimension(installedPack, dimensionKey);
+            if (restartRequired) {
+                ServerConfigurator.restart("An Iris generation epoch update is pending activation.");
+            }
+            return installed;
+        } catch (Throwable failure) {
+            IrisLogging.reportError("Failed to publish generation history for dimension '"
+                    + dimensionKey + "' into " + dimensionRoot.getPath(), failure);
+            sender.sendMessage(IrisLanguage.text(
+                    BukkitRuntimeMessages.STUDIO_S_V_C_PACK_INSTALL_FAILED,
+                    MessageArgument.untrusted("dimension", dimensionKey),
+                    MessageArgument.untrusted("error", errorDetail(failure))
+            ));
+            return null;
+        }
+    }
+
+    private static GenerationHistory openOrAdoptGenerationHistory(
+            Path dimensionRoot,
+            String dimensionKey,
+            long worldSeed
+    ) throws IOException {
+        Optional<GenerationHistory> current = GenerationHistory.openIfPresent(dimensionRoot, worldSeed);
+        if (current.isPresent()) {
+            return current.get();
+        }
+        Path legacyPack = GenerationHistoryPaths.forDimension(dimensionRoot).legacyPackRoot();
+        PackValidationResult validation = validatePublishedPack(legacyPack);
+        if (!validation.isLoadable()) {
+            throw new BrokenPackException(legacyPack.toString(), validation.getBlockingErrors());
+        }
+        GenerationCandidate legacy = captureGenerationCandidate(
+                legacyPack,
+                dimensionKey,
+                GenerationRegistryContractFactory.CustomBiomeAliasPolicy.RETAIN_LEGACY_ALIASES
+        );
+        return GenerationHistory.adoptLegacyPack(
+                dimensionRoot,
+                legacy.packFingerprint(),
+                worldSeed,
+                legacy.dimensionContract(),
+                legacy.registryContract()
+        );
+    }
+
+    private static GenerationCandidate captureGenerationCandidate(Path packRoot, String dimensionKey)
+            throws IOException {
+        return captureGenerationCandidate(
+                packRoot,
+                dimensionKey,
+                GenerationRegistryContractFactory.CustomBiomeAliasPolicy.CONTENT_ADDRESSED_ONLY
+        );
+    }
+
+    private static GenerationCandidate captureGenerationCandidate(
+            Path packRoot,
+            String dimensionKey,
+            GenerationRegistryContractFactory.CustomBiomeAliasPolicy aliasPolicy
+    ) throws IOException {
+        String fingerprint = GenerationPackFingerprint.compute(
+                packRoot,
+                GenerationPackFingerprint.CURRENT_VERSION
+        );
+        IrisData data = IrisData.openDatapackCompiler(packRoot.toFile());
+        try {
+            IrisDimension dimension = data.getDimensionLoader().load(dimensionKey, false);
+            if (dimension == null) {
+                throw new IOException("Generation pack does not contain a loadable dimension '"
+                        + dimensionKey + "'.");
+            }
+            String dimensionTypeKey = IrisPlatforms.get()
+                    .registries()
+                    .generationRegistry()
+                    .dimensionTypeResourceKey(
+                            data.getDataFolder().getName(),
+                            dimension.getLoadKey(),
+                            dimension.getDimensionTypeKey()
+                    );
+            GenerationEpoch.DimensionContract dimensionContract = GenerationEpochContractFactory.create(
+                    dimension,
+                    dimension.getLoadKey(),
+                    dimensionTypeKey
+            );
+            GenerationRegistryContract registryContract = GenerationRegistryContractFactory.create(
+                    data,
+                    dimension,
+                    fingerprint,
+                    aliasPolicy
+            );
+            return new GenerationCandidate(fingerprint, dimensionContract, registryContract);
+        } finally {
+            data.close();
+        }
+    }
+
+    private static IrisDimension loadInstalledDimension(Path packRoot, String dimensionKey) throws IOException {
+        PackValidationResult validation = validatePublishedPack(packRoot);
+        if (!validation.isLoadable()) {
+            throw new BrokenPackException(packRoot.toString(), validation.getBlockingErrors());
+        }
+        IrisDimension installed = IrisData.get(packRoot.toFile()).getDimensionLoader().load(dimensionKey, false);
+        if (installed == null) {
+            throw new IOException("Immutable generation pack does not contain dimension '"
+                    + dimensionKey + "'.");
+        }
+        return installed;
     }
 
     private IrisDimension installIntoDirectory(
@@ -1532,6 +1720,13 @@ public class StudioSVC implements IrisService {
         FAILED,
         OPEN,
         RESTART
+    }
+
+    private record GenerationCandidate(
+            String packFingerprint,
+            GenerationEpoch.DimensionContract dimensionContract,
+            GenerationRegistryContract registryContract
+    ) {
     }
 
     public IrisProject getActiveProject() {

@@ -18,6 +18,9 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionTerrainContext;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
@@ -33,6 +36,7 @@ import net.minecraft.world.level.biome.Biome;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -98,11 +102,11 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
             return key;
         }
         Engine engine = context.getEngine();
-        String prefix = engine.getDimension().getCustomBiomeKeyPrefix();
-        if (!key.regionMatches(true, 0, prefix, 0, prefix.length())) {
-            return key;
+        BiomeOwner owner = findCustomBiomeOwner(engine, key);
+        if (owner != null) {
+            return owner.physicalKey();
         }
-        return ModdedWorldgenIds.biomeRef(engine, key.substring(prefix.length()));
+        return engine.getData().physicalBiomeResourceKey(engine.getDimension(), key);
     }
 
     @Override
@@ -139,31 +143,81 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
     }
 
     private int idForDerivative(Registry<Biome> registry, String key) {
-        IrisBiome owner = findCustomBiomeOwner(key);
+        BiomeOwner owner = findCustomBiomeOwner(key);
         if (owner == null) {
             return -1;
         }
-        String derivativeKey = owner.getVanillaDerivativeKey();
+        String derivativeKey = owner.biome().getVanillaDerivativeKey();
         if (derivativeKey == null) {
             return -1;
         }
         return idForKey(registry, derivativeKey);
     }
 
-    private IrisBiome findCustomBiomeOwner(String key) {
+    private BiomeOwner findCustomBiomeOwner(String key) {
         for (Engine engine : ModdedWorldEngines.activeEngines()) {
             if (engine == null || engine.isClosed()) {
                 continue;
             }
-            IrisDimension dimension = engine.getDimension();
-            for (IrisBiome biome : dimension.getAllBiomes(engine)) {
-                if (!biome.isCustom()) {
-                    continue;
-                }
-                for (IrisBiomeCustom custom : biome.getCustomDerivitives()) {
-                    if (key.equalsIgnoreCase(dimension.getCustomBiomeKey(custom.getId()))) {
-                        return biome;
-                    }
+            BiomeOwner owner = findCustomBiomeOwner(engine, key);
+            if (owner != null) {
+                return owner;
+            }
+        }
+        return null;
+    }
+
+    private BiomeOwner findCustomBiomeOwner(Engine engine, String key) {
+        IrisDimension hostDimension = engine.getDimension();
+        BiomeOwner owner = findCustomBiomeOwner(
+                hostDimension,
+                engine.getData(),
+                hostDimension.getAllBiomes(engine),
+                key
+        );
+        if (owner != null) {
+            return owner;
+        }
+        DimensionStackContext stackContext = engine.getDimensionStackContext();
+        if (stackContext == null) {
+            return null;
+        }
+        for (DimensionTerrainContext terrainContext : stackContext.getLayersBottomToTop()) {
+            if (terrainContext.isSelfReferencing()) {
+                continue;
+            }
+            IrisDimension dimension = terrainContext.getDimension();
+            owner = findCustomBiomeOwner(
+                    dimension,
+                    terrainContext.getData(),
+                    dimension.getAllBiomes(terrainContext),
+                    key
+            );
+            if (owner != null) {
+                return owner;
+            }
+        }
+        return null;
+    }
+
+    private BiomeOwner findCustomBiomeOwner(
+            IrisDimension dimension,
+            IrisData data,
+            Iterable<IrisBiome> biomes,
+            String key
+    ) {
+        for (IrisBiome biome : biomes) {
+            if (!biome.isCustom()) {
+                continue;
+            }
+            for (IrisBiomeCustom custom : biome.getCustomDerivitives()) {
+                String contractLogicalKey = dimension.getLoadKey().toLowerCase(Locale.ROOT)
+                        + ":" + custom.getId().toLowerCase(Locale.ROOT);
+                String physicalKey = data.customBiomeResourceKey(dimension, custom);
+                if (key.equalsIgnoreCase(dimension.getCustomBiomeKey(custom.getId()))
+                        || key.equalsIgnoreCase(contractLogicalKey)
+                        || key.equalsIgnoreCase(physicalKey)) {
+                    return new BiomeOwner(dimension, data, biome, physicalKey);
                 }
             }
         }
@@ -219,5 +273,8 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
         private RegistryCache(Registry<Biome> registry) {
             this.registry = registry;
         }
+    }
+
+    private record BiomeOwner(IrisDimension dimension, IrisData data, IrisBiome biome, String physicalKey) {
     }
 }

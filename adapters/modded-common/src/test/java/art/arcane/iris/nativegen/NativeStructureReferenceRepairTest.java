@@ -8,6 +8,7 @@ import art.arcane.iris.engine.framework.NativeStructureOwnershipBundle;
 import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
 import art.arcane.iris.engine.framework.NativeStructureOwnershipStore;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisNativeStructure;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
@@ -427,6 +428,14 @@ public class NativeStructureReferenceRepairTest {
         @Override
         public IrisData getData() {
             return data;
+        }
+
+        @Override
+        public GenerationHistoryRuntimeRouter.CoordinateScope openGenerationHistoryCoordinateScope(
+                int blockX,
+                int blockZ
+        ) {
+            return null;
         }
 
         @Override

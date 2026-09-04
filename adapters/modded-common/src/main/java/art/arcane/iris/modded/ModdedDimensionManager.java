@@ -19,7 +19,9 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.history.GenerationActivation;
 import art.arcane.iris.engine.object.IrisDimension;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -47,9 +49,12 @@ import net.minecraft.world.level.storage.LevelStorageSource;
 import net.minecraft.world.level.storage.ServerLevelData;
 import net.minecraft.world.level.storage.WorldData;
 
-import java.io.File;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -120,14 +125,76 @@ public final class ModdedDimensionManager {
         return generator.commandEngine();
     }
 
-    public static Handle create(MinecraftServer server, String dimensionId, String pack, String packDimensionKey, long seed) {
-        ModdedStartup.requirePackForWorldCreation(pack);
+    public static Handle createTransientStudio(
+            MinecraftServer server,
+            String dimensionId,
+            String pack,
+            String packDimensionKey,
+            long seed
+    ) {
+        return create(
+                server,
+                dimensionId,
+                pack,
+                packDimensionKey,
+                seed,
+                ModdedGenerationMode.TRANSIENT_STUDIO
+        );
+    }
+
+    static Handle restorePersistent(
+            MinecraftServer server,
+            String dimensionId,
+            String pack,
+            String packDimensionKey,
+            long seed
+    ) {
+        return create(
+                server,
+                dimensionId,
+                pack,
+                packDimensionKey,
+                seed,
+                ModdedGenerationMode.PERSISTENT_RESTORE
+        );
+    }
+
+    private static Handle create(
+            MinecraftServer server,
+            String dimensionId,
+            String pack,
+            String packDimensionKey,
+            long seed,
+            ModdedGenerationMode generationMode
+    ) {
         ModdedServerAccess serverAccess = requireAccess();
         synchronized (LOCK) {
             ResourceKey<Level> key = levelKey(dimensionId);
+            RuntimePack runtimePack = switch (generationMode) {
+                case TRANSIENT_STUDIO -> transientStudioPack(pack, packDimensionKey);
+                case PERSISTENT_CREATE -> persistentRuntimePack(
+                        ModdedGenerationHistoryStorage.createOrStage(
+                                server,
+                                key,
+                                pack,
+                                packDimensionKey,
+                                seed
+                        ),
+                        generationMode
+                );
+                case PERSISTENT_RESTORE -> persistentRuntimePack(
+                        ModdedGenerationHistoryStorage.restoreOrAdopt(
+                                server,
+                                key,
+                                pack,
+                                packDimensionKey,
+                                seed
+                        ),
+                        generationMode
+                );
+            };
             Handle existing = HANDLES.get(dimensionId);
             if (existing != null && serverAccess.hasLevel(server, key)) {
-                existing.generator().repointAndBind(existing.level(), pack, packDimensionKey, seed);
                 Handle refreshed = new Handle(dimensionId, pack, packDimensionKey, seed, existing.level(), existing.generator());
                 HANDLES.put(dimensionId, refreshed);
                 return refreshed;
@@ -138,14 +205,22 @@ public final class ModdedDimensionManager {
                     throw new IllegalStateException("Iris cannot inject dimension '" + dimensionId + "': a non-Iris level with that id is already loaded");
                 }
                 ModdedIrisLog.warn("Iris dimension '{}' is already present in the running server; reusing it", dimensionId);
-                generator.repointAndBind(present, pack, packDimensionKey, seed);
                 Handle handle = new Handle(dimensionId, pack, packDimensionKey, seed, present, generator);
                 HANDLES.put(dimensionId, handle);
                 return handle;
             }
 
             try {
-                Handle handle = inject(server, serverAccess, dimensionId, key, pack, packDimensionKey, seed);
+                Handle handle = inject(
+                        server,
+                        serverAccess,
+                        dimensionId,
+                        key,
+                        pack,
+                        packDimensionKey,
+                        seed,
+                        runtimePack
+                );
                 HANDLES.put(dimensionId, handle);
                 ModdedIrisLog.info("Iris injected runtime dimension '{}' (pack={} dim={} seed={})", dimensionId, pack, packDimensionKey, seed);
                 return handle;
@@ -157,28 +232,109 @@ public final class ModdedDimensionManager {
     }
 
     public static Handle createPersistent(MinecraftServer server, String dimensionId, String pack, String packDimensionKey, long seed) {
-        ModdedDimensionRegistryStore.PersistentDimension previous =
-                ModdedDimensionRegistryStore.get(server, dimensionId);
-        ModdedDimensionRegistryStore.put(server, new ModdedDimensionRegistryStore.PersistentDimension(dimensionId, pack, packDimensionKey, seed));
-        try {
-            return create(server, dimensionId, pack, packDimensionKey, seed);
-        } catch (Throwable e) {
+        synchronized (LOCK) {
+            ModdedDimensionRegistryStore.PersistentDimension previous =
+                    ModdedDimensionRegistryStore.get(server, dimensionId);
+            if (previous != null) {
+                throw new IllegalStateException("Iris dimension '" + dimensionId
+                        + "' already exists. Use the Iris world update command to stage a pack update.");
+            }
+            ModdedDimensionRegistryStore.put(server, new ModdedDimensionRegistryStore.PersistentDimension(
+                    dimensionId,
+                    pack,
+                    packDimensionKey,
+                    seed
+            ));
             try {
-                if (previous == null) {
+                return create(
+                        server,
+                        dimensionId,
+                        pack,
+                        packDimensionKey,
+                        seed,
+                        ModdedGenerationMode.PERSISTENT_CREATE
+                );
+            } catch (Throwable e) {
+                try {
                     ModdedDimensionRegistryStore.remove(server, dimensionId);
-                } else {
-                    ModdedDimensionRegistryStore.put(server, previous);
+                } catch (Throwable rollbackFailure) {
+                    e.addSuppressed(rollbackFailure);
                 }
-            } catch (Throwable rollbackFailure) {
-                e.addSuppressed(rollbackFailure);
+                if (e instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                if (e instanceof Error fatalError) {
+                    throw fatalError;
+                }
+                throw new IllegalStateException("Iris runtime dimension injection failed for " + dimensionId, e);
             }
-            if (e instanceof RuntimeException runtimeException) {
-                throw runtimeException;
+        }
+    }
+
+    public static UpdateResult stagePersistentUpdate(
+            MinecraftServer server,
+            String dimensionId,
+            String pack,
+            String packDimensionKey
+    ) {
+        synchronized (LOCK) {
+            ModdedDimensionRegistryStore.PersistentDimension previous =
+                    ModdedDimensionRegistryStore.get(server, dimensionId);
+            if (previous == null) {
+                throw new IllegalStateException("Iris dimension '" + dimensionId
+                        + "' is not registered. Create it before staging an update.");
             }
-            if (e instanceof Error fatalError) {
-                throw fatalError;
+            ModdedDimensionRegistryStore.PersistentDimension updated =
+                    new ModdedDimensionRegistryStore.PersistentDimension(
+                            dimensionId,
+                            pack,
+                            packDimensionKey,
+                            previous.seed()
+                    );
+            ModdedDimensionRegistryStore.put(server, updated);
+            try {
+                ModdedGenerationHistoryStorage.ActivePack active =
+                        ModdedGenerationHistoryStorage.createOrStage(
+                                server,
+                                levelKey(dimensionId),
+                                pack,
+                                packDimensionKey,
+                                previous.seed()
+                        );
+                Optional<GenerationActivation> pending = active.history().pendingActivation();
+                long activeActivationId = active.history().activeActivation().activationId();
+                OptionalLong pendingActivationId = pending.isPresent()
+                        ? OptionalLong.of(pending.orElseThrow().activationId())
+                        : OptionalLong.empty();
+                UpdateResult result = new UpdateResult(
+                        pending.isPresent(),
+                        pending.isPresent(),
+                        activeActivationId,
+                        pendingActivationId
+                );
+                if (result.restartRequired()) {
+                    ModdedIrisLog.warn("Iris dimension '{}' staged generation activation {} from pack={}:{}. Restart the server to activate it.",
+                            dimensionId, pendingActivationId.orElseThrow(), pack, packDimensionKey);
+                } else {
+                    ModdedIrisLog.info("Iris dimension '{}' already uses pack={}:{}; no generation update was staged.",
+                            dimensionId, pack, packDimensionKey);
+                }
+                return result;
+            } catch (Throwable failure) {
+                try {
+                    ModdedDimensionRegistryStore.put(server, previous);
+                } catch (Throwable rollbackFailure) {
+                    failure.addSuppressed(rollbackFailure);
+                }
+                if (failure instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                if (failure instanceof Error fatalError) {
+                    throw fatalError;
+                }
+                throw new IllegalStateException("Iris generation update staging failed for "
+                        + dimensionId + ".", failure);
             }
-            throw new IllegalStateException("Iris runtime dimension injection failed for " + dimensionId, e);
         }
     }
 
@@ -524,48 +680,47 @@ public final class ModdedDimensionManager {
         server.execute(task);
     }
 
-    private static Holder<DimensionType> resolveDimensionType(RegistryAccess registryAccess, String pack, String packDimensionKey) {
+    private static Holder<DimensionType> resolveDimensionType(
+            RegistryAccess registryAccess,
+            String pack,
+            String packDimensionKey,
+            RuntimePack runtimePack
+    ) {
         Registry<DimensionType> registry = registryAccess.lookupOrThrow(Registries.DIMENSION_TYPE);
-        IrisDimension dimension = loadPackDimension(pack, packDimensionKey);
-        String typeRef = ModdedWorldgenIds.dimensionTypeRef(pack, packDimensionKey);
+        String typeRef = runtimePack.dimensionTypeKey();
         ResourceKey<DimensionType> typeKey = ResourceKey.create(Registries.DIMENSION_TYPE, Identifier.parse(typeRef));
-        ModdedRuntimeRegistry.ensureCustomBiomes(registryAccess, dimension, pack);
-        ModdedRuntimeRegistry.ensureDimensionType(registry, typeKey, typeRef);
         return ModdedForcedDatapack.requireRegisteredDimensionType(
                 typeRef, registry.get(typeKey), pack, packDimensionKey);
     }
 
-    private static IrisDimension loadPackDimension(String pack, String packDimensionKey) {
-        try {
-            File packFolder = ModdedWorldEngines.packFolder(pack);
-            if (!packFolder.isDirectory()) {
-                throw new IllegalStateException("Iris pack directory is missing: " + packFolder.getAbsolutePath());
-            }
-            IrisDimension dimension = IrisData.get(packFolder).getDimensionLoader().load(packDimensionKey);
-            if (dimension == null) {
-                throw new IllegalStateException("Iris pack '" + pack
-                        + "' does not contain dimension '" + packDimensionKey + "'");
-            }
-            return dimension;
-        } catch (Throwable e) {
-            ModdedIrisLog.error("Iris could not load pack '{}' dimension '{}' for dimension type resolution",
-                    pack, packDimensionKey, e);
-            if (e instanceof Error fatalError) {
-                throw fatalError;
-            }
-            throw new IllegalStateException("Iris could not load pack '" + pack + "' dimension '"
-                    + packDimensionKey + "' for dimension type resolution", e);
-        }
-    }
-
-    private static Handle inject(MinecraftServer server, ModdedServerAccess serverAccess, String dimensionId, ResourceKey<Level> key, String pack, String packDimensionKey, long seed) {
+    private static Handle inject(
+            MinecraftServer server,
+            ModdedServerAccess serverAccess,
+            String dimensionId,
+            ResourceKey<Level> key,
+            String pack,
+            String packDimensionKey,
+            long seed,
+            RuntimePack runtimePack
+    ) {
         RegistryAccess registryAccess = server.registryAccess();
-        Holder<DimensionType> dimensionType = resolveDimensionType(registryAccess, pack, packDimensionKey);
+        Holder<DimensionType> dimensionType = resolveDimensionType(
+                registryAccess,
+                pack,
+                packDimensionKey,
+                runtimePack
+        );
         Holder<Biome> plains = registryAccess.lookupOrThrow(Registries.BIOME).getOrThrow(Biomes.PLAINS);
         FixedBiomeSource biomeSource = new FixedBiomeSource(plains);
         String generatorRef = pack.equals(packDimensionKey) ? pack : pack + ":" + packDimensionKey;
         IrisModdedChunkGenerator generator = new IrisModdedChunkGenerator(biomeSource, generatorRef);
-        generator.repoint(pack, packDimensionKey, seed);
+        generator.repoint(
+                pack,
+                runtimePack.dimensionKey(),
+                seed,
+                runtimePack.packRoot(),
+                runtimePack.generationMode()
+        );
         LevelStem stem = new LevelStem(dimensionType, generator);
 
         WorldData worldData = server.getWorldData();
@@ -681,6 +836,77 @@ public final class ModdedDimensionManager {
         return bound;
     }
 
+    private static RuntimePack persistentRuntimePack(
+            ModdedGenerationHistoryStorage.ActivePack active,
+            ModdedGenerationMode generationMode
+    ) {
+        return new RuntimePack(
+                active.packRoot(),
+                active.dimensionKey(),
+                active.dimensionContract().dimensionTypeKey(),
+                generationMode
+        );
+    }
+
+    private static RuntimePack transientStudioPack(String pack, String dimensionKey) {
+        ModdedStartup.requirePackForWorldCreation(pack);
+        Path packRoot = ModdedWorldEngines.resolvePack(pack, dimensionKey)
+                .toPath()
+                .toAbsolutePath()
+                .normalize();
+        PackValidationRegistry.requireLoadable(packRoot);
+        IrisData data = IrisData.openDatapackCompiler(packRoot.toFile());
+        try {
+            IrisDimension dimension = data.getDimensionLoader().load(dimensionKey, false);
+            if (dimension == null) {
+                throw new IllegalStateException("Transient Iris Studio pack does not contain dimension '"
+                        + dimensionKey + "'.");
+            }
+        } finally {
+            data.close();
+        }
+        return new RuntimePack(
+                packRoot,
+                dimensionKey,
+                ModdedWorldgenIds.dimensionTypeRef(pack, dimensionKey),
+                ModdedGenerationMode.TRANSIENT_STUDIO
+        );
+    }
+
+    private record RuntimePack(
+            Path packRoot,
+            String dimensionKey,
+            String dimensionTypeKey,
+            ModdedGenerationMode generationMode
+    ) {
+        private RuntimePack {
+            packRoot = Objects.requireNonNull(packRoot, "packRoot").toAbsolutePath().normalize();
+            dimensionKey = Objects.requireNonNull(dimensionKey, "dimensionKey");
+            dimensionTypeKey = Objects.requireNonNull(dimensionTypeKey, "dimensionTypeKey");
+            generationMode = Objects.requireNonNull(generationMode, "generationMode");
+        }
+    }
+
     public record Handle(String dimensionId, String pack, String packDimensionKey, long seed, ServerLevel level, IrisModdedChunkGenerator generator) {
+    }
+
+    public record UpdateResult(
+            boolean pending,
+            boolean restartRequired,
+            long activeActivationId,
+            OptionalLong pendingActivationId
+    ) {
+        public UpdateResult {
+            pendingActivationId = Objects.requireNonNull(
+                    pendingActivationId,
+                    "pendingActivationId"
+            );
+            if (pending != pendingActivationId.isPresent()) {
+                throw new IllegalArgumentException("Pending update status must match the pending activation ID.");
+            }
+            if (restartRequired != pending) {
+                throw new IllegalArgumentException("A pending generation activation requires a restart.");
+            }
+        }
     }
 }

@@ -1,11 +1,17 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationEpochContractFactory;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationPackFingerprint;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
 import org.bukkit.NamespacedKey;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -406,26 +412,34 @@ public class IrisWorldStorageTest {
     }
 
     @Test
-    public void frozenPackRootRequiresRealWorldLocalSnapshot() throws Exception {
-        File dimensionRoot = temporaryFolder.newFolder("frozen-pack-world");
+    public void activeGenerationPackRequiresValidImmutableHistory() throws Exception {
+        File dimensionRoot = temporaryFolder.newFolder("generation-history-world");
 
         assertThrows(
                 IllegalStateException.class,
-                () -> IrisWorldStorage.requireFrozenPackRoot(dimensionRoot)
+                () -> IrisWorldStorage.requireActiveGenerationPackRoot(dimensionRoot)
         );
 
         Path irisRoot = Files.createDirectory(dimensionRoot.toPath().resolve("iris"));
-        Path externalPack = temporaryFolder.newFolder("external-pack").toPath();
-        Files.createSymbolicLink(irisRoot.resolve("pack"), externalPack);
+        Path externalGeneration = temporaryFolder.newFolder("external-generation").toPath();
+        Files.createSymbolicLink(irisRoot.resolve("generation"), externalGeneration);
 
         assertThrows(
                 IllegalStateException.class,
-                () -> IrisWorldStorage.requireFrozenPackRoot(dimensionRoot)
+                () -> IrisWorldStorage.requireActiveGenerationPackRoot(dimensionRoot)
         );
 
-        Files.delete(irisRoot.resolve("pack"));
-        Path packRoot = Files.createDirectory(irisRoot.resolve("pack"));
-        assertEquals(packRoot.toFile(), IrisWorldStorage.requireFrozenPackRoot(dimensionRoot));
+        Files.delete(irisRoot.resolve("generation"));
+        Path sourcePack = createGenerationPack("storage-active-pack");
+        GenerationHistory history = createGenerationHistory(dimensionRoot.toPath(), sourcePack, 42L);
+        assertEquals(
+                history.activePackRoot().toFile(),
+                IrisWorldStorage.requireActiveGenerationPackRoot(dimensionRoot, 42L)
+        );
+        assertThrows(
+                IllegalStateException.class,
+                () -> IrisWorldStorage.requireActiveGenerationPackRoot(dimensionRoot, 43L)
+        );
     }
 
     @Test
@@ -443,5 +457,45 @@ public class IrisWorldStorageTest {
 
         Files.createDirectory(namespace.resolve("moon"));
         assertTrue(IrisWorldStorage.hasManagedWorldStorage(levelRoot));
+    }
+
+    private Path createGenerationPack(String name) throws IOException {
+        Path pack = temporaryFolder.newFolder(name).toPath();
+        Path dimensions = Files.createDirectories(pack.resolve("dimensions"));
+        Files.writeString(dimensions.resolve("overworld.json"), "{}");
+        return pack;
+    }
+
+    private static GenerationHistory createGenerationHistory(Path world, Path pack, long seed)
+            throws IOException {
+        String fingerprint = GenerationPackFingerprint.compute(
+                pack,
+                GenerationPackFingerprint.CURRENT_VERSION
+        );
+        GenerationEpoch.DimensionContract dimensionContract = new GenerationEpoch.DimensionContract(
+                "overworld",
+                "iris:overworld_type",
+                "NORMAL",
+                "OVERWORLD",
+                127,
+                -64,
+                384,
+                384,
+                1D,
+                false,
+                "none",
+                0,
+                "0".repeat(64),
+                GenerationEpochContractFactory.CURRENT_DIMENSION_TYPE_FINGERPRINT_SCHEMA,
+                "c".repeat(64)
+        );
+        return GenerationHistory.create(
+                world,
+                pack,
+                fingerprint,
+                seed,
+                dimensionContract,
+                GenerationRegistryContract.empty()
+        );
     }
 }

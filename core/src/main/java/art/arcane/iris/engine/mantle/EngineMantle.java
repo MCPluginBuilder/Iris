@@ -232,16 +232,13 @@ public interface EngineMantle extends MatterGenerator {
             } else if (protectUpper) {
                 int chunkBlockX = x << 4;
                 int chunkBlockZ = z << 4;
-                int gap = getEngine().getDimension().getUpperDimensionGap();
                 int[] upperYs = new int[256];
                 for (int i = 0; i < 256; i++) {
                     int lx = i >> 4;
                     int lz = i & 15;
                     int worldX = chunkBlockX + lx;
                     int worldZ = chunkBlockZ + lz;
-                    int he = (int) Math.round(getEngine().getComplex().getHeightStream().get((double) worldX, (double) worldZ));
-                    int rawUpper = upperCtx.getUpperSurfaceY(worldX, worldZ);
-                    upperYs[i] = Math.max(rawUpper, he + gap);
+                    upperYs[i] = upperCtx.getEffectiveSurfaceY(worldX, worldZ);
                 }
                 chunk.iterate(PlatformBlockState.class, (lx, y, lz, value) -> {
                     int colIdx = (lx << 4) | (lz & 15);

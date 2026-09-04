@@ -279,12 +279,14 @@ public class CommandSVC implements IrisService, CommandExecutor, TabCompleter, D
 
     private DirectorExecutionResult runDirector(CommandSender sender, String label, String[] args) {
         dispatchSenders.set(sender);
+        DirectorContext.touch(new VolmitSender(sender));
         try (LanguageAudience.Scope audience = LanguageAudience.open(sender instanceof Player player ? player.getUniqueId() : null)) {
             return getDirector().execute(new DirectorInvocation(new BukkitDirectorSender(sender), label, Arrays.asList(args)));
         } catch (Throwable e) {
             Iris.warn("Director command execution failed: " + e.getClass().getSimpleName() + " " + e.getMessage());
             return DirectorExecutionResult.notHandled();
         } finally {
+            DirectorContext.remove();
             dispatchSenders.remove();
         }
     }

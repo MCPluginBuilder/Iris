@@ -28,6 +28,7 @@ import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockProperty;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformEntityType;
+import art.arcane.iris.spi.PlatformGenerationRegistry;
 import art.arcane.iris.spi.PlatformItem;
 import art.arcane.iris.spi.PlatformNumericRange;
 import art.arcane.iris.spi.PlatformRegistries;
@@ -54,6 +55,11 @@ import java.util.Map;
  * Bukkit adapter resolving namespaced keys against the live Bukkit registries.
  */
 public final class BukkitRegistries implements PlatformRegistries {
+    @Override
+    public PlatformGenerationRegistry generationRegistry() {
+        return INMS.get().generationRegistry();
+    }
+
     @Override
     public PlatformBlockState block(String key) {
         BlockData data = BukkitBlockResolution.get(key);

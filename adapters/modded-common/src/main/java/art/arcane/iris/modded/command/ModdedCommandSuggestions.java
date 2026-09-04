@@ -26,6 +26,7 @@ import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.StructureReachability;
 import art.arcane.iris.engine.hydrology.HydrologyFeatureQuery;
+import art.arcane.iris.engine.history.GenerationFindCatalog;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
@@ -109,7 +110,7 @@ final class ModdedCommandSuggestions {
     }
 
     static Set<String> reachableBiomeKeys(Engine engine) {
-        return reachableBiomeKeys(engine.getAllBiomes());
+        return reachableBiomeKeys(GenerationFindCatalog.biomes(engine));
     }
 
     static Set<String> reachableBiomeKeys(Iterable<IrisBiome> biomes) {
@@ -123,7 +124,7 @@ final class ModdedCommandSuggestions {
     }
 
     static boolean isReachableBiome(Engine engine, String biomeKey) {
-        return isReachableBiome(engine.getAllBiomes(), biomeKey);
+        return GenerationFindCatalog.biome(engine, biomeKey) != null;
     }
 
     static boolean isReachableBiome(Iterable<IrisBiome> biomes, String biomeKey) {
@@ -135,7 +136,8 @@ final class ModdedCommandSuggestions {
         try {
             Engine engine = IrisModdedCommands.engineFor(context.getSource().getLevel());
             if (engine != null) {
-                return SharedSuggestionProvider.suggest(engine.getDimension().getRegions(), builder);
+                return SharedSuggestionProvider.suggest(GenerationFindCatalog.regions(engine).stream()
+                        .map(region -> region.getLoadKey()), builder);
             }
         } catch (Throwable e) {
             warnTabFailure("region keys", context.getSource(), e);
@@ -148,7 +150,7 @@ final class ModdedCommandSuggestions {
         try {
             Engine engine = IrisModdedCommands.engineFor(context.getSource().getLevel());
             if (engine != null) {
-                return SharedSuggestionProvider.suggest(engine.getData().getObjectLoader().getPossibleKeys(), builder);
+                return SharedSuggestionProvider.suggest(GenerationFindCatalog.objectKeys(engine), builder);
             }
         } catch (Throwable e) {
             warnTabFailure("object keys", context.getSource(), e);
@@ -191,6 +193,7 @@ final class ModdedCommandSuggestions {
             Collection<String> unregisteredIrisKeys = eligibleUnregisteredEditableKeys(
                     irisKeys, registeredKeys,
                     (String candidate) -> IrisStructureLocator.hasNativePlacement(engine, candidate));
+            nativeKeys.addAll(GenerationFindCatalog.retainedStructureKeys(engine));
             return SharedSuggestionProvider.suggest(
                     combineStructureKeys(unregisteredIrisKeys, nativeKeys), builder);
         } catch (Throwable e) {

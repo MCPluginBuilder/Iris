@@ -379,15 +379,13 @@ public class IrisLanguageTest {
                 {
                   "locale": "de_DE",
                   "messages": {
-                    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
+                    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
                       "Sicherung erstellen.",
-                      "Mögliche Probleme:",
-                      " - Beschädigte Chunks",
-                      " - Neu generierte Chunks",
-                      " - Fehlende Strukturen",
-                      " - Nicht verbundene Höhlen",
-                      " - Nicht verbundene Geländeschichten",
-                      "Risiken bestätigt.",
+                      "Vorhandene Chunks bleiben erhalten.",
+                      "Neue Chunks verwenden das neue Paket.",
+                      "Die Grenze bleibt gespeichert.",
+                      "Den vollständigen Verlauf sichern.",
+                      "Neustart bestätigen.",
                       "Welt {world}, Paket {pack}"
                     ],
                     "iris.bukkit.runtime.commandpack.more_warning_s": {
@@ -401,13 +399,11 @@ public class IrisLanguageTest {
         assertTrue(IrisLanguage.reload(dataFolder, "de_DE"));
         assertEquals(
                 "Sicherung erstellen.\n"
-                        + "Mögliche Probleme:\n"
-                        + " - Beschädigte Chunks\n"
-                        + " - Neu generierte Chunks\n"
-                        + " - Fehlende Strukturen\n"
-                        + " - Nicht verbundene Höhlen\n"
-                        + " - Nicht verbundene Geländeschichten\n"
-                        + "Risiken bestätigt.\n"
+                        + "Vorhandene Chunks bleiben erhalten.\n"
+                        + "Neue Chunks verwenden das neue Paket.\n"
+                        + "Die Grenze bleibt gespeichert.\n"
+                        + "Den vollständigen Verlauf sichern.\n"
+                        + "Neustart bestätigen.\n"
                         + "Welt world, Paket pack",
                 IrisLanguage.plain(
                         BukkitRuntimeMessages.COMMAND_DEVELOPER_UPDATE_WORLD_WARNING,

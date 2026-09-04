@@ -1,6 +1,11 @@
 package art.arcane.iris.core;
 
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.IrisGeneratorBinding;
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationEpochContractFactory;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationPackFingerprint;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
 import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
@@ -13,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -201,10 +207,100 @@ public class IrisDatapackCompilerInputFingerprintTest {
                 nestedKeyPack.toAbsolutePath().normalize().toFile()), compilerRoots);
     }
 
+    @Test
+    public void worldInputRootDiscoveryIncludesEveryRetainedGenerationEpoch() throws Exception {
+        Path dataDirectory = tmp.newFolder("history-root-data").toPath();
+        Path serverRoot = tmp.newFolder("history-root-server").toPath();
+        Path world = serverRoot.resolve("dimensions/iris/history");
+        Files.createDirectories(world);
+        Path firstPack = activePack("history-pack-first");
+        Path secondPack = activePack("history-pack-second");
+        write(secondPack.resolve("biomes/second.json"), "second-biome");
+        GenerationHistory history = GenerationHistory.create(
+                world,
+                firstPack,
+                GenerationPackFingerprint.compute(firstPack, GenerationPackFingerprint.CURRENT_VERSION),
+                41L,
+                generationContract(),
+                GenerationRegistryContract.empty()
+        );
+        history.stageUpdate(
+                secondPack,
+                GenerationPackFingerprint.compute(secondPack, GenerationPackFingerprint.CURRENT_VERSION),
+                generationContract(),
+                GenerationRegistryContract.empty(),
+                256
+        );
+        Path legacyDecoy = world.resolve("iris/pack");
+        write(legacyDecoy.resolve("dimensions/legacy.json"), "legacy");
+
+        List<File> compilerRoots = IrisDatapackCompiler.collectCompilerInputRoots(dataDirectory, serverRoot);
+
+        Set<File> expected = Set.of(
+                history.paths().packRoot(history.manifest().activeEpoch().epochId()).toFile(),
+                history.paths().packRoot(history.manifest().pendingEpoch().orElseThrow().epochId()).toFile()
+        );
+        assertEquals(expected, Set.copyOf(compilerRoots));
+        assertEquals(2, compilerRoots.size());
+    }
+
+    @Test
+    public void corruptGenerationHistoryFailsPackRootDiscoveryClosed() throws Exception {
+        Path dataDirectory = tmp.newFolder("corrupt-history-data").toPath();
+        Path serverRoot = tmp.newFolder("corrupt-history-server").toPath();
+        Files.createDirectories(serverRoot.resolve("dimensions/iris/corrupt/iris/generation"));
+
+        try {
+            IrisDatapackCompiler.collectCompilerInputRoots(dataDirectory, serverRoot);
+            fail("Generation history without a manifest must fail pack discovery");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("manifest"));
+        }
+    }
+
+    @Test
+    public void rootWorldGenerationHistoryIsACompilerInput() throws Exception {
+        Path dataDirectory = tmp.newFolder("root-history-data").toPath();
+        Path serverRoot = tmp.newFolder("root-history-server").toPath();
+        Path pack = activePack("root-history-pack");
+        GenerationHistory history = GenerationHistory.create(
+                serverRoot,
+                pack,
+                GenerationPackFingerprint.compute(pack, GenerationPackFingerprint.CURRENT_VERSION),
+                91L,
+                generationContract(),
+                GenerationRegistryContract.empty()
+        );
+
+        List<File> compilerRoots = IrisDatapackCompiler.collectCompilerInputRoots(dataDirectory, serverRoot);
+
+        assertEquals(List.of(history.activePackRoot().toFile()), compilerRoots);
+    }
+
     private Path activePack(String name) throws IOException {
         Path pack = tmp.newFolder(name).toPath();
         write(pack.resolve("dimensions/overworld.json"), "dimension-a");
         return pack;
+    }
+
+    private static GenerationEpoch.DimensionContract generationContract() {
+        return new GenerationEpoch.DimensionContract(
+                "overworld",
+                "iris:overworld_type",
+                "NORMAL",
+                "OVERWORLD",
+                127,
+                -64,
+                384,
+                384,
+                1D,
+                false,
+                "none",
+                0,
+                "0".repeat(64),
+                GenerationEpochContractFactory.CURRENT_DIMENSION_TYPE_FINGERPRINT_SCHEMA,
+                "c".repeat(64)
+        );
     }
 
     private Path write(Path path, String value) throws IOException {

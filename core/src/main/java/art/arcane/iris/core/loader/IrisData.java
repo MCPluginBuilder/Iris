@@ -39,9 +39,14 @@ import art.arcane.iris.engine.data.cache.AtomicCache;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.structure.StructureGraphCatalog;
+import art.arcane.iris.engine.history.GenerationPackFingerprint;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
+import art.arcane.iris.engine.history.GenerationRegistryContractFactory;
 import art.arcane.iris.core.structure.authoring.StructureRecoveryResult;
 import art.arcane.iris.core.structure.authoring.StructureTransactionWriter;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisBiomeCustom;
+import art.arcane.iris.spi.PlatformGenerationRegistry;
 import art.arcane.iris.engine.object.IrisBlockData;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisEntity;
@@ -74,6 +79,7 @@ import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.iris.util.project.context.IrisContext;
 import lombok.AccessLevel;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.Nullable;
@@ -87,7 +93,9 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -137,6 +145,17 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     private final transient List<Engine> engines = new ArrayList<>();
+    private final transient Map<IrisDimension, Map<String, String>> dimensionCustomBiomeResourceKeys =
+            Collections.synchronizedMap(new IdentityHashMap<>());
+    private transient volatile String generationPackFingerprint;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @EqualsAndHashCode.Exclude
+    private transient volatile GenerationRegistryContract generationRegistryContract;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @EqualsAndHashCode.Exclude
+    private transient volatile GenerationRegistryContractFactory.CustomBiomeResourceResolver customBiomeResourceResolver;
     private transient volatile Engine soleEngine;
 
     private IrisData(File dataFolder) {
@@ -168,6 +187,90 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
 
     public static Optional<IrisData> getLoaded(File dataFolder) {
         return Optional.ofNullable(dataLoaders.get(dataFolder));
+    }
+
+    public String customBiomeResourceKey(IrisDimension dimension, IrisBiomeCustom customBiome) {
+        IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
+        IrisBiomeCustom requiredBiome = Objects.requireNonNull(customBiome, "customBiome");
+        GenerationRegistryContractFactory.CustomBiomeResourceResolver resolver = customBiomeResourceResolver;
+        if (resolver != null) {
+            try {
+                return resolver.resolve(
+                        requiredDimension.getLoadKey(),
+                        requiredBiome
+                );
+            } catch (IOException failure) {
+                throw new IllegalStateException("Immutable Iris epoch has no registry mapping for custom biome '"
+                        + requiredDimension.getLoadKey() + ":" + requiredBiome.getId() + "'.", failure);
+            }
+        }
+        return GenerationRegistryContractFactory.customBiomeResourceKey(
+                requiredDimension.getLoadKey(),
+                requiredBiome,
+                getContentGate()
+        );
+    }
+
+    public String customBiomeResourceKey(IrisDimension dimension, String customBiomeId) {
+        IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
+        String logicalKey = requiredDimension.getLoadKey().toLowerCase(Locale.ROOT)
+                + ":" + Objects.requireNonNull(customBiomeId, "customBiomeId").toLowerCase(Locale.ROOT);
+        String physicalKey = customBiomeResourceKeys(requiredDimension).get(logicalKey);
+        if (physicalKey == null) {
+            throw new IllegalArgumentException("Unknown custom biome '" + logicalKey + "'.");
+        }
+        return physicalKey;
+    }
+
+    public String physicalBiomeResourceKey(IrisDimension dimension, String resourceKey) {
+        if (resourceKey == null || resourceKey.isBlank()) {
+            return resourceKey;
+        }
+        String normalizedKey = resourceKey.trim().toLowerCase(Locale.ROOT);
+        if (!normalizedKey.contains(":")) {
+            normalizedKey = "minecraft:" + normalizedKey;
+        }
+        return customBiomeResourceKeys(Objects.requireNonNull(dimension, "dimension"))
+                .getOrDefault(normalizedKey, normalizedKey);
+    }
+
+    public String generationPackFingerprint() {
+        String fingerprint = generationPackFingerprint;
+        if (fingerprint != null) {
+            return fingerprint;
+        }
+        synchronized (this) {
+            fingerprint = generationPackFingerprint;
+            if (fingerprint != null) {
+                return fingerprint;
+            }
+            try {
+                fingerprint = GenerationPackFingerprint.compute(
+                        dataFolder.toPath(),
+                        GenerationPackFingerprint.CURRENT_VERSION
+                );
+            } catch (IOException failure) {
+                throw new IllegalStateException("Unable to fingerprint Iris generation pack at "
+                        + dataFolder + ".", failure);
+            }
+            generationPackFingerprint = fingerprint;
+            return fingerprint;
+        }
+    }
+
+    public synchronized void bindGenerationRegistryContract(GenerationRegistryContract contract) {
+        GenerationRegistryContract required = Objects.requireNonNull(contract, "contract");
+        if (generationRegistryContract != null && !generationRegistryContract.equals(required)) {
+            throw new IllegalStateException("Iris data is already bound to another generation registry contract.");
+        }
+        generationRegistryContract = required;
+        customBiomeResourceResolver = new GenerationRegistryContractFactory.CustomBiomeResourceResolver(
+                required,
+                PlatformGenerationRegistry::contentAddressedCustomBiomeResourceKey
+        );
+        synchronized (dimensionCustomBiomeResourceKeys) {
+            dimensionCustomBiomeResourceKeys.clear();
+        }
     }
 
     public static boolean invalidateLoadedStructureResources(File dataFolder) {
@@ -273,7 +376,7 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         try {
             if (nearest != null) {
                 T t = nearest.load(type, key, false);
-                if (t != null) {
+                if (t != null || nearest.generationRegistryContract != null) {
                     return t;
                 }
             }
@@ -516,6 +619,10 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         StructureGraphCatalog.invalidate(this);
         IrisObjectScale.invalidate(this);
         contentGate = null;
+        generationPackFingerprint = null;
+        synchronized (dimensionCustomBiomeResourceKeys) {
+            dimensionCustomBiomeResourceKeys.clear();
+        }
         compatReport.clear();
         closed = false;
         possibleSnippets = new KMap<>();
@@ -830,5 +937,35 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
             }
         }
         IrisLogging.debug("Loaded Prefetch Cache to reduce generation disk use.");
+    }
+
+    private Map<String, String> customBiomeResourceKeys(IrisDimension dimension) {
+        synchronized (dimensionCustomBiomeResourceKeys) {
+            Map<String, String> cached = dimensionCustomBiomeResourceKeys.get(dimension);
+            if (cached != null) {
+                return cached;
+            }
+            String namespace = dimension.getLoadKey().toLowerCase(Locale.ROOT);
+            Map<String, String> resolved = new LinkedHashMap<>();
+            List<IrisBiome> registryBiomes = new ArrayList<>(dimension.getAllBiomes(() -> this));
+            registryBiomes.addAll(dimension.getReachableBiomes(() -> this));
+            for (IrisBiome biome : registryBiomes) {
+                if (biome == null || !biome.isCustom()) {
+                    continue;
+                }
+                for (IrisBiomeCustom customBiome : biome.getCustomDerivitives()) {
+                    if (customBiome == null || customBiome.getId() == null || customBiome.getId().isBlank()) {
+                        continue;
+                    }
+                    String logicalKey = namespace + ":" + customBiome.getId().toLowerCase(Locale.ROOT);
+                    String physicalKey = customBiomeResourceKey(dimension, customBiome);
+                    resolved.merge(logicalKey, physicalKey,
+                            (first, second) -> first.compareTo(second) <= 0 ? first : second);
+                }
+            }
+            Map<String, String> immutable = Map.copyOf(resolved);
+            dimensionCustomBiomeResourceKeys.put(dimension, immutable);
+            return immutable;
+        }
     }
 }

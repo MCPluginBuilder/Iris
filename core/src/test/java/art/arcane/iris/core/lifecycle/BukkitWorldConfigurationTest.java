@@ -175,7 +175,7 @@ public class BukkitWorldConfigurationTest {
         assertEquals(
                 levelRoot.resolve("dimensions/iris/broken").toAbsolutePath().normalize(),
                 entryOf(audited, "world_iris_broken").storagePath());
-        assertTrue(entryOf(audited, "world_iris_broken").detail().contains("pack"));
+        assertTrue(entryOf(audited, "world_iris_broken").detail().contains("generation history"));
     }
 
     @Test

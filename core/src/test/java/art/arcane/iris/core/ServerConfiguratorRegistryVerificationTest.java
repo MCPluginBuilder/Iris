@@ -85,6 +85,7 @@ public class ServerConfiguratorRegistryVerificationTest {
                 new File("packs/overworld/dimensions/overworld.json"));
         when(dimension.getDimensionTypeKey()).thenReturn("iris:overworld");
         when(dimension.getLoader()).thenReturn(data);
+        when(data.customBiomeResourceKey(dimension, customBiome)).thenReturn("overworld:missing");
 
         ResourceLoader<IrisDimension> loader = mock(ResourceLoader.class);
         when(loader.getPossibleKeys()).thenReturn(new String[]{"overworld"});

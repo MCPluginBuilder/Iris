@@ -23,6 +23,7 @@ import art.arcane.iris.core.WorldCreatorCompat;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
+import art.arcane.iris.engine.history.GenerationHistory;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.platform.bukkit.BukkitEnvironment;
 import org.bukkit.NamespacedKey;
@@ -31,6 +32,7 @@ import org.bukkit.WorldCreator;
 import org.bukkit.generator.ChunkGenerator;
 
 import java.io.File;
+import java.io.IOException;
 
 public class IrisWorldCreator {
     private String name;
@@ -100,13 +102,40 @@ public class IrisWorldCreator {
                 .seed(seed)
                 .worldFolder(worldFolder)
                 .build();
-        ChunkGenerator g = new BukkitChunkGenerator(w, studio, studio
-                ? dim.getLoader().getDataFolder() :
-                new File(w.worldFolder(), "iris/pack"), dimensionName);
+        GenerationHistory generationHistory = persistent
+                ? requireGenerationHistory(w.worldFolder(), seed)
+                : null;
+        File packRoot = generationHistory != null
+                ? requireActivePack(generationHistory)
+                : studio
+                ? dim.getLoader().getDataFolder()
+                : new File(w.worldFolder(), "iris/pack");
+        ChunkGenerator g = new BukkitChunkGenerator(
+                w,
+                studio,
+                packRoot,
+                dimensionName,
+                generationHistory);
 
         return creator.environment(environment)
                 .generateStructures(true)
                 .generator(g).seed(seed);
+    }
+
+    private static GenerationHistory requireGenerationHistory(File dimensionRoot, long seed) {
+        try {
+            return GenerationHistory.open(dimensionRoot.toPath(), seed);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris generation history is unusable at " + dimensionRoot + ".", failure);
+        }
+    }
+
+    private static File requireActivePack(GenerationHistory history) {
+        try {
+            return history.activePackRoot().toFile();
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris active generation pack is unusable.", failure);
+        }
     }
 
     private World.Environment findEnvironment() {

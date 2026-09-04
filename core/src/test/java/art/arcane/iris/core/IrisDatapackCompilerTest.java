@@ -1,10 +1,22 @@
 package art.arcane.iris.core;
 
 import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.IrisGeneratorBinding;
+import art.arcane.iris.core.lifecycle.BukkitStartupPaths;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.v1217.DataFixerV1217;
+import art.arcane.iris.core.pack.DefaultPackBootstrapProvisioner;
+import art.arcane.iris.engine.history.GenerationEpochContractFactory;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationPackFingerprint;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
+import art.arcane.iris.engine.history.GenerationRegistryContractFactory;
+import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformGenerationRegistry;
+import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.json.JSONObject;
 import org.junit.Rule;
@@ -19,12 +31,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class IrisDatapackCompilerTest {
     @Rule
@@ -60,8 +75,9 @@ public class IrisDatapackCompilerTest {
         assertTrue(Files.isRegularFile(datapackRoot.resolve("data/iris/dimension_type/alpha.json")));
         assertTrue(Files.isRegularFile(datapackRoot.resolve("data/iris/dimension_type/beta.json")));
         assertTrue(Files.isRegularFile(datapackRoot.resolve("data/iris/dimension_type/world_local.json")));
-        assertTrue(Files.isRegularFile(datapackRoot.resolve("data/alpha/worldgen/biome/alpha_custom.json")));
-        assertTrue(Files.isRegularFile(datapackRoot.resolve("data/beta/worldgen/biome/beta_custom.json")));
+        assertEquals(3, regularFileCount(datapackRoot.resolve("data/iris/worldgen/biome/biomes")));
+        assertFalse(Files.exists(datapackRoot.resolve("data/alpha/worldgen/biome/alpha_custom.json")));
+        assertFalse(Files.exists(datapackRoot.resolve("data/beta/worldgen/biome/beta_custom.json")));
         assertTrue(Files.isRegularFile(datapackRoot.resolve("data/world_local/worldgen/biome/world_custom.json")));
         assertFalse(Files.exists(datapackRoot.resolve("data/iris/dimension_type/hidden.json")));
         assertFalse(Files.exists(datapackRoot.resolve("data/iris/dimension_type/deleted.json")));
@@ -91,7 +107,7 @@ public class IrisDatapackCompilerTest {
     }
 
     @Test
-    public void compilesRecursiveDimensionBiomeToCanonicalRegistryPath() throws Exception {
+    public void compilesRecursiveDimensionBiomeToContentAddressedRegistryPath() throws Exception {
         Path packRoot = temporaryFolder.newFolder("recursive-dimension-pack").toPath();
         Path datapackRoot = temporaryFolder.newFolder("recursive-dimension-datapack").toPath();
         createPack(packRoot, "layers/sky", "Aurora");
@@ -104,7 +120,9 @@ public class IrisDatapackCompilerTest {
                 false
         );
 
-        assertTrue(Files.isRegularFile(
+        assertEquals(1, regularFileCount(
+                datapackRoot.resolve("data/iris/worldgen/biome/biomes")));
+        assertFalse(Files.exists(
                 datapackRoot.resolve("data/layers/worldgen/biome/sky/aurora.json")));
         assertTrue(Files.isRegularFile(
                 datapackRoot.resolve("data/iris/dimension_type/layers_sky.json")));
@@ -316,10 +334,22 @@ public class IrisDatapackCompilerTest {
                     new DataFixerV1217()
             );
 
+            IrisBiomeCustom customBiome = data.getBiomeLoader().load("test")
+                    .getCustomDerivitives().getFirst();
+            String hostBiomeKey = GenerationRegistryContractFactory.customBiomeResourceKey(
+                    "host",
+                    customBiome,
+                    data.getContentGate()
+            );
+            String sourceBiomeKey = GenerationRegistryContractFactory.customBiomeResourceKey(
+                    "layers/source",
+                    customBiome,
+                    data.getContentGate()
+            );
             assertTrue(requirements.containsKey("dimension_type/iris:host"));
             assertTrue(requirements.containsKey("dimension_type/iris:layers_source"));
-            assertTrue(requirements.containsKey("worldgen/biome/host:stack_custom"));
-            assertTrue(requirements.containsKey("worldgen/biome/layers:source/stack_custom"));
+            assertTrue(requirements.containsKey("worldgen/biome/" + hostBiomeKey));
+            assertTrue(requirements.containsKey("worldgen/biome/" + sourceBiomeKey));
         } finally {
             data.close();
         }
@@ -386,8 +416,198 @@ public class IrisDatapackCompilerTest {
         assertTrue(Files.isRegularFile(datapackRoot.resolve("data/iris/dimension/moon.json")));
     }
 
+    @Test
+    public void changedCustomBiomeDefinitionsCoexistUnderContentKeys() throws Exception {
+        Path firstPack = temporaryFolder.newFolder("content-biome-first").toPath();
+        Path secondPack = temporaryFolder.newFolder("content-biome-second").toPath();
+        Path datapackRoot = temporaryFolder.newFolder("content-biome-datapack").toPath();
+        createPack(firstPack, "shared", "shared_custom");
+        createPack(secondPack, "shared", "shared_custom");
+        setCustomBiomeTemperature(secondPack, 1.25);
+
+        IrisDatapackCompiler.compile(
+                List.of(firstPack.toFile(), secondPack.toFile()),
+                new KList<File>().qadd(datapackRoot.toFile()),
+                List.of(),
+                new DataFixerV1217(),
+                false
+        );
+
+        assertEquals(2, regularFileCount(datapackRoot.resolve("data/iris/worldgen/biome/biomes")));
+        assertFalse(Files.exists(datapackRoot.resolve("data/shared/worldgen/biome/shared_custom.json")));
+    }
+
+    @Test
+    public void retainedPacksCompileBeforeAPlatformIsBound() throws Exception {
+        assertRetainedPackCompilesBeforePlatformBinding(false);
+    }
+
+    @Test
+    public void retainedMultiDimensionPacksCompileAndBootstrapBeforePlatformBinding() throws Exception {
+        assertRetainedPackCompilesBeforePlatformBinding(true);
+    }
+
+    private void assertRetainedPackCompilesBeforePlatformBinding(boolean multipleDimensions) throws Exception {
+        IrisPlatform previous = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        IrisPlatforms.unbind();
+        Path pack = temporaryFolder.newFolder("unbound-retained-pack").toPath();
+        Path server = temporaryFolder.newFolder("unbound-retained-server").toPath();
+        Path world = server.resolve("world/dimensions/iris/history");
+        Files.createDirectories(world);
+        Path output = temporaryFolder.newFolder("unbound-retained-output").toPath();
+        createPack(pack, "overworld", "retained_custom");
+        if (multipleDimensions) {
+            createPack(pack, "upper", "retained_custom", "NETHER");
+        }
+        IrisData data = IrisData.openDatapackCompiler(pack.toFile());
+        try {
+            IrisDimension dimension = data.getDimensionLoader().load("overworld");
+            String fingerprint = GenerationPackFingerprint.compute(pack, GenerationPackFingerprint.CURRENT_VERSION);
+            PlatformRegistries registries = mock(PlatformRegistries.class);
+            when(registries.blockTypeKeys()).thenReturn(List.of());
+            when(registries.entityKeys()).thenReturn(List.of());
+            PlatformGenerationRegistry registry = new BootstrapGenerationRegistry();
+            GenerationRegistryContract contract = GenerationRegistryContractFactory.create(
+                    data, dimension, fingerprint, new DataFixerV1217(), registries, registry);
+            GenerationHistory history = GenerationHistory.create(world, pack, fingerprint, 77L,
+                    GenerationEpochContractFactory.create(dimension, "overworld", "iris:overworld"), contract);
+            Path retainedPack = history.paths().packRoot(history.manifest().activeEpoch().epochId());
+            IrisDatapackCompiler.CompilationResult compiled = IrisDatapackCompiler.compile(List.of(retainedPack.toFile()),
+                    new KList<File>().qadd(output.toFile()), List.of(), new DataFixerV1217(), false);
+            assertFalse(IrisPlatforms.isBound());
+            int expectedDimensions = multipleDimensions ? 2 : 1;
+            assertEquals(expectedDimensions, compiled.dimensionCount());
+            assertEquals(expectedDimensions, regularFileCount(output.resolve("data/iris/worldgen/biome/biomes")));
+            Map<String, String> requirements = IrisDatapackCompiler.computeRegistryRequirements(
+                    List.of(retainedPack.toFile()), new DataFixerV1217());
+            assertTrue(requirements.containsKey("dimension_type/iris:overworld"));
+            if (multipleDimensions) {
+                assertTrue(requirements.containsKey("dimension_type/iris:upper"));
+                assertTrue(Files.isRegularFile(output.resolve("data/iris/dimension_type/upper.json")));
+                assertNotEquals(Files.readString(output.resolve("data/iris/dimension_type/overworld.json")),
+                        Files.readString(output.resolve("data/iris/dimension_type/upper.json")));
+                Path dataDirectory = server.resolve("plugins/Iris");
+                BukkitStartupPaths startupPaths = BukkitStartupPaths.resolve(server, new String[0]);
+                DefaultPackBootstrapProvisioner.ProvisionResult installed =
+                        DefaultPackBootstrapProvisioner.provision(dataDirectory, ignored -> {
+                        }, startupPaths);
+                assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.INSTALLED, installed.status());
+                assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("data/iris/dimension_type/upper.json")));
+                assertEquals(2, regularFileCount(installed.datapackRoot().resolve("data/iris/worldgen/biome/biomes")));
+                DefaultPackBootstrapProvisioner.ProvisionResult unchanged =
+                        DefaultPackBootstrapProvisioner.provision(dataDirectory, ignored -> {
+                        }, startupPaths);
+                assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UNCHANGED, unchanged.status());
+                assertFalse(IrisPlatforms.isBound());
+            }
+        } finally {
+            data.close();
+            if (previous != null) {
+                IrisPlatforms.bind(previous);
+            }
+        }
+    }
+
+    @Test
+    public void duplicateCustomIdsPreservePhysicalBiomesAndDeterministicLegacyAlias() throws Exception {
+        Path pack = temporaryFolder.newFolder("duplicate-custom-biomes").toPath().resolve("iris/pack");
+        Path output = temporaryFolder.newFolder("duplicate-custom-output").toPath();
+        createPack(pack, "overworld", "savanna_plateau");
+        Path secondBiome = pack.resolve("biomes/second.json");
+        Files.writeString(secondBiome, """
+                {"name":"Second Plateau","derivative":"minecraft:plains",
+                 "customDerivitives":[{"id":"savanna_plateau","grassColor":"#BFB755"}]}
+                """, StandardCharsets.UTF_8);
+        IrisDatapackCompiler.CompilationResult compiled = IrisDatapackCompiler.compile(
+                List.of(pack.toFile()), new KList<File>().qadd(output.toFile()),
+                List.of(), new DataFixerV1217(), false);
+        assertEquals(2, compiled.biomeCount());
+        assertEquals(2, regularFileCount(output.resolve("data/iris/worldgen/biome/biomes")));
+        Map<String, String> requirements = IrisDatapackCompiler.computeRegistryRequirements(
+                List.of(pack.toFile()), new DataFixerV1217());
+        assertTrue(requirements.containsKey("worldgen/biome/overworld:savanna_plateau"));
+        IrisData data = IrisData.openDatapackCompiler(pack.toFile());
+        try {
+            IrisDimension dimension = data.getDimensionLoader().load("overworld");
+            IrisBiomeCustom first = data.getBiomeLoader().load("test").getCustomDerivitives().getFirst();
+            IrisBiomeCustom second = data.getBiomeLoader().load("second").getCustomDerivitives().getFirst();
+            String firstKey = data.customBiomeResourceKey(dimension, first);
+            String secondKey = data.customBiomeResourceKey(dimension, second);
+            assertNotEquals(firstKey, secondKey);
+            String selected = firstKey.compareTo(secondKey) < 0 ? firstKey : secondKey;
+            assertEquals(selected, data.customBiomeResourceKey(dimension, "savanna_plateau"));
+            Path physicalFile = output.resolve("data/iris/worldgen/biome/" + selected.substring("iris:".length()) + ".json");
+            assertEquals(Files.readString(physicalFile),
+                    Files.readString(output.resolve("data/overworld/worldgen/biome/savanna_plateau.json")));
+        } finally {
+            data.close();
+        }
+    }
+
+    @Test
+    public void sharedPhysicalBiomesMergeTagRequirementsAcrossPacks() throws Exception {
+        Path first = temporaryFolder.newFolder("biome-tags-first").toPath();
+        Path second = temporaryFolder.newFolder("biome-tags-second").toPath();
+        Path output = temporaryFolder.newFolder("biome-tags-output").toPath();
+        createPack(first, "shared", "shared_custom");
+        createPack(second, "shared", "shared_custom");
+        Path changed = second.resolve("biomes/test.json");
+        Files.writeString(changed, Files.readString(changed).replace(
+                "\"id\": \"shared_custom\"",
+                "\"id\": \"shared_custom\", \"tags\": [\"example:second\"]"));
+        Map<String, String> requirements = IrisDatapackCompiler.computeRegistryRequirements(
+                List.of(first.toFile(), second.toFile()), new DataFixerV1217());
+        Map<String, String> reversed = IrisDatapackCompiler.computeRegistryRequirements(
+                List.of(second.toFile(), first.toFile()), new DataFixerV1217());
+        assertEquals(requirements, reversed);
+        IrisDatapackCompiler.compile(List.of(first.toFile(), second.toFile()),
+                new KList<File>().qadd(output.toFile()), List.of(), new DataFixerV1217(), false);
+        assertEquals(1, regularFileCount(output.resolve("data/iris/worldgen/biome/biomes")));
+        assertTrue(Files.isRegularFile(output.resolve("data/example/tags/worldgen/biome/second.json")));
+    }
+
+    @Test
+    public void conflictingLegacyBiomeAliasesFailClosed() throws Exception {
+        Path firstPack = temporaryFolder.newFolder("legacy-biome-first").toPath().resolve("iris/pack");
+        Path secondPack = temporaryFolder.newFolder("legacy-biome-second").toPath().resolve("iris/pack");
+        Path datapackRoot = temporaryFolder.newFolder("legacy-biome-datapack").toPath();
+        createPack(firstPack, "shared", "shared_custom");
+        createPack(secondPack, "shared", "shared_custom");
+        setCustomBiomeTemperature(secondPack, 1.25);
+
+        IOException failure = assertThrows(
+                IOException.class,
+                () -> IrisDatapackCompiler.compile(
+                        List.of(firstPack.toFile(), secondPack.toFile()),
+                        new KList<File>().qadd(datapackRoot.toFile()),
+                        List.of(),
+                        new DataFixerV1217(),
+                        false
+                )
+        );
+
+        assertTrue(failure.getMessage().contains("Conflicting custom biome output"));
+    }
+
     private static void createPack(Path root, String dimensionKey, String biomeId) throws Exception {
         createPack(root, dimensionKey, biomeId, "NORMAL");
+    }
+
+    private static long regularFileCount(Path root) throws IOException {
+        try (Stream<Path> files = Files.list(root)) {
+            return files.filter(Files::isRegularFile).count();
+        }
+    }
+
+    private static void setCustomBiomeTemperature(Path packRoot, double temperature) throws IOException {
+        Path biome = packRoot.resolve("biomes/test.json");
+        String source = Files.readString(biome, StandardCharsets.UTF_8);
+        Files.writeString(
+                biome,
+                source.replace("\"id\": \"shared_custom\"",
+                        "\"id\": \"shared_custom\", \"temperature\": " + temperature),
+                StandardCharsets.UTF_8
+        );
     }
 
     private static void createPack(
@@ -438,5 +658,27 @@ public class IrisDatapackCompilerTest {
                 new WorldSlotKey("iris", worldKey),
                 dimension
         );
+    }
+
+    private static final class BootstrapGenerationRegistry implements PlatformGenerationRegistry {
+        @Override
+        public String runtimeIdentity() {
+            return "bootstrap-test";
+        }
+
+        @Override
+        public String generatedDefinitionRendererIdentity() {
+            return "bootstrap-renderer-v1";
+        }
+
+        @Override
+        public String dimensionTypeResourceKey(String packName, String dimensionKey, String dimensionTypeKey) {
+            return "iris:" + dimensionTypeKey;
+        }
+
+        @Override
+        public Definition definition(String registryKey, String resourceKey) {
+            return Definition.resourceIdentity(registryKey, resourceKey);
+        }
     }
 }

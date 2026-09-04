@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "Radius merkez çevresinde",
     "iris.director.commanddeveloper.param.center_chunk_x": "Merkez chunk X",
     "iris.director.commanddeveloper.param.center_chunk_z": "Merkez chunk Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "Bir dünyanın paketini güncelleyin (UNSAFE!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "Dünya üretimi güncellemesini hazırla",
     "iris.director.commanddeveloper.param.world_update": "Dünyayı güncellemek için",
     "iris.director.commanddeveloper.param.pack_install_into_world": "Dünyaya yükleme paketi",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "Bir yedekleme yapmak için emin olun & İlk önce uyarıları okuyun!",
@@ -1053,15 +1053,13 @@
       "other": "§7    ...  ve {count} Daha fazla uyarı.",
       "one": "§7    ...  ve {count} Daha fazla uyarı."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cBunu kullanmadan önce her zaman yedek alın",
-      "§eOluşabilecek sorunlar şunlarla sınırlı olmamak üzere şunlardır:",
-      "§e - Eski ve yeni chunk'lar arasında bozuk sınırlar (kesilmeler) (güncellemeden önce & sonra)",
-      "§e - Eski chunk'larla uyuşmayan yeniden oluşturulmuş chunk'lar",
-      "§e - Yeniden oluşturma sırasında tekrar spawnlanmayan yapılar",
-      "§e - Birbiriyle hizalanmayan mağaralar",
-      "§e - Birbiriyle hizalanmayan arazi katmanları",
-      "§cRiskleri anladığınızdan ve yedek aldığınızdan eminseniz:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cBu güncellemeyi hazırlamadan önce tüm dünyayı yedekleyin.",
+      "§eMevcut chunklar yeniden üretilmez veya üzerlerine yazılmaz.",
+      "§eYeniden başlatmadan sonra yeni chunklar hazırlanan paketi kullanır ve kaydedilen sınırda araziye kademeli olarak bağlanır.",
+      "§eDünyanın tohumu, yüksekliği, ortamı ve boyut türü değiştirilemez.",
+      "§eHer yedek, iris/generation dizininin tamamını içermelidir.",
+      "§cGüncellemeyi hazırlamak ve düzgün bir yeniden başlatma istemek için:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aİthalat §f{total}§a vanilla & Datapack yapıları (mode= ={mode}, includeNonJigsaw={includeNonJigsaw})...",

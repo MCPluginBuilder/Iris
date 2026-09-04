@@ -176,7 +176,7 @@ public class CommandDeveloper implements DirectorExecutor {
         return z ^ (z >>> 31);
     }
 
-    @Director(description = "Update the pack of a world (UNSAFE!)", descriptionKey = "iris.director.commanddeveloper.director.update_pack_world_unsafe", name = "update-world", aliases = "^world")
+    @Director(description = "Stage a world generation update", descriptionKey = "iris.director.commanddeveloper.director.stage_world_generation_update", name = "update-world", aliases = "^world")
     public void updateWorld(
             @Param(description = "The world to update", descriptionKey = "iris.director.commanddeveloper.param.world_update", contextual = true, contextualOverride = true)
             World world,
@@ -202,7 +202,7 @@ public class CommandDeveloper implements DirectorExecutor {
                 LifecycleOperationCoordinator.OperationKind.PACK_PUBLISH,
                 pack.getLoadKey()
         )) {
-            Iris.service(StudioSVC.class).replaceIntoWorld(sender(), pack, folder);
+            Iris.service(StudioSVC.class).replaceIntoWorld(sender(), pack, folder, world.getSeed());
         } catch (LifecycleOperationCoordinator.BusyException e) {
             sender().sendMessage(C.YELLOW + e.getMessage());
         }

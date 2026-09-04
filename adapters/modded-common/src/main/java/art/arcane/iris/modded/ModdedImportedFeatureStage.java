@@ -82,13 +82,11 @@ import java.util.function.Predicate;
  */
 final class ModdedImportedFeatureStage {
     private static final String CYCLE_MARKER = "Feature order cycle found";
-    private static final long NO_GENERATION = Long.MIN_VALUE;
-
     private final IrisModdedBiomeSource biomeSource;
     private final ReentrantLock buildLock = new ReentrantLock();
+    private final ConcurrentHashMap<Integer, FeatureTable> featureTables = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, Long> inertGenerations = new ConcurrentHashMap<>();
     private volatile IrisModdedChunkGenerator generator;
-    private volatile FeatureTable featureTable;
-    private volatile long inertGeneration = NO_GENERATION;
 
     ModdedImportedFeatureStage(IrisModdedBiomeSource biomeSource) {
         this.biomeSource = biomeSource;
@@ -103,12 +101,12 @@ final class ModdedImportedFeatureStage {
      * pack can never serve another.
      */
     void invalidate() {
-        featureTable = null;
-        inertGeneration = NO_GENERATION;
+        featureTables.clear();
+        inertGenerations.clear();
     }
 
     boolean active() {
-        return featureTable != null;
+        return !featureTables.isEmpty();
     }
 
     /**
@@ -120,7 +118,8 @@ final class ModdedImportedFeatureStage {
      * <p>With {@code importedFeatures} disabled there is no table and this is vanilla's default getter.
      */
     BiomeGenerationSettings generationSettings(Holder<Biome> biome) {
-        FeatureTable table = featureTable;
+        Engine engine = generator == null ? null : generator.engineOrNull();
+        FeatureTable table = engine == null ? null : featureTables.get(engine.getCacheID());
         if (table == null) {
             return biome.value().getGenerationSettings();
         }
@@ -151,8 +150,9 @@ final class ModdedImportedFeatureStage {
         if (engine == null || engine.isClosed() || engine.isClosing()) {
             return;
         }
+        int runtimeIdentity = engine.getCacheID();
         long generation = biomeSource.packGeneration();
-        if (settled(generation)) {
+        if (settled(runtimeIdentity, generation)) {
             return;
         }
         if (waitForBuild) {
@@ -161,35 +161,35 @@ final class ModdedImportedFeatureStage {
             return;
         }
         try {
-            if (settled(generation)) {
+            if (settled(runtimeIdentity, generation)) {
                 return;
             }
-            build(engine, generation);
+            build(engine, runtimeIdentity, generation);
         } finally {
             buildLock.unlock();
         }
     }
 
-    private boolean settled(long generation) {
-        FeatureTable current = featureTable;
+    private boolean settled(int runtimeIdentity, long generation) {
+        FeatureTable current = featureTables.get(runtimeIdentity);
         if (current != null && current.generation() == generation) {
             return true;
         }
-        return inertGeneration == generation;
+        return Long.valueOf(generation).equals(inertGenerations.get(runtimeIdentity));
     }
 
-    private void build(Engine engine, long generation) {
+    private void build(Engine engine, int runtimeIdentity, long generation) {
         IrisImportedFeatureControl control;
         try {
             control = NativeFeatureGenerationPolicy.control(engine);
         } catch (RuntimeException error) {
             ModdedIrisLog.error("Iris could not read importedFeatures for this dimension; features off: {}",
                     error.toString());
-            markInert(generation);
+            markInert(runtimeIdentity, generation);
             return;
         }
         if (!control.shouldGenerateFeatures()) {
-            markInert(generation);
+            markInert(runtimeIdentity, generation);
             return;
         }
         FeatureTable built;
@@ -199,15 +199,15 @@ final class ModdedImportedFeatureStage {
         } catch (Throwable error) {
             ModdedIrisLog.error("Iris importedFeatures is off for {}: feature table construction failed: {}",
                     dimensionKey(engine), error.toString());
-            markInert(generation);
+            markInert(runtimeIdentity, generation);
             return;
         }
         if (built == null) {
-            markInert(generation);
+            markInert(runtimeIdentity, generation);
             return;
         }
-        featureTable = built;
-        inertGeneration = NO_GENERATION;
+        featureTables.put(runtimeIdentity, built);
+        inertGenerations.remove(runtimeIdentity);
         // Arm the worldcheck log watch here, before any chunk decorates: arming from the first pass instead
         // missed every far-chunk write the first chunk made. No-op unless -Diris.worldcheck is set.
         WorldCheckFeaturePlacement.arm();
@@ -216,9 +216,9 @@ final class ModdedImportedFeatureStage {
                 built.derivatives().size());
     }
 
-    private void markInert(long generation) {
-        featureTable = null;
-        inertGeneration = generation;
+    private void markInert(int runtimeIdentity, long generation) {
+        featureTables.remove(runtimeIdentity);
+        inertGenerations.put(runtimeIdentity, generation);
     }
 
     private FeatureTable buildTable(Engine engine, IrisImportedFeatureControl control, long generation) {
@@ -312,7 +312,8 @@ final class ModdedImportedFeatureStage {
      * control is disabled or the table degraded.
      */
     void run(WorldGenLevel level, ChunkAccess chunk, Engine engine) {
-        FeatureTable table = featureTable;
+        int runtimeIdentity = engine.getCacheID();
+        FeatureTable table = featureTables.get(runtimeIdentity);
         if (table == null) {
             WorldCheckFeaturePlacement.recordFeaturesOff();
             return;
@@ -320,7 +321,8 @@ final class ModdedImportedFeatureStage {
         if (table.generation() != biomeSource.packGeneration()) {
             // A repoint landed between the prepare above and this chunk. Refuse stale content outright; the
             // next chunk's prepare rebuilds against the new pack.
-            invalidate();
+            featureTables.remove(runtimeIdentity, table);
+            inertGenerations.remove(runtimeIdentity);
             return;
         }
         IrisModdedChunkGenerator owner = generator;
@@ -421,6 +423,11 @@ final class ModdedImportedFeatureStage {
             );
             return layout.isHostFeatureProtectedY(position.getY() - minimumY);
         };
+    }
+
+    void evictRuntime(int runtimeIdentity) {
+        featureTables.remove(runtimeIdentity);
+        inertGenerations.remove(runtimeIdentity);
     }
 
     private void placeStep(WorldGenLevel level, FeatureTable table, FeatureSorter.StepFeatureData stepData,

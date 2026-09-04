@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "רדינוס בחלקים סביב המרכז",
     "iris.director.commanddeveloper.param.center_chunk_x": "מרכז X",
     "iris.director.commanddeveloper.param.center_chunk_z": "מרכז Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "עדכון חבילת העולם (לא בטוח!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "הכנת עדכון ליצירת העולם",
     "iris.director.commanddeveloper.param.world_update": "העולם לעדכן",
     "iris.director.commanddeveloper.param.pack_install_into_world": "החבילה להתקנה לעולם",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "הקפד לעשות גיבוי & קראו קודם כל את האזהרות!",
@@ -1053,15 +1053,13 @@
       "other": "§7    ...  ו {count} עוד התראות.",
       "one": "§7    ...  ו {count} עוד אזהרה."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cיש ליצור תמיד גיבוי לפני השימוש באפשרות זו",
-      "§eהבעיות שעלולות להיגרם כוללות, בין היתר:",
-      "§e - צ'אנקים שבורים (קטיעות) בין צ'אנקים ישנים לחדשים (לפני העדכון & אחריו)",
-      "§e - צ'אנקים שנוצרו מחדש ואינם מתאימים לצ'אנקים הישנים",
-      "§e - מבנים שאינם נוצרים שוב בזמן יצירה מחדש",
-      "§e - מערות שאינן מתחברות זו לזו",
-      "§e - שכבות שטח שאינן מתחברות זו לזו",
-      "§cלאחר שהבנת את הסיכונים ויצרת גיבוי:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cיש לגבות את העולם כולו לפני הכנת העדכון.",
+      "§eמקטעים קיימים לא ייווצרו מחדש ולא יידרסו.",
+      "§eלאחר הפעלה מחדש, מקטעים חדשים ישתמשו בחבילה שהוכנה וישתלבו בהדרגה בגבול שנשמר.",
+      "§eאי אפשר לשנות את הזרע, הגובה, הסביבה או סוג הממד של העולם.",
+      "§eכל גיבוי חייב לכלול את כל התיקייה iris/generation.",
+      "§cלהכנת העדכון ולבקשת הפעלה מחדש מסודרת:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aיבוא §f{total}§a vanilla & מאגרי מידע (Mode={mode}, includeNonJigsaw={includeNonJigsaw})...",

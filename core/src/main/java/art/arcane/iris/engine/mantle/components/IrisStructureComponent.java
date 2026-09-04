@@ -21,6 +21,7 @@ package art.arcane.iris.engine.mantle.components;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.Cache;
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.PlacedStructurePiece;
 import art.arcane.iris.engine.framework.StructurePlacementScope;
@@ -76,17 +77,27 @@ public class IrisStructureComponent extends IrisMantleComponent {
     @Override
     @ChunkCoordinates
     public void generateLayer(MantleWriter writer, int x, int z, ChunkContext context) {
+        IrisComplex complex = context.getComplex();
+        if (!complex.allowsNewGenerationChunk(x, z)) {
+            return;
+        }
         for (IrisStructurePlacement placement : StructurePlacementScope.placementsAt(
                 getEngineMantle().getEngine(), x, z)) {
             if (!placement.hasIrisStructures()) {
                 continue;
             }
-            placeFromPlacement(writer, placement, x, z);
+            placeFromPlacement(writer, placement, x, z, complex);
         }
     }
 
     @ChunkCoordinates
-    private void placeFromPlacement(MantleWriter writer, IrisStructurePlacement placement, int cx, int cz) {
+    private void placeFromPlacement(
+            MantleWriter writer,
+            IrisStructurePlacement placement,
+            int cx,
+            int cz,
+            IrisComplex complex
+    ) {
         IrisStructureLocator.ResolvedPlacement resolved = IrisStructureLocator.resolvePlacement(
                 getEngineMantle().getEngine(), placement, cx, cz);
         if (resolved == null) {
@@ -105,6 +116,19 @@ public class IrisStructureComponent extends IrisMantleComponent {
         if (pieces == null) {
             return;
         }
+        IrisStructureTerrain terrain = placement.resolvedTerrain();
+        int[] bounds = computePieceBounds(pieces);
+        int horizontalPadding = terrain.resolvedMode() == IrisStructureTerrainMode.FORCE_CARVE
+                || terrain.resolvedMode() == IrisStructureTerrainMode.BORE
+                ? Math.max(0, terrain.getHorizontalPadding())
+                : 0;
+        if (bounds == null || !complex.allowsNewGenerationFootprint(
+                saturatedOffset(bounds[0], -horizontalPadding),
+                saturatedOffset(bounds[2], -horizontalPadding),
+                saturatedOffset(bounds[3], horizontalPadding),
+                saturatedOffset(bounds[5], horizontalPadding))) {
+            return;
+        }
         RNG rng = resolved.rng();
         int baseY = resolved.baseY();
         if (trace) {
@@ -115,7 +139,6 @@ public class IrisStructureComponent extends IrisMantleComponent {
             clearIntersectingObjectTrees(writer, resolved);
         }
 
-        IrisStructureTerrain terrain = placement.resolvedTerrain();
         IrisStructureTerrainMode terrainMode = terrain.resolvedMode();
         if (terrainMode == IrisStructureTerrainMode.FORCE_CARVE) {
             forceCarveStructure(writer, pieces, terrain);
@@ -527,6 +550,11 @@ public class IrisStructureComponent extends IrisMantleComponent {
             maxZ = Math.max(maxZ, p.getMaxZ());
         }
         return new int[]{minX, minY, minZ, maxX, maxY, maxZ};
+    }
+
+    private static int saturatedOffset(int coordinate, int offset) {
+        long result = (long) coordinate + offset;
+        return (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, result));
     }
 
     private int placeObject(MantleWriter writer, IrisStructure structure, PlacedStructurePiece p,

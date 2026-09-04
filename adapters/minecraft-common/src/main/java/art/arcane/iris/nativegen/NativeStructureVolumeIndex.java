@@ -1,11 +1,13 @@
 package art.arcane.iris.nativegen;
 
+import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
 import art.arcane.iris.engine.framework.NativeStructurePlacementPlanner;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.framework.NativeStructureVolume;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
@@ -28,6 +30,7 @@ import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -38,6 +41,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.IntBinaryOperator;
+import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
 /**
@@ -60,13 +64,14 @@ public final class NativeStructureVolumeIndex {
 
     private final Context context;
     private final OriginResolver origins;
-    private final Map<Long, KList<NativeStructureVolume>> originCache = lru(MAX_CACHED_ORIGIN_CHUNKS);
-    private final Map<Long, KList<NativeStructureVolume>> queryCache = lru(MAX_CACHED_QUERY_CHUNKS);
-    private final ConcurrentHashMap<Long, CompletableFuture<KList<NativeStructureVolume>>> originBuilds =
+    private final Map<RuntimeChunkKey, KList<NativeStructureVolume>> originCache = lru(MAX_CACHED_ORIGIN_CHUNKS);
+    private final Map<RuntimeChunkKey, KList<NativeStructureVolume>> queryCache = lru(MAX_CACHED_QUERY_CHUNKS);
+    private final ConcurrentHashMap<RuntimeChunkKey, CompletableFuture<KList<NativeStructureVolume>>> originBuilds =
             new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, CompletableFuture<KList<NativeStructureVolume>>> queryBuilds =
+    private final ConcurrentHashMap<RuntimeChunkKey, CompletableFuture<KList<NativeStructureVolume>>> queryBuilds =
             new ConcurrentHashMap<>();
     private final ReentrantLock[] originWindowStripes = createOriginWindowStripes();
+    private final IntConsumer retirementListener = this::evictRuntime;
 
     private NativeStructureVolumeIndex(Context context) {
         this.context = Objects.requireNonNull(context, "Native structure volume context must not be null");
@@ -79,13 +84,25 @@ public final class NativeStructureVolumeIndex {
     }
 
     public static void install(Engine engine, Context context) {
-        Objects.requireNonNull(engine, "Native structure volume index requires an engine");
-        INDEXES.put(engine, new NativeStructureVolumeIndex(context));
+        Engine requiredEngine = Objects.requireNonNull(engine, "Native structure volume index requires an engine");
+        NativeStructureVolumeIndex installed = new NativeStructureVolumeIndex(context);
+        synchronized (INDEXES) {
+            NativeStructureVolumeIndex previous = INDEXES.put(requiredEngine, installed);
+            if (previous != null) {
+                previous.detachRetirementListener(requiredEngine);
+            }
+            installed.attachRetirementListener(requiredEngine);
+        }
     }
 
     public static void uninstall(Engine engine) {
         if (engine != null) {
-            INDEXES.remove(engine);
+            synchronized (INDEXES) {
+                NativeStructureVolumeIndex removed = INDEXES.remove(engine);
+                if (removed != null) {
+                    removed.detachRetirementListener(engine);
+                }
+            }
         }
     }
 
@@ -121,6 +138,7 @@ public final class NativeStructureVolumeIndex {
     }
 
     KList<NativeStructureVolume> resolve(Engine engine, int minX, int minZ, int maxX, int maxZ) {
+        int runtimeId = runtimeId(engine);
         int fromChunkX = Math.min(minX, maxX) >> 4;
         int toChunkX = Math.max(minX, maxX) >> 4;
         int fromChunkZ = Math.min(minZ, maxZ) >> 4;
@@ -128,7 +146,7 @@ public final class NativeStructureVolumeIndex {
         KList<NativeStructureVolume> matches = null;
         for (int chunkX = fromChunkX; chunkX <= toChunkX; chunkX++) {
             for (int chunkZ = fromChunkZ; chunkZ <= toChunkZ; chunkZ++) {
-                for (NativeStructureVolume volume : chunkVolumes(engine, chunkX, chunkZ)) {
+                for (NativeStructureVolume volume : chunkVolumes(engine, runtimeId, chunkX, chunkZ)) {
                     if (!volume.intersectsRect(minX, minZ, maxX, maxZ)) {
                         continue;
                     }
@@ -144,8 +162,13 @@ public final class NativeStructureVolumeIndex {
         return matches == null ? NativeStructureVolume.NONE : matches;
     }
 
-    private KList<NativeStructureVolume> chunkVolumes(Engine engine, int chunkX, int chunkZ) {
-        return cached(queryCache, queryBuilds, chunkKey(chunkX, chunkZ),
+    private KList<NativeStructureVolume> chunkVolumes(
+            Engine engine,
+            int runtimeId,
+            int chunkX,
+            int chunkZ
+    ) {
+        return cached(queryCache, queryBuilds, new RuntimeChunkKey(runtimeId, chunkKey(chunkX, chunkZ)),
                 () -> buildChunkVolumes(engine, chunkX, chunkZ));
     }
 
@@ -196,8 +219,16 @@ public final class NativeStructureVolumeIndex {
     }
 
     KList<NativeStructureVolume> originVolumes(Engine engine, int chunkX, int chunkZ) {
-        return cached(originCache, originBuilds, chunkKey(chunkX, chunkZ),
-                () -> origins.volumesAt(engine, chunkX, chunkZ));
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openHistoryCoordinateScope(engine, chunkX, chunkZ)) {
+            int runtimeId = runtimeId(engine);
+            return cached(
+                    originCache,
+                    originBuilds,
+                    new RuntimeChunkKey(runtimeId, chunkKey(chunkX, chunkZ)),
+                    () -> origins.volumesAt(engine, chunkX, chunkZ)
+            );
+        }
     }
 
     private KList<NativeStructureVolume> buildOriginVolumes(Engine engine, int chunkX, int chunkZ) {
@@ -362,9 +393,23 @@ public final class NativeStructureVolumeIndex {
         return target;
     }
 
-    private KList<NativeStructureVolume> cached(Map<Long, KList<NativeStructureVolume>> cache,
-                                                ConcurrentHashMap<Long, CompletableFuture<KList<NativeStructureVolume>>> builds,
-                                                long key, Supplier<KList<NativeStructureVolume>> loader) {
+    void evictRuntime(int runtimeId) {
+        synchronized (originCache) {
+            originCache.keySet().removeIf(key -> key.runtimeId() == runtimeId);
+        }
+        synchronized (queryCache) {
+            queryCache.keySet().removeIf(key -> key.runtimeId() == runtimeId);
+        }
+        originBuilds.keySet().removeIf(key -> key.runtimeId() == runtimeId);
+        queryBuilds.keySet().removeIf(key -> key.runtimeId() == runtimeId);
+    }
+
+    private KList<NativeStructureVolume> cached(
+            Map<RuntimeChunkKey, KList<NativeStructureVolume>> cache,
+            ConcurrentHashMap<RuntimeChunkKey, CompletableFuture<KList<NativeStructureVolume>>> builds,
+            RuntimeChunkKey key,
+            Supplier<KList<NativeStructureVolume>> loader
+    ) {
         synchronized (cache) {
             KList<NativeStructureVolume> hit = cache.get(key);
             if (hit != null) {
@@ -392,7 +437,9 @@ public final class NativeStructureVolumeIndex {
         try {
             KList<NativeStructureVolume> built = loader.get();
             synchronized (cache) {
-                cache.put(key, built);
+                if (builds.get(key) == future) {
+                    cache.put(key, built);
+                }
             }
             future.complete(built);
             return built;
@@ -451,13 +498,50 @@ public final class NativeStructureVolumeIndex {
         }
     }
 
-    private static Map<Long, KList<NativeStructureVolume>> lru(int capacity) {
+    private static GenerationHistoryRuntimeRouter.CoordinateScope openHistoryCoordinateScope(
+            Engine engine,
+            int chunkX,
+            int chunkZ
+    ) {
+        if (!(engine instanceof IrisEngine irisEngine)) {
+            return null;
+        }
+        try {
+            return irisEngine.openGenerationHistoryCoordinateScope(chunkX << 4, chunkZ << 4);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Unable to route native structure origin "
+                    + chunkX + "," + chunkZ + " through generation history.", failure);
+        }
+    }
+
+    private static int runtimeId(Engine engine) {
+        return engine == null ? 0 : engine.getCacheID();
+    }
+
+    private void attachRetirementListener(Engine engine) {
+        if (engine instanceof IrisEngine irisEngine) {
+            irisEngine.addGenerationRuntimeRetirementListener(retirementListener);
+        }
+    }
+
+    private void detachRetirementListener(Engine engine) {
+        if (engine instanceof IrisEngine irisEngine) {
+            irisEngine.removeGenerationRuntimeRetirementListener(retirementListener);
+        }
+    }
+
+    private static Map<RuntimeChunkKey, KList<NativeStructureVolume>> lru(int capacity) {
         return new LinkedHashMap<>(16, 0.75F, true) {
             @Override
-            protected boolean removeEldestEntry(Map.Entry<Long, KList<NativeStructureVolume>> eldest) {
+            protected boolean removeEldestEntry(
+                    Map.Entry<RuntimeChunkKey, KList<NativeStructureVolume>> eldest
+            ) {
                 return size() > capacity;
             }
         };
+    }
+
+    private record RuntimeChunkKey(int runtimeId, long chunkKey) {
     }
 
     /**

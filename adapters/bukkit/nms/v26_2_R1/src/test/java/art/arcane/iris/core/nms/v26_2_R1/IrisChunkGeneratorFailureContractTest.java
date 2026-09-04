@@ -295,26 +295,29 @@ public class IrisChunkGeneratorFailureContractTest {
 
         assertBefore(productionFill,
                 "BukkitChunkGenerator.GenerationStagePermit stage = requireNoiseGenerationStage(",
+                "GenerationHistoryRuntimeRouter.RuntimeRoute route");
+        assertBefore(productionFill,
+                "GenerationHistoryRuntimeRouter.RuntimeRoute route",
                 "GenerationSessionLease lease");
         assertBefore(productionFill,
                 "requireNoiseGenerationStage(",
                 "\"bukkit_nms_chunk_pipeline\")");
         assertBefore(productionFill,
                 "lease = requireGenerationLease(\"bukkit_nms_chunk_pipeline\")",
-                ".fillFromNoise(blender, randomstate, structuremanager, ichunkaccess)");
+                "delegate.fillFromNoise(");
         assertTrue(productionFill.contains("IrisContext.open(engine, lease.sessionId(), null)"));
+        assertTrue(productionFill.contains("openHistoryRuntimeScope(route)"));
         assertBefore(productionFill, "primeWorldgenHeightmaps(filled)", "pipeline.whenComplete(");
         assertTrue(productionFill.contains("CompletableFuture<ChunkAccess> completion = new CompletableFuture<>()"));
-        assertBefore(completion, "boolean cancelled = isCancellationFailure(failure);", "lease.close();");
-        assertBefore(completion, "lease.close();", "stage.close();");
-        assertBefore(completion, "stage.close();", "completion.complete(filled)");
-        assertBefore(completion, "stage.close();", "completion.cancel(false)");
-        assertBefore(completion, "stage.close();", "completion.completeExceptionally(failure)");
+        assertBefore(completion, "boolean cancelled = isCancellationFailure(failure);", "closeNoisePipelineResources(");
+        assertBefore(completion, "closeNoisePipelineResources(", "completion.complete(filled)");
+        assertBefore(completion, "closeNoisePipelineResources(", "completion.cancel(false)");
+        assertBefore(completion, "closeNoisePipelineResources(", "completion.completeExceptionally(completionFailure)");
         assertTrue(completion.contains("else if (cancelled)"));
         assertFalse(completion.contains("pipeline.isCancelled()"));
         assertFalse(completion.contains("finally"));
         assertTrue(productionFill.contains("catch (RuntimeException | Error failure)"));
-        assertTrue(productionFill.contains("lease.close();\n            stage.close();\n            throw failure;"));
+        assertTrue(productionFill.contains("lease.close();\n            closeHistoryRoute(route, failure);\n            stage.close();\n            throw failure;"));
         assertTrue(productionFill.contains("return completion;"));
         assertFalse(productionFill.contains("return pipeline;"));
         assertFalse(productionFill.contains("pipeline.cancel("));
@@ -422,6 +425,9 @@ public class IrisChunkGeneratorFailureContractTest {
         String structures = method(source, "public void createStructures(", "private void adjustGeneratedStructures");
         String references = method(source, "public void createReferences(", "public CompletableFuture<ChunkAccess> createBiomes");
         String biomes = method(source, "public CompletableFuture<ChunkAccess> createBiomes", "public void buildSurface");
+        String surface = method(source, "public void buildSurface(", "public void applyCarvers(");
+        String carvers = method(source, "public void applyCarvers(", "public CompletableFuture<ChunkAccess> fillFromNoise");
+        String mobs = method(source, "public void spawnOriginalMobs(", "private boolean allowsRoutedDiscreteGeneration(");
         String noise = method(source, "public CompletableFuture<ChunkAccess> fillFromNoise", "private static boolean isCancellationFailure");
         String decoration = method(source,
                 "public void applyBiomeDecoration(WorldGenLevel generatoraccessseed, ChunkAccess ichunkaccess, StructureManager structuremanager, boolean vanilla)",
@@ -430,6 +436,9 @@ public class IrisChunkGeneratorFailureContractTest {
         assertStageBeforeLease(structures, "bukkit_nms_create_structures");
         assertStageBeforeLease(references, "bukkit_nms_create_references");
         assertStageBeforeLease(biomes, "bukkit_nms_create_biomes");
+        assertStageBeforeLease(surface, "bukkit_nms_build_surface");
+        assertStageBeforeLease(carvers, "bukkit_nms_apply_carvers");
+        assertStageBeforeLease(mobs, "bukkit_nms_spawn_original_mobs");
         assertBefore(noise,
                 "requireNoiseGenerationStage(",
                 "requireGenerationLease(\"bukkit_nms_chunk_pipeline\")");
@@ -437,7 +446,7 @@ public class IrisChunkGeneratorFailureContractTest {
         assertBefore(decoration,
                 "requireGenerationLease(\"bukkit_nms_biome_decoration\")",
                 "importedFeatures.prepare(generatoraccessseed)");
-        assertEquals(4, occurrences(source, "requireGenerationStage(\"bukkit_nms_"));
+        assertEquals(7, occurrences(source, "requireGenerationStage(\"bukkit_nms_"));
         assertEquals(2, occurrences(source, "requireNoiseGenerationStage("));
         assertFalse(source.contains("GenerationSessionManager"));
     }

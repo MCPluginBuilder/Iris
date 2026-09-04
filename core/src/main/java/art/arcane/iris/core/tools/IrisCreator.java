@@ -263,8 +263,10 @@ public class IrisCreator {
             IrisDimension installedDimension = resolvedDimension;
             if (!studio() || benchmark) {
                 reportCreationProgress(creationReporter, 0.26D, "prepare_world_pack");
-                installedDimension = IrisServices.get(StudioSVC.class)
-                        .installIntoWorld(sender, resolvedDimension, dimensionRoot);
+                StudioSVC studioService = IrisServices.get(StudioSVC.class);
+                installedDimension = benchmark
+                        ? studioService.installIntoTransientWorld(sender, resolvedDimension, dimensionRoot)
+                        : studioService.installIntoWorld(sender, resolvedDimension, dimensionRoot, seed);
                 if (installedDimension == null) {
                     throw new IrisException("Failed to install dimension pack for " + dimension());
                 }

@@ -4,6 +4,14 @@ plugins {
     id 'java'
 }
 
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation('junit:junit:4.13.2')
+}
+
 tasks.named('jar', Jar).configure {
     manifest.attributes(
         'Agent-Class': 'art.arcane.iris.util.project.agent.Installer',

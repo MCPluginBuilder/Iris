@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "Rayon en chunks autour du centre",
     "iris.director.commanddeveloper.param.center_chunk_x": "Chunk central X",
     "iris.director.commanddeveloper.param.center_chunk_z": "Chunk central Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "Mettre à jour le pack d'un monde (UNSAFE!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "Préparer une mise à jour de la génération du monde",
     "iris.director.commanddeveloper.param.world_update": "Le monde à mettre à jour",
     "iris.director.commanddeveloper.param.pack_install_into_world": "Le pack à installer dans le monde",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "Assurez-vous de créer une sauvegarde et de lire d'abord les avertissements !",
@@ -1053,15 +1053,13 @@
       "one": "§7  ... et {count} avertissement de plus.",
       "other": "§7  ... et {count} avertissements de plus."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cVous devez toujours créer une sauvegarde avant d'utiliser ceci",
-      "§eLes problèmes possibles comprennent notamment :",
-      "§e - Des chunks cassés (coupures) entre les anciens et les nouveaux chunks (avant et après la mise à jour)",
-      "§e - Des chunks régénérés qui ne s'alignent pas avec les anciens chunks",
-      "§e - Des structures qui ne réapparaissent pas lors de la régénération",
-      "§e - Des grottes qui ne s'alignent pas",
-      "§e - Des couches de terrain qui ne s'alignent pas",
-      "§cMaintenant que vous connaissez les risques et avez créé une sauvegarde :",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cSauvegardez le monde entier avant de préparer cette mise à jour.",
+      "§eLes chunks existants ne seront ni régénérés ni réécrits.",
+      "§eAprès le redémarrage, les nouveaux chunks utiliseront le pack préparé avec une transition progressive à la limite enregistrée.",
+      "§eLa graine, la hauteur, l'environnement et le type de dimension du monde ne peuvent pas changer.",
+      "§eChaque sauvegarde doit conserver le répertoire iris/generation complet.",
+      "§cPour préparer la mise à jour et demander un redémarrage propre :",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aImportation de §f{total}§a structures vanilla et de datapacks (mode={mode}, includeNonJigsaw={includeNonJigsaw})...",

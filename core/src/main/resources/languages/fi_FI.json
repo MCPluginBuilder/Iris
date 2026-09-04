@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "Radius palasina keskellä",
     "iris.director.commanddeveloper.param.center_chunk_x": "Keskiosa X",
     "iris.director.commanddeveloper.param.center_chunk_z": "Keskiosa Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "Päivitä maailman paketti (UNSAFE!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "Valmistele maailman generoinnin päivitys",
     "iris.director.commanddeveloper.param.world_update": "Päivitettävä maailma",
     "iris.director.commanddeveloper.param.pack_install_into_world": "Maailmaan asennettava pakkaus",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "Muista tehdä varmuuskopio & Lue varoitukset ensin!",
@@ -1053,15 +1053,13 @@
       "other": "§7    ...  sekä {count} Lisää varoituksia.",
       "one": "§7    ...  sekä {count} Enemmän varoitusta."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cTee aina varmuuskopio ennen tämän käyttämistä",
-      "§eTästä voi aiheutua muun muassa seuraavia ongelmia:",
-      "§e - Rikkinäisiä chunkeja (katkoksia) vanhojen ja uusien chunkien välille (ennen päivitystä & sen jälkeen)",
-      "§e - Uudelleen luodut chunkit eivät sovi vanhoihin chunkeihin",
-      "§e - Rakenteet eivät ilmesty uudelleen regeneroinnin yhteydessä",
-      "§e - Luolat eivät kohtaa toisiaan",
-      "§e - Maastokerrokset eivät kohtaa toisiaan",
-      "§cKun ymmärrät riskit ja olet tehnyt varmuuskopion:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cVarmuuskopioi koko maailma ennen tämän päivityksen valmistelua.",
+      "§eOlemassa olevia chunkeja ei generoida uudelleen eikä korvata.",
+      "§eUudelleenkäynnistyksen jälkeen uudet chunkit käyttävät valmisteltua pakettia ja liittyvät asteittain tallennettuun rajaan.",
+      "§eMaailman siementä, korkeutta, ympäristöä tai ulottuvuustyyppiä ei voi muuttaa.",
+      "§eJokaisen varmuuskopion on sisällettävä koko iris/generation-hakemisto.",
+      "§cValmistele päivitys ja pyydä hallittua uudelleenkäynnistystä:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aTuo §f{total}§a vanilla & datapakettirakenteet (tila ={mode}, includeNonJigsaw={includeNonJigsaw})...",

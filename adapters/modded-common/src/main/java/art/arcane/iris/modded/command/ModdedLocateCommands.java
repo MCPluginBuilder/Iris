@@ -29,8 +29,9 @@ import art.arcane.iris.engine.framework.Locator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.StructureReachability;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
+import art.arcane.iris.engine.history.GenerationSemanticQueries;
+import art.arcane.iris.engine.history.GenerationFindCatalog;
 import art.arcane.iris.engine.hydrology.HydrologyFeatureQuery;
-import art.arcane.iris.engine.hydrology.HydrologyFeatureRef;
 import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
@@ -86,13 +87,9 @@ final class ModdedLocateCommands {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_THIS_DIMENSION_IS_NOT_GENERATED_BY_IRIS_8));
             return 0;
         }
-        IrisBiome biome = engine.getData().getBiomeLoader().load(key.trim());
+        IrisBiome biome = GenerationFindCatalog.biome(engine, key);
         if (biome == null) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_UNKNOWN_BIOME_2, MessageArgument.untrusted("key", key)));
-            return 0;
-        }
-        if (!ModdedCommandSuggestions.isReachableBiome(engine, biome.getLoadKey())) {
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_IS_NOT_DEFINED_DIMENSION, MessageArgument.untrusted("value", biome.getLoadKey())));
             return 0;
         }
         locate(source, level, engine, player, Locator.surfaceBiome(biome.getLoadKey()), "biome " + biome.getLoadKey());
@@ -111,13 +108,9 @@ final class ModdedLocateCommands {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_THIS_DIMENSION_IS_NOT_GENERATED_BY_IRIS_9));
             return 0;
         }
-        IrisRegion region = engine.getData().getRegionLoader().load(key.trim());
+        IrisRegion region = GenerationFindCatalog.region(engine, key);
         if (region == null) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_UNKNOWN_REGION_2, MessageArgument.untrusted("key", key)));
-            return 0;
-        }
-        if (!engine.getDimension().getRegions().contains(region.getLoadKey())) {
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_IS_NOT_DEFINED_DIMENSION, MessageArgument.untrusted("value", region.getLoadKey())));
             return 0;
         }
         locate(source, level, engine, player, Locator.region(region.getLoadKey()), "region " + region.getLoadKey());
@@ -132,7 +125,7 @@ final class ModdedLocateCommands {
             return 0;
         }
         String key = keyRaw.trim();
-        if (!engine.hasObjectPlacement(key)) {
+        if (!GenerationFindCatalog.hasObjectPlacement(engine, key)) {
             IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_IS_NOT_CONFIGURED_ANY_REGION_BIOME_OBJECT_PLACEMENTS_OBJECT_KEYS, MessageArgument.untrusted("key", key), MessageArgument.untrusted("value", engine.getData().getObjectLoader().getPossibleKeys().length)));
             return 0;
         }
@@ -158,10 +151,6 @@ final class ModdedLocateCommands {
             return 0;
         }
         IrisHydrologyRuntime runtime = engine.getComplex().getHydrologyRuntime();
-        if (runtime == null) {
-            IrisModdedCommands.fail(source, "Hydrology is not active in this dimension.");
-            return 0;
-        }
         HydrologyFeatureQuery query;
         try {
             query = HydrologyFeatureQuery.parse(type);
@@ -171,15 +160,19 @@ final class ModdedLocateCommands {
         }
         int originX = player.blockPosition().getX();
         int originZ = player.blockPosition().getZ();
-        int requestedDistance = Math.min(8192, runtime.settings().routing().tileSize() * 15);
-        int maximumDistance = runtime.maximumFeatureSearchDistance(originX, originZ, requestedDistance);
+        int requestedDistance = runtime == null
+                ? 8192
+                : Math.min(8192, runtime.settings().routing().tileSize() * 15);
+        int maximumDistance = runtime == null
+                ? requestedDistance
+                : runtime.maximumFeatureSearchDistance(originX, originZ, requestedDistance);
         MinecraftServer server = source.getServer();
         IrisModdedCommands.ok(source, "Searching accepted hydrology plans for " + type + "...");
-        MultiBurst.burst.completeValueAsync(() -> runtime.nearestFeature(
-                        query.types(), query.profileKey(), originX, originZ, maximumDistance,
+        MultiBurst.burst.completeValueAsync(() -> GenerationSemanticQueries.nearestRiver(
+                        engine, query, originX, originZ, maximumDistance,
                         (int visited) -> server.execute(() -> IrisModdedCommands.ok(source,
                                 "Searched " + visited + " hydrology tiles for " + type + "..."))).orElse(null))
-                .whenComplete((HydrologyFeatureRef feature, Throwable error) -> server.execute(() -> {
+                .whenComplete((GenerationSemanticQueries.RiverResult feature, Throwable error) -> server.execute(() -> {
                     if (error != null) {
                         ModdedIrisLog.error("Hydrology locate failed for {}", type, error);
                         IrisModdedCommands.fail(source,
@@ -192,13 +185,12 @@ final class ModdedLocateCommands {
                                         + maximumDistance + " blocks.");
                         return;
                     }
-                    int worldY = feature.y() + engine.getDimension().getMinHeight() + 2;
                     teleportToStructure(
                             source,
                             level,
                             player,
                             feature.x(),
-                            worldY,
+                            feature.y() + 2,
                             feature.z(),
                             type + " hydrology feature"
                     );
@@ -225,8 +217,9 @@ final class ModdedLocateCommands {
         }
         Optional<NativeStructureTarget> resolved = resolveNativeStructure(source, level, engine, key);
         if (resolved.isEmpty()) {
-            if (!IrisStructureLocator.hasNativePlacement(engine, key)
-                    && IrisStructureLocator.hasLocatableEditablePlacement(engine, key)) {
+            if ((!IrisStructureLocator.hasNativePlacement(engine, key)
+                    && IrisStructureLocator.hasLocatableEditablePlacement(engine, key))
+                    || GenerationFindCatalog.hasRetainedStructurePlacement(engine, key)) {
                 locateIrisStructure(source, level, engine, player, key);
                 return 1;
             }
@@ -247,6 +240,10 @@ final class ModdedLocateCommands {
         if (!ModdedCommandSuggestions.isEligibleRegisteredStructure(
                 decision, nativePlacement, locatableNativePlacement, locatableEditableReplacement,
                 reachable, nativeGenerationEnabled)) {
+            if (GenerationFindCatalog.hasRetainedStructurePlacement(engine, key)) {
+                locateIrisStructure(source, level, engine, player, key);
+                return 1;
+            }
             IrisModdedCommands.fail(source, registeredStructureUnavailableMessage(
                     target.key(), target.availability(), decision,
                     nativePlacement, locatableNativePlacement,
@@ -312,7 +309,7 @@ final class ModdedLocateCommands {
         Thread thread = new Thread(() -> {
             try {
                 IrisStructureLocator.LocateResult result =
-                        IrisStructureLocator.locate(engine, key, blockX, blockZ, 1024);
+                        GenerationSemanticQueries.nearestStructure(engine, key, blockX, blockZ, 1024);
                 if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
                     server.execute(() -> IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_UNABLE_LOCATE_IRIS_PLACED_STRUCTURE_DENSITY_SEARCH_SAFETY_LIMIT_WAS, MessageArgument.untrusted("key", key))));
                     return;

@@ -24,6 +24,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
+import art.arcane.iris.engine.framework.NativeStructureOwnershipStore;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
@@ -233,16 +234,29 @@ final class ModdedNativeStructureStage {
             if (!start.isValid() || previousStarts.get(structure) == start) {
                 continue;
             }
-            if (configuredStarts.containsKey(structure)) {
-                recordWorldCheckStructureShift(
-                        configuredStarts.get(structure).source().getStructure(), start.getChunkPos(), 0);
-                continue;
-            }
             Identifier id = registry.getKey(structure);
             String structureId = id == null ? null : id.toString();
             if (structureId == null) {
                 throw NativeStructureGenerationException.failure(
                         "resolution", null, chunkPos.x(), chunkPos.z());
+            }
+            BoundingBox footprint = start.getBoundingBox();
+            if (!current.getComplex().allowsNewGenerationFootprint(
+                    footprint.minX(),
+                    footprint.minZ(),
+                    footprint.maxX(),
+                    footprint.maxZ())) {
+                chunk.setStartForStructure(structure, StructureStart.INVALID_START);
+                if (configuredStarts.containsKey(structure)) {
+                    NativeStructureOwnershipStore.discard(
+                            current, structureId, chunkPos.x(), chunkPos.z());
+                }
+                continue;
+            }
+            if (configuredStarts.containsKey(structure)) {
+                recordWorldCheckStructureShift(
+                        configuredStarts.get(structure).source().getStructure(), start.getChunkPos(), 0);
+                continue;
             }
             boolean undergroundStep = NativeStructureVegetationClearer.isUndergroundStep(structure.step());
             IrisNativeStructureDecision decision;
@@ -326,6 +340,14 @@ final class ModdedNativeStructureStage {
                     List<StructureStart> starts = structureManager.startsForStructure(sectionPos, structure);
                     List<NativePlacement> resolvedPlacements = new ArrayList<>(starts.size());
                     for (StructureStart start : starts) {
+                        BoundingBox footprint = start.getBoundingBox();
+                        if (!current.getComplex().allowsNewGenerationFootprint(
+                                footprint.minX(),
+                                footprint.minZ(),
+                                footprint.maxX(),
+                                footprint.maxZ())) {
+                            continue;
+                        }
                         NativeStructureOwnershipRecord ownership =
                                 NativeStructureOwnershipRecovery.resolve(
                                         current, world.getLevel(), structureId, structure, start);

@@ -31,6 +31,12 @@ import java.util.Map;
  * Internal to Iris; not a published integration surface.
  */
 public interface PlatformRegistries {
+    default PlatformGenerationRegistry generationRegistry() {
+        throw new UnsupportedOperationException(
+                "The active platform does not expose generation registry definitions."
+        );
+    }
+
     /**
      * Resolves a block key through the platform's compatibility layer, which rewrites keys that moved between
      * Minecraft versions and consults registered custom-content providers. An unresolvable key is reported and

@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.structure.StructureGraphCatalog;
 import art.arcane.iris.engine.object.IrisDirection;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -41,6 +42,7 @@ import art.arcane.iris.engine.object.ObjectPlaceMode;
 import art.arcane.iris.engine.object.StructureDistribution;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
+import art.arcane.iris.util.project.stream.ProceduralStream;
 import org.junit.Test;
 
 import java.util.Set;
@@ -53,6 +55,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -447,6 +450,14 @@ public class IrisStructureLocatorContractTest {
     @Test
     public void locateRanksEditableStartsByResolvedBlockOrigin() {
         Engine engine = densityEngine(1.0, false, -64, 384, -2032, 2032);
+        IrisComplex complex = mock(IrisComplex.class);
+        when(engine.getComplex()).thenReturn(complex);
+        when(complex.allowsNewGenerationFootprint(anyInt(), anyInt(), anyInt(), anyInt())).thenReturn(true);
+        @SuppressWarnings("unchecked")
+        ProceduralStream<Double> riverHeight = mock(ProceduralStream.class);
+        when(complex.getRiverWaterSurfaceStream()).thenReturn(riverHeight);
+        when(riverHeight.get(anyDouble(), anyDouble())).thenReturn(63D);
+        when(engine.getAllBiomes()).thenReturn(new KList<>());
         when(engine.getHeight(anyInt(), anyInt(), eq(true))).thenReturn(128);
         when(engine.getDimension().getFluidHeight()).thenReturn(63);
         IrisStructurePlacement placement = engine.getDimension().getStructures().get(0);

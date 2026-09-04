@@ -5,11 +5,16 @@ import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.DimensionStackContext;
 import art.arcane.iris.engine.DimensionTerrainContext;
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.IrisEngine;
+import art.arcane.iris.engine.history.ChunkGenerationSemantics;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
+import art.arcane.iris.engine.history.GenerationSemanticIndex;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.project.stream.ProceduralStream;
@@ -25,6 +30,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
@@ -39,6 +45,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -94,6 +101,7 @@ public class HintedLocatorTest {
         when(engine.getFocusRegion()).thenReturn(null);
         when(engine.isClosed()).thenReturn(false);
         when(engine.acquireGenerationLease(any(String.class))).thenReturn(GenerationSessionLease.noop());
+        when(complex.allowsNewGenerationChunk(anyInt(), anyInt())).thenReturn(true);
         when(data.getBiomeLoader()).thenReturn(biomeLoader);
         when(dimension.getReachableBiomes(engine)).thenReturn(new KList<>());
     }
@@ -464,6 +472,267 @@ public class HintedLocatorTest {
     }
 
     @Test
+    public void locatorMergesRecordedAndActiveCandidatesByDistance() throws Exception {
+        Position2 origin = new Position2(0, 0);
+        Position2 activeChunk = new Position2(1, 0);
+        Locator<String> locator = new Locator<>() {
+            @Override
+            public boolean matches(Engine ignoredEngine, Position2 chunk) {
+                return activeChunk.equals(chunk);
+            }
+
+            @Override
+            public SearchCandidate nearestRecordedCandidate(
+                    Engine ignoredEngine,
+                    Position2 ignoredOrigin,
+                    int ignoredRadius
+            ) {
+                return SearchCandidate.atChunkCenter(new Position2(20, 0));
+            }
+        };
+
+        Position2 result = locator.find(engine, origin, 60_000, ignored -> { }).get();
+
+        assertEquals(activeChunk, result);
+    }
+
+    @Test
+    public void impossibleTargetWithNoHistoricalFallbackReturnsWithoutScanning() throws Exception {
+        IrisEngine routedEngine = mock(IrisEngine.class);
+        GenerationHistory history = mock(GenerationHistory.class);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(routedEngine.getGenerationHistoryRuntimeRouter()).thenReturn(Optional.of(router));
+        when(routedEngine.acquireGenerationLease(any(String.class))).thenReturn(GenerationSessionLease.noop());
+        when(router.history()).thenReturn(history);
+        when(history.hasHistoricalFallbackInSquare(anyInt(), anyInt(), anyInt())).thenReturn(false);
+        Locator<String> locator = new HintedLocator<>((ignoredEngine, chunk) -> {
+            throw new AssertionError("Impossible target must not enter procedural search.");
+        }, ignoredEngine -> HintedLocator.SearchPlan.impossible());
+
+        assertNull(locator.find(routedEngine, new Position2(0, 0), 60_000, ignored -> { })
+                .get(3, TimeUnit.SECONDS));
+    }
+
+    @Test
+    public void hintedLocatorMergesRecordedAndActiveCandidatesByDistance() throws Exception {
+        Position2 origin = new Position2(0, 0);
+        Position2 activeChunk = new Position2(1, 0);
+        Locator<String> exact = new Locator<>() {
+            @Override
+            public boolean matches(Engine ignoredEngine, Position2 chunk) {
+                return activeChunk.equals(chunk);
+            }
+
+            @Override
+            public SearchCandidate nearestRecordedCandidate(
+                    Engine ignoredEngine,
+                    Position2 ignoredOrigin,
+                    int ignoredRadius
+            ) {
+                return SearchCandidate.atChunkCenter(new Position2(20, 0));
+            }
+        };
+        Locator<String> locator = new HintedLocator<>(
+                exact,
+                ignoredEngine -> HintedLocator.SearchPlan.unpruned()
+        );
+
+        Position2 result = locator.find(engine, origin, 60_000, ignored -> { }).get();
+
+        assertEquals(activeChunk, result);
+    }
+
+    @Test
+    public void exactBlockPositionsDecideStructureCandidateDistance() {
+        Position2 origin = new Position2(0, 0);
+        Locator.SearchCandidate fartherRecorded = new Locator.SearchCandidate(
+                new Position2(1, 0),
+                31,
+                8
+        );
+        Locator.SearchCandidate nearerActive = new Locator.SearchCandidate(
+                new Position2(1, 0),
+                16,
+                8
+        );
+
+        assertEquals(nearerActive, Locator.nearer(origin, fartherRecorded, nearerActive));
+    }
+
+    @Test
+    public void plainLocatorChecksLaterRingsThatCanContainACloserMatch() throws Exception {
+        Position2 corner = new Position2(-40, -40);
+        Position2 nearer = new Position2(50, 0);
+        Locator<String> locator = (ignoredEngine, chunk) -> chunk.equals(corner) || chunk.equals(nearer);
+
+        assertEquals(nearer, locator.find(engine, new Position2(0, 0), 10_000, ignored -> { })
+                .get(15, TimeUnit.SECONDS));
+    }
+
+    @Test
+    public void fineLocatorChoosesTheSameNearestTieRegardlessOfWorkerOrder() throws Exception {
+        Set<Position2> matches = Set.of(new Position2(-12, 0), new Position2(0, -12),
+                new Position2(0, 12), new Position2(12, 0));
+        Locator<String> locator = new HintedLocator<>((ignoredEngine, chunk) -> matches.contains(chunk),
+                ignoredEngine -> HintedLocator.SearchPlan.unpruned());
+
+        assertEquals(new Position2(-12, 0), locator.find(engine, new Position2(0, 0), 10_000, ignored -> { })
+                .get(15, TimeUnit.SECONDS));
+    }
+
+    @Test
+    public void coarseRefinementRanksMatchesFromTheSearchOrigin() throws Exception {
+        Locator<String> locator = new HintedLocator<>(
+                (ignoredEngine, chunk) -> chunk.equals(new Position2(8, 0)) || chunk.equals(new Position2(5, 0)),
+                ignoredEngine -> HintedLocator.SearchPlan.of((x, z) -> x == 136 && z == 8, 4, null));
+
+        assertEquals(new Position2(5, 0), locator.find(engine, new Position2(0, 0), 10_000, ignored -> { })
+                .get(15, TimeUnit.SECONDS));
+    }
+
+    @Test
+    public void ringCoordinatesNeverWrapAcrossTheBlockCoordinateLimit() {
+        KList<Position2> cells = new KList<>();
+        int maximumChunk = Integer.MAX_VALUE >> 4;
+        HintedLocator.appendRing(cells, new Position2(maximumChunk, maximumChunk), 1, 1);
+
+        assertEquals(Set.of(new Position2(maximumChunk - 1, maximumChunk - 1),
+                new Position2(maximumChunk - 1, maximumChunk),
+                new Position2(maximumChunk, maximumChunk - 1)), new HashSet<>(cells));
+    }
+
+    @Test
+    public void transitionGatePreventsProceduralLocatorEvaluation() {
+        AtomicInteger evaluations = new AtomicInteger();
+        HistoryAwareLocator<String> locator = new HistoryAwareLocator<>(
+                GenerationSemanticIndex.SemanticKind.REGION,
+                "iris:temperate",
+                (ignoredEngine, ignoredChunk) -> {
+                    evaluations.incrementAndGet();
+                    return true;
+                }
+        );
+        when(complex.allowsNewGenerationChunk(3, 4)).thenReturn(false);
+
+        assertFalse(locator.matchesForSearch(engine, new Position2(3, 4)));
+        assertEquals(0, evaluations.get());
+    }
+
+    @Test
+    public void semanticRecordsAndOwnershipSelectTheOnlyTruthfulLocatorSource() throws Exception {
+        IrisEngine routedEngine = mock(IrisEngine.class);
+        IrisComplex routedComplex = mock(IrisComplex.class);
+        GenerationHistory history = mock(GenerationHistory.class);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        AtomicInteger scopeDepth = new AtomicInteger();
+        AtomicInteger evaluations = new AtomicInteger();
+        ChunkGenerationSemantics negative = semantics(1, "iris:other");
+        ChunkGenerationSemantics positive = semantics(2, "iris:target");
+        HistoryAwareLocator<String> locator = new HistoryAwareLocator<>(
+                GenerationSemanticIndex.SemanticKind.REGION,
+                "iris:target",
+                (ignoredEngine, chunk) -> {
+                    evaluations.incrementAndGet();
+                    return scopeDepth.get() > 0 && (chunk.getX() == 0 || chunk.getX() == 3);
+                }
+        );
+
+        when(routedEngine.getComplex()).thenReturn(routedComplex);
+        when(routedEngine.getGenerationHistoryRuntimeRouter()).thenReturn(Optional.of(router));
+        when(router.history()).thenReturn(history);
+        when(history.semantics(anyInt(), anyInt())).thenAnswer(invocation -> switch (
+                invocation.<Integer>getArgument(0)
+        ) {
+            case 1 -> Optional.of(negative);
+            case 2 -> Optional.of(positive);
+            default -> Optional.empty();
+        });
+        when(history.isHistoricallyOwned(anyInt(), anyInt())).thenAnswer(invocation -> {
+            int chunkX = invocation.getArgument(0);
+            return chunkX >= 0 && chunkX <= 2;
+        });
+        when(history.isActiveUnowned(anyInt(), anyInt())).thenAnswer(invocation ->
+                invocation.<Integer>getArgument(0) == 3);
+        when(routedComplex.allowsNewGenerationChunk(anyInt(), anyInt())).thenAnswer(invocation ->
+                invocation.<Integer>getArgument(0) == 3);
+        when(routedEngine.openGenerationHistoryCoordinateScope(anyInt(), anyInt())).thenAnswer(invocation -> {
+            GenerationHistoryRuntimeRouter.CoordinateScope scope =
+                    mock(GenerationHistoryRuntimeRouter.CoordinateScope.class);
+            scopeDepth.incrementAndGet();
+            doAnswer(close -> {
+                scopeDepth.decrementAndGet();
+                return null;
+            }).when(scope).close();
+            return scope;
+        });
+
+        assertTrue(locator.matches(routedEngine, new Position2(0, 0)));
+        assertTrue(locator.matchesForSearch(routedEngine, new Position2(0, 0)));
+        assertFalse(locator.matches(routedEngine, new Position2(1, 0)));
+        assertFalse(locator.matchesForSearch(routedEngine, new Position2(1, 0)));
+        assertTrue(locator.matches(routedEngine, new Position2(2, 0)));
+        assertFalse(locator.matchesForSearch(routedEngine, new Position2(2, 0)));
+        assertTrue(locator.matches(routedEngine, new Position2(3, 0)));
+        assertTrue(locator.matchesForSearch(routedEngine, new Position2(3, 0)));
+        assertEquals(4, evaluations.get());
+        assertEquals(0, scopeDepth.get());
+    }
+
+    @Test
+    public void historicalFallbackBypassesCurrentPackCoarseHints() throws Exception {
+        IrisEngine routedEngine = mock(IrisEngine.class);
+        IrisComplex routedComplex = mock(IrisComplex.class);
+        GenerationHistory history = mock(GenerationHistory.class);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        AtomicInteger scopeDepth = new AtomicInteger();
+        HistoryAwareLocator<String> exact = new HistoryAwareLocator<>(
+                GenerationSemanticIndex.SemanticKind.REGION,
+                "iris:old_only",
+                (ignoredEngine, chunk) -> chunk.equals(new Position2(1, 0)) && scopeDepth.get() > 0
+        );
+        Locator<String> locator = new HintedLocator<>(
+                exact,
+                ignoredEngine -> HintedLocator.SearchPlan.of((blockX, blockZ) -> false, 4, null)
+        );
+
+        when(routedEngine.getComplex()).thenReturn(routedComplex);
+        when(routedEngine.getGenerationHistoryRuntimeRouter()).thenReturn(Optional.of(router));
+        when(routedEngine.isClosed()).thenReturn(false);
+        when(routedEngine.acquireGenerationLease(any(String.class))).thenReturn(GenerationSessionLease.noop());
+        when(router.history()).thenReturn(history);
+        when(history.findRecorded(any())).thenReturn(Optional.empty());
+        when(history.semantics(anyInt(), anyInt())).thenReturn(Optional.empty());
+        when(history.isHistoricallyOwned(anyInt(), anyInt())).thenAnswer(invocation ->
+                invocation.<Integer>getArgument(0) == 1
+                        && invocation.<Integer>getArgument(1) == 0);
+        when(history.hasHistoricalFallbackInSquare(anyInt(), anyInt(), anyInt())).thenAnswer(invocation ->
+                Math.abs((long) invocation.<Integer>getArgument(0) - 1L) <= invocation.<Integer>getArgument(2)
+                        && Math.abs((long) invocation.<Integer>getArgument(1)) <= invocation.<Integer>getArgument(2));
+        when(history.isActiveUnowned(anyInt(), anyInt())).thenReturn(false);
+        when(routedComplex.allowsNewGenerationChunk(anyInt(), anyInt())).thenReturn(false);
+        when(routedEngine.openGenerationHistoryCoordinateScope(anyInt(), anyInt())).thenAnswer(invocation -> {
+            GenerationHistoryRuntimeRouter.CoordinateScope scope =
+                    mock(GenerationHistoryRuntimeRouter.CoordinateScope.class);
+            scopeDepth.incrementAndGet();
+            doAnswer(close -> {
+                scopeDepth.decrementAndGet();
+                return null;
+            }).when(scope).close();
+            return scope;
+        });
+
+        Position2 result = locator.find(
+                routedEngine,
+                new Position2(0, 0),
+                60_000,
+                ignored -> { }
+        ).get(10, TimeUnit.SECONDS);
+
+        assertEquals(new Position2(1, 0), result);
+        assertEquals(0, scopeDepth.get());
+    }
+
+    @Test
     public void startingAnotherSearchDoesNotCancelTheActiveRequest() throws Exception {
         CountDownLatch planning = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -490,6 +759,13 @@ public class HintedLocatorTest {
 
         assertNull(second.get(10, TimeUnit.SECONDS));
         assertEquals(origin, first.get(10, TimeUnit.SECONDS));
+    }
+
+    private static ChunkGenerationSemantics semantics(int chunkX, String regionKey) {
+        return ChunkGenerationSemantics.builder(chunkX, 0, 1L)
+                .addRegion(regionKey)
+                .seal()
+                .build();
     }
 
     @Test

@@ -20,6 +20,7 @@ package art.arcane.iris.core;
 
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.lifecycle.WorldLifecycleStaging;
+import art.arcane.iris.core.lifecycle.WorldReplacementSeed;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.BrokenPackException;
 import art.arcane.iris.core.pack.PackDownloader;
@@ -32,6 +33,13 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisWorld;
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationEpochContractFactory;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationHistoryPaths;
+import art.arcane.iris.engine.history.GenerationPackFingerprint;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
+import art.arcane.iris.engine.history.GenerationRegistryContractFactory;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.util.common.plugin.VolmitPlugin;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
@@ -255,15 +263,21 @@ public final class IrisWorldGeneratorResolver {
         File levelRoot = IrisWorldStorage.levelRoot();
         NamespacedKey worldKey = configuredWorldKey(worldName, levelRoot.getName(), levelRoot);
         String configuredWorldName = IrisWorldStorage.configuredWorldName(worldKey, levelRoot.getName());
-        File pack = IrisWorldStorage.frozenDimensionRoot(
+        File dimensionRoot = IrisWorldStorage.frozenDimensionRoot(
                         Bukkit.getWorldContainer(),
                         levelRoot,
                         configuredWorldName,
                         worldKey
                 )
-                .map(IrisWorldStorage::requireFrozenPackRoot)
                 .orElse(null);
-        IrisDimension dimension = pack == null ? null : IrisData.get(pack).getDimensionLoader().load(id);
+        IrisDimension dimension = null;
+        if (dimensionRoot != null) {
+            long worldSeed = requireStoredWorldSeed(configuredWorldName, dimensionRoot);
+            GenerationHistory history = requireGenerationHistory(dimensionRoot, id, worldSeed);
+            File pack = requireActivePack(history);
+            requireSnapshotLoadable(pack);
+            dimension = requireHistoricalDimension(history, pack, id);
+        }
         if (dimension == null) dimension = IrisData.loadAnyDimension(id, null);
         if (dimension == null) {
             File packsRoot = IrisPlatforms.get().packsFolderNoCreate();
@@ -445,7 +459,7 @@ public final class IrisWorldGeneratorResolver {
             return;
         }
         if (dimensionRoot != null
-                && (IRIS_DIMENSION_NAMESPACE.equals(worldKey.getNamespace()) || hasFrozenPack(dimensionRoot))) {
+                && (IRIS_DIMENSION_NAMESPACE.equals(worldKey.getNamespace()) || hasGenerationStorage(dimensionRoot))) {
             return;
         }
         NamespacedKey messageKey = messageWorldKey(worldName, levelRoot.getName());
@@ -455,9 +469,10 @@ public final class IrisWorldGeneratorResolver {
                 + " type=<pack>; Iris registers them with Multiverse itself.");
     }
 
-    private static boolean hasFrozenPack(File dimensionRoot) {
-        Path packRoot = dimensionRoot.toPath().toAbsolutePath().normalize().resolve("iris").resolve("pack");
-        return Files.isDirectory(packRoot, LinkOption.NOFOLLOW_LINKS);
+    private static boolean hasGenerationStorage(File dimensionRoot) {
+        GenerationHistoryPaths paths = GenerationHistoryPaths.forDimension(dimensionRoot.toPath());
+        return Files.isDirectory(paths.generationRoot(), LinkOption.NOFOLLOW_LINKS)
+                || Files.isDirectory(paths.legacyPackRoot(), LinkOption.NOFOLLOW_LINKS);
     }
 
     private ChunkGenerator resolveFrozenWorldGenerator(String worldName, String id) {
@@ -475,7 +490,9 @@ public final class IrisWorldGeneratorResolver {
             throw new IllegalStateException("Frozen Iris world storage does not match the current platform layout for "
                     + worldKey + ".");
         }
-        File snapshotRoot = IrisWorldStorage.requireFrozenPackRoot(dimensionRoot);
+        long worldSeed = requireStoredWorldSeed(worldName, dimensionRoot);
+        GenerationHistory history = requireGenerationHistory(dimensionRoot, id, worldSeed);
+        File snapshotRoot = requireActivePack(history);
         try {
             requireSnapshotLoadable(snapshotRoot);
         } catch (BrokenPackException exception) {
@@ -487,18 +504,14 @@ public final class IrisWorldGeneratorResolver {
             throw exception;
         }
 
-        IrisDimension dimension = IrisData.get(snapshotRoot).getDimensionLoader().load(id, false);
-        if (dimension == null) {
-            throw new IllegalStateException("Frozen Iris pack snapshot at " + snapshotRoot
-                    + " does not contain dimension " + id + ".");
-        }
+        IrisDimension dimension = requireHistoricalDimension(history, snapshotRoot, id);
 
         Iris.debug("Assuming IrisDimension: " + dimension.getName());
 
         IrisWorld world = IrisWorld.builder()
                 .platformIdentity(worldKey.toString())
                 .name(worldName)
-                .seed(1337)
+                .seed(history.activeEpoch().worldSeed())
                 .worldFolder(dimensionRoot)
                 .minHeight(dimension.getMinHeight())
                 .maxHeight(dimension.getMaxHeight())
@@ -506,7 +519,133 @@ public final class IrisWorldGeneratorResolver {
 
         Iris.debug("Generator Config: " + world);
 
-        return new BukkitChunkGenerator(world, false, snapshotRoot, dimension.getLoadKey());
+        return new BukkitChunkGenerator(world, false, snapshotRoot, dimension.getLoadKey(), history);
+    }
+
+    private static GenerationHistory requireGenerationHistory(
+            File dimensionRoot,
+            String dimensionKey,
+            long worldSeed
+    ) {
+        Path root = dimensionRoot.toPath().toAbsolutePath().normalize();
+        try {
+            Optional<GenerationHistory> current = GenerationHistory.openIfPresent(root, worldSeed);
+            GenerationHistory history = current.isPresent()
+                    ? current.get()
+                    : adoptLegacyGenerationHistory(root, dimensionKey, worldSeed);
+            List<GenerationRegistryContract> retainedContracts = history.manifest()
+                    .epochs()
+                    .stream()
+                    .map(GenerationEpoch::registryContract)
+                    .toList();
+            history.requireRegistryDefinitions(
+                    GenerationRegistryContractFactory.captureRequiredDefinitions(retainedContracts)
+            );
+            return history;
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris generation history is unusable at " + root + ".", failure);
+        }
+    }
+
+    private static GenerationHistory adoptLegacyGenerationHistory(
+            Path dimensionRoot,
+            String dimensionKey,
+            long worldSeed
+    ) throws IOException {
+        Path legacyPack = GenerationHistoryPaths.forDimension(dimensionRoot).legacyPackRoot();
+        requireSnapshotLoadable(legacyPack.toFile());
+        String fingerprint = GenerationPackFingerprint.compute(
+                legacyPack,
+                GenerationPackFingerprint.CURRENT_VERSION
+        );
+        IrisData data = IrisData.openDatapackCompiler(legacyPack.toFile());
+        try {
+            IrisDimension dimension = data.getDimensionLoader().load(dimensionKey, false);
+            if (dimension == null) {
+                throw new IOException("Legacy Iris pack does not contain dimension " + dimensionKey + ".");
+            }
+            GenerationEpoch.DimensionContract dimensionContract = captureDimensionContract(data, dimension);
+            GenerationRegistryContract registryContract = GenerationRegistryContractFactory.create(
+                    data,
+                    dimension,
+                    fingerprint,
+                    GenerationRegistryContractFactory.CustomBiomeAliasPolicy.RETAIN_LEGACY_ALIASES
+            );
+            return GenerationHistory.adoptLegacyPack(
+                    dimensionRoot,
+                    fingerprint,
+                    worldSeed,
+                    dimensionContract,
+                    registryContract
+            );
+        } finally {
+            data.close();
+        }
+    }
+
+    private static IrisDimension requireHistoricalDimension(
+            GenerationHistory history,
+            File packRoot,
+            String dimensionKey
+    ) {
+        GenerationEpoch epoch = history.activeEpoch();
+        if (!epoch.dimensionContract().dimensionKey().equals(dimensionKey)) {
+            throw new IllegalStateException("Configured dimension " + dimensionKey
+                    + " does not match active generation history dimension "
+                    + epoch.dimensionContract().dimensionKey() + ".");
+        }
+        IrisData data = IrisData.get(packRoot);
+        IrisDimension dimension = data.getDimensionLoader().load(dimensionKey, false);
+        if (dimension == null) {
+            throw new IllegalStateException("Immutable Iris generation pack at " + packRoot
+                    + " does not contain dimension " + dimensionKey + ".");
+        }
+        GenerationEpoch.DimensionContract actualContract = captureDimensionContract(data, dimension);
+        if (!epoch.dimensionContract().equals(actualContract)) {
+            throw new IllegalStateException("Immutable Iris generation pack dimension contract changed at "
+                    + packRoot + ".");
+        }
+        return dimension;
+    }
+
+    private static GenerationEpoch.DimensionContract captureDimensionContract(
+            IrisData data,
+            IrisDimension dimension
+    ) {
+        String dimensionTypeKey = IrisPlatforms.get()
+                .registries()
+                .generationRegistry()
+                .dimensionTypeResourceKey(
+                        data.getDataFolder().getName(),
+                        dimension.getLoadKey(),
+                        dimension.getDimensionTypeKey()
+                );
+        return GenerationEpochContractFactory.create(
+                dimension,
+                dimension.getLoadKey(),
+                dimensionTypeKey
+        );
+    }
+
+    private static File requireActivePack(GenerationHistory history) {
+        try {
+            return history.activePackRoot().toFile();
+        } catch (IOException failure) {
+            throw new IllegalStateException("Active Iris generation pack is unusable.", failure);
+        }
+    }
+
+    private static long requireStoredWorldSeed(String worldName, File dimensionRoot) {
+        Long configuredSeed = IrisWorlds.readBukkitWorldSeed(worldName);
+        if (configuredSeed != null) {
+            return configuredSeed;
+        }
+        try {
+            return WorldReplacementSeed.readAuthoritativeSeed(dimensionRoot.toPath());
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris world " + worldName
+                    + " has no authoritative generation seed.", failure);
+        }
     }
 
     private record FreshValidation(

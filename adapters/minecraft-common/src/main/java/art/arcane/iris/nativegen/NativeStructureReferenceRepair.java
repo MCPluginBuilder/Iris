@@ -1,9 +1,11 @@
 package art.arcane.iris.nativegen;
 
+import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
 import art.arcane.iris.engine.framework.NativeStructureOwnershipStore;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.spi.IrisLogging;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -23,6 +25,7 @@ import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 
 import java.util.ArrayList;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,14 +51,17 @@ public final class NativeStructureReferenceRepair {
              originChunkX <= target.x() + REFERENCE_DISTANCE_CHUNKS; originChunkX++) {
             for (int originChunkZ = target.z() - REFERENCE_DISTANCE_CHUNKS;
                  originChunkZ <= target.z() + REFERENCE_DISTANCE_CHUNKS; originChunkZ++) {
-                ChunkAccess originChunk = level.getChunk(
-                        originChunkX, originChunkZ, ChunkStatus.STRUCTURE_STARTS);
-                for (Map.Entry<Structure, StructureStart> entry : originChunk.getAllStarts().entrySet()) {
-                    ScannedStart start = scanStart(
-                            engine, serverLevel, structureManager, targetChunk, registry,
-                            originChunk, entry.getKey(), entry.getValue());
-                    if (start != null && isTargetRelevant(engine, targetChunk, start)) {
-                        starts.add(start);
+                try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                             openOriginRuntimeScope(engine, originChunkX, originChunkZ)) {
+                    ChunkAccess originChunk = level.getChunk(
+                            originChunkX, originChunkZ, ChunkStatus.STRUCTURE_STARTS);
+                    for (Map.Entry<Structure, StructureStart> entry : originChunk.getAllStarts().entrySet()) {
+                        ScannedStart start = scanStart(
+                                engine, serverLevel, structureManager, targetChunk, registry,
+                                originChunk, entry.getKey(), entry.getValue());
+                        if (start != null && isTargetRelevant(engine, targetChunk, start)) {
+                            starts.add(start);
+                        }
                     }
                 }
             }
@@ -72,6 +78,22 @@ public final class NativeStructureReferenceRepair {
             structureManager.addReferenceForStructure(
                     SectionPos.bottomOf(targetChunk), start.structure(),
                     start.origin().pack(), targetChunk);
+        }
+    }
+
+    private static GenerationHistoryRuntimeRouter.CoordinateScope openOriginRuntimeScope(
+            Engine engine,
+            int chunkX,
+            int chunkZ
+    ) {
+        if (!(engine instanceof IrisEngine irisEngine)) {
+            return null;
+        }
+        try {
+            return irisEngine.openGenerationHistoryCoordinateScope(chunkX << 4, chunkZ << 4);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Unable to resolve native structure references for origin "
+                    + chunkX + "," + chunkZ + " through generation history.", failure);
         }
     }
 

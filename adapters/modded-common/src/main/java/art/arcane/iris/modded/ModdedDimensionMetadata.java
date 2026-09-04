@@ -19,6 +19,9 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionTerrainContext;
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -28,6 +31,7 @@ import net.minecraft.resources.Identifier;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.Function;
 
 final class ModdedDimensionMetadata {
     private ModdedDimensionMetadata() {
@@ -45,7 +49,10 @@ final class ModdedDimensionMetadata {
 
     static Set<String> collectConfiguredBiomeKeys(IrisDimension dimension, IrisData data) {
         LinkedHashSet<String> keys = new LinkedHashSet<>(
-                collectConfiguredBiomeKeys(dimension.getReachableBiomes(() -> data), dimension.getLoadKey()));
+                collectConfiguredBiomeKeys(
+                        dimension.getReachableBiomes(() -> data),
+                        customBiome -> data.customBiomeResourceKey(dimension, customBiome)
+                ));
         for (IrisRegion region : dimension.getAllRegions(() -> data)) {
             if (region == null) {
                 continue;
@@ -60,7 +67,27 @@ final class ModdedDimensionMetadata {
         return Set.copyOf(keys);
     }
 
-    static Set<String> collectConfiguredBiomeKeys(Iterable<IrisBiome> biomes, String dimensionLoadKey) {
+    static Set<String> collectConfiguredBiomeKeys(Engine engine) {
+        LinkedHashSet<String> keys = new LinkedHashSet<>(collectConfiguredBiomeKeys(
+                engine.getDimension(), engine.getData()));
+        DimensionStackContext stackContext = engine.getDimensionStackContext();
+        if (stackContext == null) {
+            return Set.copyOf(keys);
+        }
+        for (DimensionTerrainContext terrainContext : stackContext.getLayersBottomToTop()) {
+            if (terrainContext.isSelfReferencing()) {
+                continue;
+            }
+            keys.addAll(collectConfiguredBiomeKeys(
+                    terrainContext.getDimension(), terrainContext.getData()));
+        }
+        return Set.copyOf(keys);
+    }
+
+    static Set<String> collectConfiguredBiomeKeys(
+            Iterable<IrisBiome> biomes,
+            Function<IrisBiomeCustom, String> customBiomeKey
+    ) {
         LinkedHashSet<String> keys = new LinkedHashSet<>();
         for (IrisBiome irisBiome : biomes) {
             if (irisBiome == null) {
@@ -74,10 +101,17 @@ final class ModdedDimensionMetadata {
                 continue;
             }
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                keys.add(IrisDimension.customBiomeKey(dimensionLoadKey, customBiome.getId()));
+                keys.add(customBiomeKey.apply(customBiome).toLowerCase(Locale.ROOT));
             }
         }
         return Set.copyOf(keys);
+    }
+
+    static Set<String> collectConfiguredBiomeKeys(Iterable<IrisBiome> biomes, String dimensionLoadKey) {
+        return collectConfiguredBiomeKeys(
+                biomes,
+                customBiome -> IrisDimension.customBiomeKey(dimensionLoadKey, customBiome.getId())
+        );
     }
 
     static int clampSpawnHeight(int minY, int height) {

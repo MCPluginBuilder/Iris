@@ -18,6 +18,7 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.BuildConstants;
 import art.arcane.iris.modded.api.ModdedCustomContentRegistry;
 import art.arcane.iris.modded.api.ModdedDataType;
 import art.arcane.iris.spi.IrisLogging;
@@ -25,6 +26,7 @@ import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockProperty;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformEntityType;
+import art.arcane.iris.spi.PlatformGenerationRegistry;
 import art.arcane.iris.spi.PlatformItem;
 import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.volmlib.util.data.UnresolvedKeyLog;
@@ -57,6 +59,19 @@ public final class ModdedRegistries implements PlatformRegistries {
 
     public ModdedRegistries(Supplier<MinecraftServer> server) {
         this.server = server;
+    }
+
+    @Override
+    public PlatformGenerationRegistry generationRegistry() {
+        MinecraftServer instance = server.get();
+        if (instance == null) {
+            throw new IllegalStateException("Minecraft server is not ready for generation registry capture.");
+        }
+        return new ModdedGenerationRegistry(
+                server,
+                "modded-generation-registry-v1",
+                "modded-generated-registry-json-v1|minecraft:" + BuildConstants.MINECRAFT_VERSION
+        );
     }
 
     @Override

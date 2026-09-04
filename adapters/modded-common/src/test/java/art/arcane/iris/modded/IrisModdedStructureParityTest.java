@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -267,10 +268,11 @@ public class IrisModdedStructureParityTest {
                 .setInferredType(InferredType.SEA);
 
         Set<String> keys = ModdedDimensionMetadata.collectConfiguredBiomeKeys(
-                List.of(ocean, custom, shore, unsafeSea), "OverWorld");
+                List.of(ocean, custom, shore, unsafeSea),
+                customBiome -> "iris:biomes/" + customBiome.getId().toLowerCase(Locale.ROOT));
 
         assertEquals(Set.of("minecraft:deep_ocean", "minecraft:forest", "minecraft:beach",
-                "minecraft:the_void", "overworld:aurora"), keys);
+                "minecraft:the_void", "iris:biomes/aurora"), keys);
         assertFalse(keys.contains("minecraft:desert"));
         assertFalse(keys.contains("minecraft:plains"));
 

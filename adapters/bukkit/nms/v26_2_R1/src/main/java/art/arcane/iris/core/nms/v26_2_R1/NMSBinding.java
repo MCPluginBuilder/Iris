@@ -33,6 +33,7 @@ import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.iris.util.project.hunk.view.ChunkDataHunkHolder;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.PlatformGenerationRegistry;
 import art.arcane.iris.util.common.data.IrisCustomData;
 import art.arcane.volmlib.util.json.JSONObject;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
@@ -57,6 +58,9 @@ import it.unimi.dsi.fastutil.shorts.ShortList;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.utility.JavaModule;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.minecraft.core.BlockPos;
@@ -169,7 +173,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -181,10 +184,21 @@ public class NMSBinding implements INMSBinding {
     private final AtomicBoolean injected = new AtomicBoolean();
     private volatile ResettableClassFileTransformer levelStorageAccessTransformer;
     private volatile ResettableClassFileTransformer serverLevelTransformer;
+    private volatile ResettableClassFileTransformer pluginClassLoaderTransformer;
+    private boolean pluginClassLoaderCloseDeferred;
     private final AtomicCache<MCAIdMapper<BlockState>> registryCache = new AtomicCache<>();
     private final AtomicCache<MCAPalette<BlockState>> globalCache = new AtomicCache<>();
     private final AtomicCache<RegistryAccess> registryAccess = new AtomicCache<>();
     private final AtomicCache<Method> byIdRef = new AtomicCache<>();
+
+    @Override
+    public PlatformGenerationRegistry generationRegistry() {
+        return new NmsGenerationRegistry(
+                this::registry,
+                "bukkit-generation-registry-v1",
+                "bukkit-v26_2_R1-generated-registry-json-v1"
+        );
+    }
 
     private static Object getFor(Class<?> type, Object source) {
         Object o = fieldFor(type, source);
@@ -1544,6 +1558,23 @@ public class NMSBinding implements INMSBinding {
             }
             try {
                 IrisLogging.info("Injecting Bukkit");
+                Agent.requireClassLoaderCloseDeferral();
+                Class<?> loaderCloseType = getClass().getClassLoader().getClass()
+                        .getMethod("close").getDeclaringClass();
+                PluginClassLoaderInjectionListener loaderListener = new PluginClassLoaderInjectionListener();
+                pluginClassLoaderTransformer = new AgentBuilder.Default()
+                        .disableClassFormatChanges()
+                        .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+                        .with(AgentBuilder.RedefinitionStrategy.Listener.ErrorEscalating.FAIL_FAST)
+                        .with(loaderListener)
+                        .type(ElementMatchers.is(loaderCloseType))
+                        .transform((builder, typeDescription, classLoader, module, protectionDomain) ->
+                                builder.visit(Advice.to(PluginClassLoaderCloseAdvice.class)
+                                        .on(ElementMatchers.named("close")
+                                                .and(ElementMatchers.takesArguments(0))
+                                                .and(ElementMatchers.returns(void.class)))))
+                        .installOn(Agent.getInstrumentation());
+                loaderListener.requireInstalled();
                 levelStorageAccessTransformer = new AgentBuilder.Default()
                         .disableClassFormatChanges()
                         .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
@@ -1579,18 +1610,22 @@ public class NMSBinding implements INMSBinding {
                 IrisLogging.reportError(C.RED + "Failed to inject Bukkit", e);
                 ResettableClassFileTransformer partialServerLevel = serverLevelTransformer;
                 ResettableClassFileTransformer partialStorageAccess = levelStorageAccessTransformer;
+                ResettableClassFileTransformer partialPluginClassLoader = pluginClassLoaderTransformer;
                 serverLevelTransformer = null;
                 levelStorageAccessTransformer = null;
+                pluginClassLoaderTransformer = null;
                 for (ResettableClassFileTransformer partial : new ResettableClassFileTransformer[]{
                         partialServerLevel,
-                        partialStorageAccess
+                        partialStorageAccess,
+                        partialPluginClassLoader
                 }) {
                     if (partial == null) {
                         continue;
                     }
                     try {
                         partial.reset(Agent.getInstrumentation(), AgentBuilder.RedefinitionStrategy.RETRANSFORMATION);
-                    } catch (Throwable ignored) {
+                    } catch (Throwable cleanupFailure) {
+                        IrisLogging.reportError("Failed to remove partial Bukkit lifecycle injection", cleanupFailure);
                     }
                 }
                 return false;
@@ -1637,14 +1672,50 @@ public class NMSBinding implements INMSBinding {
     }
 
     @Override
-    public boolean awaitServerShutdownBoundary(long timeout, TimeUnit unit) {
-        MinecraftServer server = ((CraftServer) Bukkit.getServer()).getHandle().getServer();
-        return ServerShutdownBoundary.await(
+    public boolean isServerStopping() {
+        return ((CraftServer) Bukkit.getServer()).getServer().hasStopped();
+    }
+
+    @Override
+    public ServerShutdownBoundary createServerShutdownBoundary() {
+        MinecraftServer server = ((CraftServer) Bukkit.getServer()).getServer();
+        return new ServerShutdownBoundary(
                 () -> server.hasFullyShutdown,
-                server.getRunningThread(),
-                timeout,
-                unit
+                server.getRunningThread()
         );
+    }
+
+    @Override
+    public void deferPluginClassLoaderClose() {
+        synchronized (injected) {
+            if (pluginClassLoaderTransformer == null || pluginClassLoaderCloseDeferred) {
+                return;
+            }
+            Agent.retainClassLoader(getClass().getClassLoader());
+            pluginClassLoaderCloseDeferred = true;
+        }
+    }
+
+    @Override
+    public void releasePluginClassLoaderClose() {
+        ResettableClassFileTransformer transformer;
+        boolean releaseLoader;
+        synchronized (injected) {
+            transformer = pluginClassLoaderTransformer;
+            pluginClassLoaderTransformer = null;
+            releaseLoader = pluginClassLoaderCloseDeferred;
+            pluginClassLoaderCloseDeferred = false;
+        }
+        try {
+            if (transformer != null
+                    && !transformer.reset(Agent.getInstrumentation(), AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)) {
+                throw new IllegalStateException("Failed to remove Iris plugin class loader lifecycle injection");
+            }
+        } finally {
+            if (releaseLoader) {
+                Agent.releaseClassLoader(getClass().getClassLoader());
+            }
+        }
     }
 
     @Override
@@ -1689,6 +1760,39 @@ public class NMSBinding implements INMSBinding {
         settings.getLayersInfo().add(new FlatLayerInfo(1, Blocks.AIR));
         settings.updateLayers();
         return new FlatLevelSource(settings);
+    }
+
+    private static final class PluginClassLoaderInjectionListener extends AgentBuilder.Listener.Adapter {
+        private volatile boolean transformed;
+        private volatile Throwable failure;
+
+        @Override
+        public void onTransformation(TypeDescription type, ClassLoader loader, JavaModule module,
+                                     boolean loaded, DynamicType dynamicType) {
+            transformed = true;
+        }
+
+        @Override
+        public void onError(String typeName, ClassLoader loader, JavaModule module,
+                            boolean loaded, Throwable throwable) {
+            failure = throwable;
+        }
+
+        private void requireInstalled() {
+            if (!transformed || failure != null) {
+                throw new IllegalStateException("Iris plugin class loader lifecycle injection failed", failure);
+            }
+        }
+    }
+
+    private static class PluginClassLoaderCloseAdvice {
+        @Advice.OnMethodEnter(skipOn = Advice.OnNonDefaultValue.class)
+        static boolean enter(@Advice.This ClassLoader loader) throws ReflectiveOperationException {
+            Class<?> installer = Class.forName(
+                    "art.arcane.iris.util.project.agent.Installer", true, ClassLoader.getSystemClassLoader());
+            return Boolean.TRUE.equals(installer.getMethod("deferClassLoaderClose", ClassLoader.class)
+                    .invoke(null, loader));
+        }
     }
 
     private static class ChunkAccessAdvice {

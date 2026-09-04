@@ -3,7 +3,9 @@ package art.arcane.iris.modded;
 import art.arcane.iris.engine.framework.Engine;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 public final class ModdedWorldgenIds {
     private static final String NAMESPACE = "irisworldgen";
@@ -29,8 +31,33 @@ public final class ModdedWorldgenIds {
     }
 
     public static String biomeRef(Engine engine, String biome) {
-        return biomeRef(engine.getData().getDataFolder().getName(),
-                engine.getDimension().getLoadKey(), biome);
+        return engine.getData().customBiomeResourceKey(engine.getDimension(), biome);
+    }
+
+    public static List<String> legacyBiomeRefs(String pack, String dimension, String biome) {
+        String scoped = biomeRef(pack, dimension, biome);
+        String unscoped = dimension.toLowerCase(Locale.ROOT) + ":" + biome.toLowerCase(Locale.ROOT);
+        return scoped.equals(unscoped) ? List.of(scoped) : List.of(scoped, unscoped);
+    }
+
+    static Optional<ScopedDimension> scopedDimensionType(String dimensionTypeRef) {
+        String prefix = NAMESPACE + ":";
+        if (dimensionTypeRef == null || !dimensionTypeRef.startsWith(prefix)) {
+            return Optional.empty();
+        }
+        String[] parts = dimensionTypeRef.substring(prefix.length()).split("/");
+        if (parts.length != 5
+                || !"packs".equals(parts[0])
+                || !"dimensions".equals(parts[2])
+                || !"dimension_type".equals(parts[4])) {
+            return Optional.empty();
+        }
+        String pack = decode(parts[1]);
+        String dimension = decode(parts[3]);
+        if (pack == null || dimension == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new ScopedDimension(pack, dimension));
     }
 
     public static String displayName(String presetPath) {
@@ -99,5 +126,8 @@ public final class ModdedWorldgenIds {
             return value;
         }
         return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
+    }
+
+    record ScopedDimension(String pack, String dimension) {
     }
 }

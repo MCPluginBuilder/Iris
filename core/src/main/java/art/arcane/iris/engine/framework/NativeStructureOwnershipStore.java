@@ -1,5 +1,8 @@
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.engine.IrisEngine;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
+import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.matter.Matter;
@@ -8,13 +11,18 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.IntConsumer;
 
 public final class NativeStructureOwnershipStore {
     private static final int MAX_CACHED_AUTHORITIES = 65_536;
@@ -175,6 +183,7 @@ public final class NativeStructureOwnershipStore {
                 }
                 closed = true;
                 authorities.invalidateAll();
+                storage.close();
             } finally {
                 lifecycleLock.writeLock().unlock();
             }
@@ -224,21 +233,36 @@ public final class NativeStructureOwnershipStore {
         void remove(long target, String structureKey, int originChunkX, int originChunkZ);
 
         boolean flush();
+
+        default void close() {
+        }
     }
 
-    private static final class MantleStorage implements Storage {
+    static final class MantleStorage implements Storage {
         private final WeakReference<Engine> engine;
-        private final Map<Long, NativeStructureOwnershipBundle> pendingBundles;
+        private final Map<PendingTarget, NativeStructureOwnershipBundle> pendingBundles;
+        private final WeakReference<IrisEngine> retirementEngine;
+        private final IntConsumer retirementListener;
 
-        private MantleStorage(Engine engine) {
-            this.engine = new WeakReference<>(Objects.requireNonNull(engine,
-                    "Native structure ownership store requires an engine"));
+        MantleStorage(Engine engine) {
+            Engine required = Objects.requireNonNull(engine,
+                    "Native structure ownership store requires an engine");
+            this.engine = new WeakReference<>(required);
             this.pendingBundles = new ConcurrentHashMap<>();
+            if (required instanceof IrisEngine irisEngine) {
+                this.retirementEngine = new WeakReference<>(irisEngine);
+                this.retirementListener = this::flushRuntime;
+                irisEngine.addGenerationRuntimeRetirementListener(retirementListener);
+            } else {
+                this.retirementEngine = null;
+                this.retirementListener = null;
+            }
         }
 
         @Override
         public NativeStructureOwnershipBundle read(int chunkX, int chunkZ) {
-            MantleChunk<Matter> chunk = mantle().getChunk(chunkX, chunkZ).use();
+            RuntimeMantleOwner owner = owner();
+            MantleChunk<Matter> chunk = owner.mantle().getMantle().getChunk(chunkX, chunkZ).use();
             try {
                 synchronized (chunk) {
                     return chunk.get(0, 0, 0, NativeStructureOwnershipBundle.class);
@@ -250,9 +274,10 @@ public final class NativeStructureOwnershipStore {
 
         @Override
         public void write(long target, NativeStructureOwnershipRecord record) {
+            RuntimeMantleOwner owner = owner();
             int targetChunkX = unpackX(target);
             int targetChunkZ = unpackZ(target);
-            MantleChunk<Matter> chunk = mantle().getChunk(targetChunkX, targetChunkZ).use();
+            MantleChunk<Matter> chunk = owner.mantle().getMantle().getChunk(targetChunkX, targetChunkZ).use();
             try {
                 synchronized (chunk) {
                     Matter section = chunk.getOrCreate(0);
@@ -262,7 +287,7 @@ public final class NativeStructureOwnershipStore {
                     NativeStructureOwnershipBundle updated = Objects.requireNonNullElseGet(
                             bundle, NativeStructureOwnershipBundle::empty).with(record);
                     slice.set(0, 0, 0, updated);
-                    pendingBundles.put(target, updated);
+                    pendingBundles.put(new PendingTarget(owner, target), updated);
                 }
             } finally {
                 chunk.release();
@@ -272,9 +297,10 @@ public final class NativeStructureOwnershipStore {
         @Override
         public void remove(long target, String structureKey,
                            int originChunkX, int originChunkZ) {
+            RuntimeMantleOwner owner = owner();
             int targetChunkX = unpackX(target);
             int targetChunkZ = unpackZ(target);
-            MantleChunk<Matter> chunk = mantle().getChunk(targetChunkX, targetChunkZ).use();
+            MantleChunk<Matter> chunk = owner.mantle().getMantle().getChunk(targetChunkX, targetChunkZ).use();
             try {
                 synchronized (chunk) {
                     Matter section = chunk.getOrCreate(0);
@@ -294,7 +320,7 @@ public final class NativeStructureOwnershipStore {
                     }
                     slice.set(0, 0, 0, updated.records().isEmpty() ? null : updated);
                     section.trimSlices();
-                    pendingBundles.put(target, updated);
+                    pendingBundles.put(new PendingTarget(owner, target), updated);
                 }
             } finally {
                 chunk.release();
@@ -303,27 +329,67 @@ public final class NativeStructureOwnershipStore {
 
         @Override
         public boolean flush() {
-            Map<Long, NativeStructureOwnershipBundle> pending = new TreeMap<>(pendingBundles);
+            return flushMatching(null);
+        }
+
+        @Override
+        public void close() {
+            IrisEngine activeRetirementEngine = retirementEngine == null ? null : retirementEngine.get();
+            if (activeRetirementEngine != null) {
+                activeRetirementEngine.removeGenerationRuntimeRetirementListener(retirementListener);
+            }
+        }
+
+        private void flushRuntime(int runtimeId) {
+            if (!flushMatching(runtimeId)) {
+                throw new IllegalStateException("Cannot retire generation runtime " + runtimeId
+                        + " while native structure ownership regions are in use.");
+            }
+        }
+
+        private boolean flushMatching(Integer runtimeId) {
+            List<Map.Entry<PendingTarget, NativeStructureOwnershipBundle>> pending = new ArrayList<>();
+            for (Map.Entry<PendingTarget, NativeStructureOwnershipBundle> entry : pendingBundles.entrySet()) {
+                if (runtimeId == null || entry.getKey().owner().runtimeId() == runtimeId) {
+                    pending.add(Map.entry(entry.getKey(), entry.getValue()));
+                }
+            }
             if (pending.isEmpty()) {
                 return true;
             }
+            pending.sort(Comparator
+                    .comparingLong((Map.Entry<PendingTarget, NativeStructureOwnershipBundle> entry) ->
+                            entry.getKey().owner().activationId())
+                    .thenComparingInt(entry -> entry.getKey().owner().runtimeId())
+                    .thenComparingLong(entry -> entry.getKey().target()));
 
-            Mantle<Matter> mantle = mantle();
-            Set<Long> regions = new TreeSet<>();
-            for (Map.Entry<Long, NativeStructureOwnershipBundle> entry : pending.entrySet()) {
-                long target = entry.getKey();
-                restorePendingBundle(mantle, target, entry.getValue());
-                regions.add(Mantle.key(unpackX(target) >> 5, unpackZ(target) >> 5));
+            Map<RuntimeMantleOwner, Set<Long>> regionsByOwner = new LinkedHashMap<>();
+            for (Map.Entry<PendingTarget, NativeStructureOwnershipBundle> entry : pending) {
+                PendingTarget pendingTarget = entry.getKey();
+                RuntimeMantleOwner owner = pendingTarget.owner();
+                restorePendingBundle(owner.mantle().getMantle(), pendingTarget.target(), entry.getValue());
+                regionsByOwner.computeIfAbsent(owner, ignored -> new TreeSet<>()).add(
+                        regionKey(pendingTarget.target()));
             }
-            Set<Long> deferredRegions = mantle.saveIdleTectonicPlates(regions);
-            for (Map.Entry<Long, NativeStructureOwnershipBundle> entry : pending.entrySet()) {
-                long target = entry.getKey();
-                long region = Mantle.key(unpackX(target) >> 5, unpackZ(target) >> 5);
-                if (!deferredRegions.contains(region)) {
-                    pendingBundles.remove(target, entry.getValue());
+
+            boolean complete = true;
+            for (Map.Entry<RuntimeMantleOwner, Set<Long>> ownerRegions : regionsByOwner.entrySet()) {
+                RuntimeMantleOwner owner = ownerRegions.getKey();
+                Set<Long> deferredRegions = owner.mantle().getMantle().saveIdleTectonicPlates(
+                        ownerRegions.getValue());
+                if (!deferredRegions.isEmpty()) {
+                    complete = false;
+                }
+                for (Map.Entry<PendingTarget, NativeStructureOwnershipBundle> entry : pending) {
+                    PendingTarget pendingTarget = entry.getKey();
+                    if (!pendingTarget.owner().equals(owner)
+                            || deferredRegions.contains(regionKey(pendingTarget.target()))) {
+                        continue;
+                    }
+                    pendingBundles.remove(pendingTarget, entry.getValue());
                 }
             }
-            return deferredRegions.isEmpty();
+            return complete;
         }
 
         private void restorePendingBundle(Mantle<Matter> mantle, long target,
@@ -342,12 +408,55 @@ public final class NativeStructureOwnershipStore {
             }
         }
 
-        private Mantle<Matter> mantle() {
+        private RuntimeMantleOwner owner() {
             Engine active = engine.get();
             if (active == null) {
                 throw new IllegalStateException("Native structure ownership engine is unavailable");
             }
-            return active.getMantle().getMantle();
+            EngineMantle mantle = active.getMantle();
+            int runtimeId = active.getCacheID();
+            if (!(active instanceof IrisEngine irisEngine)) {
+                return new RuntimeMantleOwner(0L, runtimeId, null, mantle);
+            }
+            Optional<GenerationHistoryRuntimeRouter> attached = irisEngine.getGenerationHistoryRuntimeRouter();
+            if (attached.isEmpty()) {
+                return new RuntimeMantleOwner(0L, runtimeId, null, mantle);
+            }
+            GenerationHistoryRuntimeRouter.RuntimeOwnership routed = attached.get()
+                    .currentRuntimeOwnership()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Native structure ownership requires an active generation-history runtime route."));
+            if (routed.binding().runtimeId() != runtimeId) {
+                throw new IllegalStateException("Native structure ownership runtime route changed during capture.");
+            }
+            return new RuntimeMantleOwner(routed.activationId(), runtimeId, routed.binding(), mantle);
+        }
+
+        private static long regionKey(long target) {
+            return Mantle.key(unpackX(target) >> 5, unpackZ(target) >> 5);
+        }
+    }
+
+    private record RuntimeMantleOwner(
+            long activationId,
+            int runtimeId,
+            IrisEngine.GenerationRuntimeBinding binding,
+            EngineMantle mantle
+    ) {
+        private RuntimeMantleOwner {
+            if (activationId < 0L) {
+                throw new IllegalArgumentException("Generation activation ID cannot be negative.");
+            }
+            Objects.requireNonNull(mantle, "native structure ownership mantle");
+            if (activationId > 0L && binding == null) {
+                throw new IllegalArgumentException("Generation-history ownership requires a runtime binding.");
+            }
+        }
+    }
+
+    private record PendingTarget(RuntimeMantleOwner owner, long target) {
+        private PendingTarget {
+            Objects.requireNonNull(owner, "native structure ownership runtime");
         }
     }
 

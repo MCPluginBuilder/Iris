@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 
 public final class HydrologyTile {
     private final HydrologyTileKey key;
@@ -173,7 +174,22 @@ public final class HydrologyTile {
             int z,
             int maximumDistance
     ) {
+        return nearestFeature(types, profileKey, x, z, maximumDistance, feature -> true);
+    }
+
+    public Optional<HydrologyFeatureRef> nearestFeature(
+            Set<HydrologyFeatureType> types,
+            String profileKey,
+            int x,
+            int z,
+            int maximumDistance,
+            Predicate<HydrologyFeatureRef> eligibility
+    ) {
         Objects.requireNonNull(types, "types");
+        Predicate<HydrologyFeatureRef> requiredEligibility = Objects.requireNonNull(
+                eligibility,
+                "eligibility"
+        );
         if (maximumDistance < 0) {
             throw new IllegalArgumentException("maximumDistance cannot be negative.");
         }
@@ -196,7 +212,7 @@ public final class HydrologyTile {
                         continue;
                     }
                     HydrologyFeatureRef feature = publishedCenterlineFeature(segment, point);
-                    if (feature == null) {
+                    if (feature == null || !requiredEligibility.test(feature)) {
                         continue;
                     }
                     if (distance < nearestDistance || nearest == null || feature.id() < nearest.id()) {

@@ -3,6 +3,7 @@ package art.arcane.iris.core.lifecycle;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.WorldSlotKey;
 import art.arcane.iris.engine.IrisEngineMantle;
+import art.arcane.iris.engine.history.GenerationHistoryPaths;
 import org.bukkit.NamespacedKey;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
@@ -229,8 +230,20 @@ public final class BukkitWorldConfiguration {
         }
         Path resolvedRoot = dimensionRoot.toPath().toAbsolutePath().normalize();
         try {
-            IrisWorldStorage.requireFrozenPackRoot(dimensionRoot);
+            IrisWorldStorage.requireActiveGenerationPackRoot(dimensionRoot);
         } catch (IllegalStateException unusablePack) {
+            GenerationHistoryPaths historyPaths = GenerationHistoryPaths.forDimension(resolvedRoot);
+            boolean generationHistoryExists = Files.exists(
+                    historyPaths.generationRoot(),
+                    LinkOption.NOFOLLOW_LINKS
+            ) || Files.isSymbolicLink(historyPaths.generationRoot());
+            boolean adoptableLegacyPack = !generationHistoryExists
+                    && Files.isDirectory(historyPaths.legacyPackRoot(), LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isSymbolicLink(historyPaths.legacyPackRoot());
+            if (adoptableLegacyPack) {
+                return new IrisWorldStorageEntry(configuredName, slotKey, resolvedRoot,
+                        IrisWorldStorageState.PRESENT, null);
+            }
             // Only a folder that owns something can be corrupted by a vanilla generator writing into it.
             return new IrisWorldStorageEntry(configuredName, slotKey, resolvedRoot,
                     hasWorldData(resolvedRoot)

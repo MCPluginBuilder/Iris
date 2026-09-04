@@ -65,6 +65,9 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
     @Override
     public void generateLayer(MantleWriter writer, int x, int z, ChunkContext context) {
         IrisComplex complex = context.getComplex();
+        if (!complex.allowsNewGenerationChunk(x, z)) {
+            return;
+        }
         IrisData data = getData();
         int minX = x << 4;
         int minZ = z << 4;
@@ -201,6 +204,14 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
             int xx = minX + (key & 15);
             int zz = minZ + (key >> 4);
             IrisObjectPlacement floatingPlacement = placement.toPlacement(obj.getLoadKey());
+            if (!MantleObjectComponent.allowsObjectPlacement(
+                    complex,
+                    obj,
+                    floatingPlacement,
+                    xx,
+                    zz)) {
+                continue;
+            }
             int id = rng.i(0, Integer.MAX_VALUE);
 
             try {
@@ -279,6 +290,9 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
             anchored.setRotation(ROTATION_NONE);
             anchored.setForcePlace(true);
             anchored.setBottom(false);
+            if (!MantleObjectComponent.allowsObjectPlacement(complex, obj, anchored, wx, wz)) {
+                continue;
+            }
 
             int yv = pickTopY + 1 - fp.getLowestSolidKeyY();
 
@@ -385,6 +399,9 @@ public class MantleFloatingObjectComponent extends IrisMantleComponent {
             inverted.setRotation(invertedRotation);
             inverted.setForcePlace(true);
             inverted.setBottom(false);
+            if (!MantleObjectComponent.allowsObjectPlacement(complex, obj, inverted, wx, wz)) {
+                continue;
+            }
 
             int yv = invertedBaseY(pickBottomY, fp, invertedRotation);
 
