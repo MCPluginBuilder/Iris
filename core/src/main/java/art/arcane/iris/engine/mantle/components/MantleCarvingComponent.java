@@ -98,6 +98,9 @@ public class MantleCarvingComponent extends IrisMantleComponent {
     @Override
     public void generateLayer(MantleWriter writer, int x, int z, ChunkContext context) {
         IrisComplex complex = context.getComplex();
+        if (!complex.allowsNewGenerationChunk(x, z)) {
+            return;
+        }
         IrisDimensionCarvingResolver.State resolverState = new IrisDimensionCarvingResolver.State();
         BlendScratch blendScratch = BLEND_SCRATCH.get();
         int[] chunkSurfaceHeights = prepareChunkSurfaceHeights(x, z, context, blendScratch.chunkSurfaceHeights);
@@ -121,7 +124,7 @@ public class MantleCarvingComponent extends IrisMantleComponent {
 
         UpperDimensionContext upperCtx = getEngineMantle().getEngine().getUpperContext();
         if (upperCtx != null && getDimension().isUpperDimensionCarving()) {
-            carveUpperTerrain(upperCtx, weightedProfiles, writer, x, z, chunkSurfaceHeights, fluidSupportPlan);
+            carveUpperTerrain(upperCtx, weightedProfiles, writer, x, z, fluidSupportPlan);
         }
         fluidSupportPlan.resolve(writer.acquireChunk(x, z));
 
@@ -154,11 +157,10 @@ public class MantleCarvingComponent extends IrisMantleComponent {
     }
 
     private void carveUpperTerrain(UpperDimensionContext upperCtx, List<WeightedProfile> normalProfiles,
-                                   MantleWriter writer, int cx, int cz, int[] lowerSurfaceHeights,
+                                   MantleWriter writer, int cx, int cz,
                                    CaveFluidSupportPlan fluidSupportPlan) {
         int chunkHeight = getEngineMantle().getEngine().getHeight();
         int worldMinHeight = getEngineMantle().getEngine().getWorld().minHeight();
-        int gap = getDimension().getUpperDimensionGap();
         int baseX = PowerOfTwoCoordinates.chunkToBlock(cx);
         int baseZ = PowerOfTwoCoordinates.chunkToBlock(cz);
 
@@ -167,9 +169,7 @@ public class MantleCarvingComponent extends IrisMantleComponent {
             int worldX = baseX + localX;
             for (int localZ = 0; localZ < CHUNK_SIZE; localZ++) {
                 int worldZ = baseZ + localZ;
-                int columnIndex = PowerOfTwoCoordinates.packLocal16(localX, localZ);
-                int rawUpper = upperCtx.getUpperSurfaceY(worldX, worldZ);
-                int upperY = Math.max(rawUpper, lowerSurfaceHeights[columnIndex] + gap);
+                int upperY = upperCtx.getEffectiveSurfaceY(worldX, worldZ);
                 if (upperY < minUpperSurfaceY) {
                     minUpperSurfaceY = upperY;
                 }

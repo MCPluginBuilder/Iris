@@ -5,9 +5,11 @@ import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureOwnershipRecord;
+import art.arcane.iris.engine.framework.NativeStructureOwnershipStore;
 import art.arcane.iris.engine.framework.NativeStructureStartPlan;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.IrisEngine;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
@@ -99,6 +101,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -130,8 +133,6 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     private final int runtimeHeight;
     private final int runtimeSeaLevel;
     private final ConcurrentHashMap<SpawnTableKey, WeightedList<MobSpawnSettings.SpawnerData>> mergedSpawnTables = new ConcurrentHashMap<>();
-    private volatile IrisDimension spawnTableDimension;
-    private volatile int spawnTableRuntimeId;
     private final ImportedFeatureStage importedFeatures;
     private final AtomicReference<StudioStructureState> retainedStudioStructureState = new AtomicReference<>();
     private volatile ReachableStructureCache reachableStructureCache;
@@ -155,7 +156,23 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         this.runtimeMinY = level.getMinY();
         this.runtimeHeight = level.getHeight();
         this.runtimeSeaLevel = runtimeMinY + engine.getDimension().getFluidHeight();
+        if (engine instanceof IrisEngine irisEngine) {
+            irisEngine.addGenerationRuntimeRetirementListener(this::evictRuntimeCaches);
+        }
         installNativeStructureVolumeIndex(level);
+    }
+
+    private void evictRuntimeCaches(int runtimeId) {
+        importedFeatures.evictRuntime(runtimeId);
+        mergedSpawnTables.keySet().removeIf(key -> key.runtimeId() == runtimeId);
+        ReachableStructureCache reachable = reachableStructureCache;
+        if (reachable != null && reachable.runtimeId() == runtimeId) {
+            reachableStructureCache = null;
+        }
+        StructureStepCache steps = structureStepCache;
+        if (steps != null && steps.runtimeId() == runtimeId) {
+            structureStepCache = null;
+        }
     }
 
     private void installNativeStructureVolumeIndex(ServerLevel level) {
@@ -183,7 +200,12 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         if (level != runtimeLevel || level.getChunkSource().getGenerator() != this) {
             return null;
         }
-        try (GenerationSessionLease lease = requireGenerationLease("bukkit_nms_structure_locate");
+        try (GenerationHistoryRuntimeRouter.RuntimeRoute route = openHistoryRoute(
+                     SectionPos.blockToSectionCoord(pos.getX()),
+                     SectionPos.blockToSectionCoord(pos.getZ()),
+                     "bukkit_nms_structure_locate");
+             GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
+             GenerationSessionLease lease = requireGenerationLease("bukkit_nms_structure_locate");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             HolderSet<Structure> reachable = filterReachableStructures(level, holders);
             NativeStructureVanillaLocator.Candidate nativeCandidate =
@@ -362,9 +384,16 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                 || runtimeLevel.getChunkSource().getGeneratorState() != structureState) {
             return;
         }
+        ChunkPos chunkPos = access.getPos();
         try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_create_structures");
+             GenerationHistoryRuntimeRouter.RuntimeRoute route = openHistoryRoute(
+                     chunkPos.x(), chunkPos.z(), "bukkit_nms_create_structures");
+             GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
              GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_structures");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!allowsRoutedDiscreteGeneration(access, ChunkStatus.STRUCTURE_STARTS)) {
+                return;
+            }
             Map<Structure, StructureStart> previousStarts = new HashMap<>(access.getAllStarts());
             super.createStructures(registryAccess, structureState, structureManager, access, templateManager, levelKey);
             Map<Structure, NativeStructureStartPlan> configuredStarts = NativeStructureStartInjector.inject(
@@ -396,14 +425,27 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             if (!start.isValid() || previousStarts.get(structure) == start) {
                 continue;
             }
-            if (configuredStarts.containsKey(structure)) {
-                continue;
-            }
             Identifier id = registry.getKey(structure);
             String structureId = id == null ? null : id.toString();
             if (structureId == null) {
                 throw NativeStructureGenerationException.failure(
                         "resolution", null, chunkPos.x(), chunkPos.z());
+            }
+            BoundingBox footprint = start.getBoundingBox();
+            if (!engine.getComplex().allowsNewGenerationFootprint(
+                    footprint.minX(),
+                    footprint.minZ(),
+                    footprint.maxX(),
+                    footprint.maxZ())) {
+                access.setStartForStructure(structure, StructureStart.INVALID_START);
+                if (configuredStarts.containsKey(structure)) {
+                    NativeStructureOwnershipStore.discard(
+                            engine, structureId, chunkPos.x(), chunkPos.z());
+                }
+                continue;
+            }
+            if (configuredStarts.containsKey(structure)) {
+                continue;
             }
             boolean undergroundStep = NativeStructureVegetationClearer.isUndergroundStep(structure.step());
             IrisNativeStructureDecision decision;
@@ -631,7 +673,11 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         if (runtimeLevel.getChunkSource().getGenerator() != this) {
             return;
         }
+        ChunkPos chunkPos = ichunkaccess.getPos();
         try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_create_references");
+             GenerationHistoryRuntimeRouter.RuntimeRoute route = openHistoryRoute(
+                     chunkPos.x(), chunkPos.z(), "bukkit_nms_create_references");
+             GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
              GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_references");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             NativeStructureReferenceRepair.createReferences(
@@ -641,7 +687,11 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public CompletableFuture<ChunkAccess> createBiomes(RandomState randomstate, Blender blender, StructureManager structuremanager, ChunkAccess ichunkaccess) {
+        ChunkPos chunkPos = ichunkaccess.getPos();
         try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_create_biomes");
+             GenerationHistoryRuntimeRouter.RuntimeRoute route = openHistoryRoute(
+                     chunkPos.x(), chunkPos.z(), "bukkit_nms_create_biomes");
+             GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
              GenerationSessionLease lease = requireGenerationLease("bukkit_nms_create_biomes");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             customBiomeSource.prepareVisibleBiomeBatch();
@@ -656,31 +706,63 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void buildSurface(WorldGenRegion regionlimitedworldaccess, StructureManager structuremanager, RandomState randomstate, ChunkAccess ichunkaccess) {
-        delegate.buildSurface(regionlimitedworldaccess, structuremanager, randomstate, ichunkaccess);
+        ChunkPos chunkPos = ichunkaccess.getPos();
+        try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_build_surface");
+             GenerationHistoryRuntimeRouter.RuntimeRoute route = openHistoryRoute(
+                     chunkPos.x(), chunkPos.z(), "bukkit_nms_build_surface");
+             GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
+             GenerationSessionLease lease = requireGenerationLease("bukkit_nms_build_surface");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            delegate.buildSurface(regionlimitedworldaccess, structuremanager, randomstate, ichunkaccess);
+        }
     }
 
     @Override
     public void applyCarvers(WorldGenRegion regionlimitedworldaccess, long seed, RandomState randomstate, BiomeManager biomemanager, StructureManager structuremanager, ChunkAccess ichunkaccess) {
-        delegate.applyCarvers(regionlimitedworldaccess, seed, randomstate, biomemanager, structuremanager, ichunkaccess);
+        ChunkPos chunkPos = ichunkaccess.getPos();
+        try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_apply_carvers");
+             GenerationHistoryRuntimeRouter.RuntimeRoute route = openHistoryRoute(
+                     chunkPos.x(), chunkPos.z(), "bukkit_nms_apply_carvers");
+             GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
+             GenerationSessionLease lease = requireGenerationLease("bukkit_nms_apply_carvers");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            delegate.applyCarvers(regionlimitedworldaccess, seed, randomstate, biomemanager, structuremanager, ichunkaccess);
+        }
     }
 
     @Override
     public CompletableFuture<ChunkAccess> fillFromNoise(Blender blender, RandomState randomstate, StructureManager structuremanager, ChunkAccess ichunkaccess) {
+        ChunkPos chunkPos = ichunkaccess.getPos();
         BukkitChunkGenerator.GenerationStagePermit stage = requireNoiseGenerationStage(
-                ichunkaccess.getPos(),
+                chunkPos,
                 "bukkit_nms_chunk_pipeline");
-        GenerationSessionLease lease;
+        GenerationHistoryRuntimeRouter.RuntimeRoute route;
         try {
-            lease = requireGenerationLease("bukkit_nms_chunk_pipeline");
+            route = openHistoryRoute(chunkPos.x(), chunkPos.z(), "bukkit_nms_chunk_pipeline");
         } catch (RuntimeException | Error failure) {
             stage.close();
             throw failure;
         }
+        GenerationSessionLease lease;
         try {
-            CompletableFuture<ChunkAccess> pipeline = delegate
-                    .fillFromNoise(blender, randomstate, structuremanager, ichunkaccess)
+            lease = requireGenerationLease("bukkit_nms_chunk_pipeline");
+        } catch (RuntimeException | Error failure) {
+            closeHistoryRoute(route, failure);
+            stage.close();
+            throw failure;
+        }
+        try {
+            CompletableFuture<ChunkAccess> delegatePipeline;
+            try (GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
+                 IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                delegatePipeline = delegate.fillFromNoise(
+                        blender, randomstate, structuremanager, ichunkaccess);
+            }
+            CompletableFuture<ChunkAccess> pipeline = delegatePipeline
                     .thenApply(filled -> {
-                        try (IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                        try (GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope =
+                                     openHistoryRuntimeScope(route);
+                             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
                             primeWorldgenHeightmaps(filled);
                             return filled;
                         }
@@ -688,22 +770,76 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             CompletableFuture<ChunkAccess> completion = new CompletableFuture<>();
             pipeline.whenComplete((filled, failure) -> {
                 boolean cancelled = isCancellationFailure(failure);
-                lease.close();
-                stage.close();
-                if (failure == null) {
+                Throwable completionFailure = closeNoisePipelineResources(
+                        failure, lease, route, stage);
+                if (completionFailure == null) {
                     completion.complete(filled);
                 } else if (cancelled) {
                     completion.cancel(false);
                 } else {
-                    completion.completeExceptionally(failure);
+                    completion.completeExceptionally(completionFailure);
                 }
             });
             return completion;
         } catch (RuntimeException | Error failure) {
             lease.close();
+            closeHistoryRoute(route, failure);
             stage.close();
             throw failure;
         }
+    }
+
+    private static Throwable closeNoisePipelineResources(
+            Throwable failure,
+            GenerationSessionLease lease,
+            GenerationHistoryRuntimeRouter.RuntimeRoute route,
+            BukkitChunkGenerator.GenerationStagePermit stage
+    ) {
+        Throwable result = failure;
+        try {
+            lease.close();
+        } catch (Throwable closeFailure) {
+            result = appendFailure(result, closeFailure);
+        }
+        try {
+            if (route != null) {
+                route.close();
+            }
+        } catch (Throwable closeFailure) {
+            result = appendFailure(result, closeFailure);
+        }
+        try {
+            stage.close();
+        } catch (Throwable closeFailure) {
+            result = appendFailure(result, closeFailure);
+        }
+        return result;
+    }
+
+    private static void closeHistoryRoute(
+            GenerationHistoryRuntimeRouter.RuntimeRoute route,
+            Throwable failure
+    ) {
+        if (route == null) {
+            return;
+        }
+        try {
+            route.close();
+        } catch (Throwable closeFailure) {
+            if (failure != closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+        }
+    }
+
+    private static Throwable appendFailure(Throwable failure, Throwable closeFailure) {
+        if (failure == null) {
+            return closeFailure;
+        }
+        if (failure != closeFailure) {
+            failure.addSuppressed(closeFailure);
+        }
+        return failure;
     }
 
     private static boolean isCancellationFailure(Throwable failure) {
@@ -728,6 +864,20 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public WeightedList<MobSpawnSettings.SpawnerData> getMobsAt(Holder<Biome> holder, StructureManager structuremanager, MobCategory enumcreaturetype, BlockPos blockposition) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope route = openHistoryCoordinateScope(
+                     blockposition.getX(), blockposition.getZ(), "bukkit_nms_mob_spawns");
+             GenerationSessionLease lease = requireGenerationLease("bukkit_nms_mob_spawns");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            return getMobsAtWithActiveRuntime(holder, structuremanager, enumcreaturetype, blockposition);
+        }
+    }
+
+    private WeightedList<MobSpawnSettings.SpawnerData> getMobsAtWithActiveRuntime(
+            Holder<Biome> holder,
+            StructureManager structuremanager,
+            MobCategory enumcreaturetype,
+            BlockPos blockposition
+    ) {
         Holder<Biome> vanillaSpawnBiome = customBiomeSource.getVanillaSpawnBiome(holder);
         if (vanillaSpawnBiome == null) {
             return delegate.getMobsAt(holder, structuremanager, enumcreaturetype, blockposition);
@@ -748,18 +898,8 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             return explicitSpawns;
         }
 
-        IrisDimension spawnDimension = engine.getDimension();
         int spawnRuntimeId = engine.getCacheID();
-        if (spawnTableDimension != spawnDimension || spawnTableRuntimeId != spawnRuntimeId) {
-            synchronized (mergedSpawnTables) {
-                if (spawnTableDimension != spawnDimension || spawnTableRuntimeId != spawnRuntimeId) {
-                    mergedSpawnTables.clear();
-                    spawnTableDimension = spawnDimension;
-                    spawnTableRuntimeId = spawnRuntimeId;
-                }
-            }
-        }
-        SpawnTableKey key = new SpawnTableKey(holder.value(), enumcreaturetype);
+        SpawnTableKey key = new SpawnTableKey(spawnRuntimeId, holder.value(), enumcreaturetype);
         return mergedSpawnTables.computeIfAbsent(key, ignored -> mergeSpawnTables(vanillaSpawns, explicitSpawns));
     }
 
@@ -775,19 +915,26 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void applyBiomeDecoration(WorldGenLevel generatoraccessseed, ChunkAccess ichunkaccess, StructureManager structuremanager, boolean vanilla) {
+        ChunkPos chunkPos = ichunkaccess.getPos();
         try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_biome_decoration");
+             GenerationHistoryRuntimeRouter.RuntimeRoute route = openHistoryRoute(
+                     chunkPos.x(), chunkPos.z(), "bukkit_nms_biome_decoration");
+             GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
              GenerationSessionLease lease = requireGenerationLease("bukkit_nms_biome_decoration");
-             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-            // Bind-time equivalent for Bukkit: the table is built on the first decorated chunk, which is where a
-            // feature-order cycle is reported once and degraded to features-off.
-            importedFeatures.prepare(generatoraccessseed);
-            addVanillaDecorations(generatoraccessseed, ichunkaccess, structuremanager);
-            placeVanillaStructures(generatoraccessseed, ichunkaccess, structuremanager);
-            // Vanilla's placed-feature pass, on THIS thread. The delegate is still called with
-            // addVanillaDecorations=false below, so the vanilla half never runs twice. Inert unless the
-            // dimension set importedFeatures.enabled.
-            importedFeatures.run(generatoraccessseed, ichunkaccess, this);
-            delegate.applyBiomeDecoration(generatoraccessseed, ichunkaccess, structuremanager, false);
+            IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (allowsRoutedDiscreteGeneration(ichunkaccess, ChunkStatus.FEATURES)) {
+                // Bind-time equivalent for Bukkit: the table is built on the first decorated chunk, which is where a
+                // feature-order cycle is reported once and degraded to features-off.
+                importedFeatures.prepare(generatoraccessseed);
+                addVanillaDecorations(generatoraccessseed, ichunkaccess, structuremanager);
+                placeVanillaStructures(generatoraccessseed, ichunkaccess, structuremanager);
+                // Vanilla's placed-feature pass, on THIS thread. The delegate is still called with
+                // addVanillaDecorations=false below, so the vanilla half never runs twice. Inert unless the
+                // dimension set importedFeatures.enabled.
+                importedFeatures.run(generatoraccessseed, ichunkaccess, this);
+                delegate.applyBiomeDecoration(generatoraccessseed, ichunkaccess, structuremanager, false);
+            }
+            claimGeneratedSemantics(route, "bukkit_nms_biome_decoration");
         }
     }
 
@@ -839,6 +986,14 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                     List<StructureStart> starts = structureManager.startsForStructure(sectionPos, structure);
                     List<NativePlacement> resolvedPlacements = new ArrayList<>(starts.size());
                     for (StructureStart start : starts) {
+                        BoundingBox footprint = start.getBoundingBox();
+                        if (!engine.getComplex().allowsNewGenerationFootprint(
+                                footprint.minX(),
+                                footprint.minZ(),
+                                footprint.maxX(),
+                                footprint.maxZ())) {
+                            continue;
+                        }
                         NativeStructureOwnershipRecord ownership =
                                 NativeStructureOwnershipRecovery.resolve(
                                         engine, world.getLevel(), structureId, structure, start);
@@ -957,13 +1112,14 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     }
 
     private List<List<Structure>> structuresByStep(Registry<Structure> registry) {
+        int runtimeId = engine.getCacheID();
         StructureStepCache cached = structureStepCache;
-        if (cached != null && cached.registry() == registry) {
+        if (cached != null && cached.runtimeId() == runtimeId && cached.registry() == registry) {
             return cached.structures();
         }
         synchronized (this) {
             cached = structureStepCache;
-            if (cached != null && cached.registry() == registry) {
+            if (cached != null && cached.runtimeId() == runtimeId && cached.registry() == registry) {
                 return cached.structures();
             }
             int steps = GenerationStep.Decoration.values().length;
@@ -978,7 +1134,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
                 grouped.set(step, List.copyOf(grouped.get(step)));
             }
             List<List<Structure>> resolved = List.copyOf(grouped);
-            structureStepCache = new StructureStepCache(registry, resolved);
+            structureStepCache = new StructureStepCache(runtimeId, registry, resolved);
             return resolved;
         }
     }
@@ -1010,7 +1166,10 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public void addVanillaDecorations(WorldGenLevel level, ChunkAccess chunkAccess, StructureManager structureManager) {
-        try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_heightmaps");
+        ChunkPos chunkPos = chunkAccess.getPos();
+        try (GenerationHistoryRuntimeRouter.CoordinateScope historyScope = openHistoryCoordinateScope(
+                     chunkPos.getMinBlockX(), chunkPos.getMinBlockZ(), "bukkit_nms_heightmaps");
+             GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_heightmaps");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             SectionPos sectionPos = SectionPos.of(chunkAccess.getPos(), level.getMinSectionY());
             BlockPos blockPos = sectionPos.origin();
@@ -1041,12 +1200,30 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     @Override
     public void spawnOriginalMobs(WorldGenRegion region) {
         ChunkPos center = region.getCenter();
-        Holder<Biome> visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
-        Holder<Biome> vanillaBiome = customBiomeSource.getVanillaSpawnBiome(visibleBiome);
-        WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
-        random.setDecorationSeed(region.getSeed(), center.getMinBlockX(), center.getMinBlockZ());
-        NaturalSpawner.spawnMobsForChunkGeneration(
-                region, vanillaBiome == null ? visibleBiome : vanillaBiome, center, random);
+        try (BukkitChunkGenerator.GenerationStagePermit stage = requireGenerationStage("bukkit_nms_spawn_original_mobs");
+             GenerationHistoryRuntimeRouter.RuntimeRoute route = openHistoryRoute(
+                     center.x(), center.z(), "bukkit_nms_spawn_original_mobs");
+             GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
+             GenerationSessionLease lease = requireGenerationLease("bukkit_nms_spawn_original_mobs");
+             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+            if (!allowsRoutedDiscreteGeneration(region.getChunk(center.x(), center.z()), ChunkStatus.SPAWN)) {
+                return;
+            }
+            Holder<Biome> visibleBiome = region.getBiome(center.getWorldPosition().atY(region.getMaxY()));
+            Holder<Biome> vanillaBiome = customBiomeSource.getVanillaSpawnBiome(visibleBiome);
+            WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(RandomSupport.generateUniqueSeed()));
+            random.setDecorationSeed(region.getSeed(), center.getMinBlockX(), center.getMinBlockZ());
+            NaturalSpawner.spawnMobsForChunkGeneration(
+                    region, vanillaBiome == null ? visibleBiome : vanillaBiome, center, random);
+        }
+    }
+
+    private boolean allowsRoutedDiscreteGeneration(ChunkAccess chunk, ChunkStatus stage) {
+        if (chunk.getPersistedStatus().isOrAfter(stage)) {
+            return false;
+        }
+        ChunkPos chunkPos = chunk.getPos();
+        return engine.getComplex().allowsNewGenerationChunk(chunkPos.x(), chunkPos.z());
     }
 
     private static WeightedList<MobSpawnSettings.SpawnerData> mergeSpawnTables(
@@ -1079,7 +1256,9 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public int getBaseHeight(int i, int j, Heightmap.Types heightmap_type, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
-        try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_height");
+        try (GenerationHistoryRuntimeRouter.CoordinateScope route = openHistoryCoordinateScope(
+                     i, j, "bukkit_nms_base_height");
+             GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_height");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             return levelheightaccessor.getMinY()
                     + engine.getHeight(i, j, !heightmap_type.isOpaque().test(Blocks.WATER.defaultBlockState()))
@@ -1091,7 +1270,9 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public NoiseColumn getBaseColumn(int i, int j, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
-        try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_column");
+        try (GenerationHistoryRuntimeRouter.CoordinateScope route = openHistoryCoordinateScope(
+                     i, j, "bukkit_nms_base_column");
+             GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_column");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             int block = engine.getHeight(i, j, true);
             int water = engine.getHeight(i, j, false);
@@ -1116,6 +1297,69 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             return engine.acquireGenerationLease(operation);
         } catch (GenerationSessionException exception) {
             throw new IllegalStateException("Iris " + operation + " could not acquire its engine runtime.", exception);
+        }
+    }
+
+    private GenerationHistoryRuntimeRouter.RuntimeRoute openHistoryRoute(
+            int chunkX,
+            int chunkZ,
+            String operation
+    ) {
+        if (!(engine instanceof IrisEngine irisEngine)) {
+            return null;
+        }
+        GenerationHistoryRuntimeRouter router = irisEngine.getGenerationHistoryRuntimeRouter().orElse(null);
+        if (router == null) {
+            if (platformGenerator != null && platformGenerator.getGenerationHistory() != null) {
+                throw new IllegalStateException("Iris " + operation
+                        + " has no generation-history runtime router.");
+            }
+            return null;
+        }
+        try {
+            return router.openRoute(chunkX, chunkZ);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris " + operation
+                    + " could not route generation history for chunk "
+                    + chunkX + "," + chunkZ + ".", failure);
+        }
+    }
+
+    private GenerationHistoryRuntimeRouter.CoordinateScope openHistoryCoordinateScope(
+            int blockX,
+            int blockZ,
+            String operation
+    ) {
+        if (!(engine instanceof IrisEngine irisEngine)) {
+            return null;
+        }
+        try {
+            return irisEngine.openGenerationHistoryCoordinateScope(blockX, blockZ);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris " + operation
+                    + " could not route generation history at "
+                    + blockX + "," + blockZ + ".", failure);
+        }
+    }
+
+    private static GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope openHistoryRuntimeScope(
+            GenerationHistoryRuntimeRouter.RuntimeRoute route
+    ) {
+        return route == null ? null : route.openRuntimeScope();
+    }
+
+    private static void claimGeneratedSemantics(
+            GenerationHistoryRuntimeRouter.RuntimeRoute route,
+            String operation
+    ) {
+        if (route == null) {
+            return;
+        }
+        try {
+            route.claimGeneratedSemantics();
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris " + operation
+                    + " could not durably claim generated chunk semantics.", failure);
         }
     }
 
@@ -1190,13 +1434,14 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
         }
     }
 
-    private record SpawnTableKey(Biome biome, MobCategory category) {
+    private record SpawnTableKey(int runtimeId, Biome biome, MobCategory category) {
     }
 
     private record ReachableStructureCache(IrisDimension dimension, int runtimeId, Set<String> keys) {
     }
 
-    private record StructureStepCache(Registry<Structure> registry, List<List<Structure>> structures) {
+    private record StructureStepCache(int runtimeId, Registry<Structure> registry,
+                                      List<List<Structure>> structures) {
     }
 
     record StudioStructureState(

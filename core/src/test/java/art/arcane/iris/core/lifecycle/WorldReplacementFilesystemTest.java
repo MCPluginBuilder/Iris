@@ -1,5 +1,10 @@
 package art.arcane.iris.core.lifecycle;
 
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationEpochContractFactory;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationPackFingerprint;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
 import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
@@ -216,7 +221,7 @@ public class WorldReplacementFilesystemTest {
         WorldReplacementFilesystem.rollback(paths, true);
 
         assertEquals("original", Files.readString(paths.target().resolve("original.txt")));
-        assertFalse(Files.exists(paths.target().resolve("iris/pack")));
+        assertFalse(Files.exists(paths.target().resolve("iris/generation")));
         assertFalse(Files.exists(paths.stage()));
         assertFalse(Files.exists(paths.backup()));
     }
@@ -492,10 +497,24 @@ public class WorldReplacementFilesystemTest {
     }
 
     private String writeStage(WorldReplacementFilesystem.ReplacementPaths paths, String content) throws Exception {
-        Path contentFile = packContent(paths.stage());
+        Path source = paths.stage().resolveSibling(paths.stage().getFileName() + ".pack-source");
+        Path contentFile = source.resolve("dimensions/underworld.json");
         Files.createDirectories(contentFile.getParent());
         Files.writeString(contentFile, content);
-        return WorldReplacementFilesystem.fingerprintPack(paths.stage().resolve("iris/pack"));
+        String generationFingerprint = GenerationPackFingerprint.compute(
+                source,
+                GenerationPackFingerprint.CURRENT_VERSION
+        );
+        Files.createDirectory(paths.stage());
+        GenerationHistory history = GenerationHistory.create(
+                paths.stage(),
+                source,
+                generationFingerprint,
+                42L,
+                generationContract("underworld"),
+                GenerationRegistryContract.empty()
+        );
+        return WorldReplacementFilesystem.fingerprintPack(history.activePackRoot());
     }
 
     private void writeOriginalTarget(WorldReplacementFilesystem.ReplacementPaths paths, String content) throws Exception {
@@ -535,8 +554,30 @@ public class WorldReplacementFilesystemTest {
         return Files.readString(packContent(worldDirectory));
     }
 
-    private Path packContent(Path worldDirectory) {
-        return worldDirectory.resolve("iris/pack/dimensions/underworld.json");
+    private Path packContent(Path worldDirectory) throws IOException {
+        return GenerationHistory.open(worldDirectory)
+                .activePackRoot()
+                .resolve("dimensions/underworld.json");
+    }
+
+    private static GenerationEpoch.DimensionContract generationContract(String dimensionKey) {
+        return new GenerationEpoch.DimensionContract(
+                dimensionKey,
+                "iris:" + dimensionKey + "_type",
+                "NETHER",
+                "OVERWORLD",
+                0,
+                0,
+                256,
+                256,
+                1D,
+                false,
+                "none",
+                0,
+                "0".repeat(64),
+                GenerationEpochContractFactory.CURRENT_DIMENSION_TYPE_FINGERPRINT_SCHEMA,
+                "c".repeat(64)
+        );
     }
 
     private String artifactStem(String name, UUID transactionId) {

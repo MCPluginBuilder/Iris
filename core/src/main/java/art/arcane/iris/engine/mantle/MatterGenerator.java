@@ -1,5 +1,6 @@
 package art.arcane.iris.engine.mantle;
 
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.spi.IrisLogging;
@@ -45,10 +46,23 @@ public interface MatterGenerator {
         if (!getEngine().getDimension().isUseMantle()) {
             return;
         }
-        generateMatterWindow(x, z, multicore, context);
+        IrisComplex complex = context == null ? null : context.getComplex();
+        if (complex == null) {
+            complex = getEngine().getComplex();
+        }
+        if (complex != null && !complex.allowsMantleChunkWrite(x, z)) {
+            return;
+        }
+        generateMatterWindow(x, z, multicore, context, complex);
     }
 
-    private void generateMatterWindow(int x, int z, boolean multicore, ChunkContext context) {
+    private void generateMatterWindow(
+            int x,
+            int z,
+            boolean multicore,
+            ChunkContext context,
+            IrisComplex complex
+    ) {
 
         MatterGenerationPlan generationPlan = resolveGenerationPlan(x, z, context);
         MatterPassPlan[] passPlans = generationPlan.passPlans();
@@ -124,6 +138,11 @@ public interface MatterGenerator {
                             }
 
                             if (!anyComponentInRadius) {
+                                partialChunks.add(passKey);
+                                continue;
+                            }
+
+                            if (complex != null && !complex.allowsMantleChunkWrite(passX, passZ)) {
                                 partialChunks.add(passKey);
                                 continue;
                             }
@@ -205,6 +224,9 @@ public interface MatterGenerator {
                         int realZ = z + j;
                         long realKey = chunkKey(realX, realZ);
                         if (partialChunks.contains(realKey)) {
+                            continue;
+                        }
+                        if (complex != null && !complex.allowsMantleChunkWrite(realX, realZ)) {
                             continue;
                         }
                         writer.acquireChunk(realX, realZ).flag(MantleFlag.PLANNED, true);

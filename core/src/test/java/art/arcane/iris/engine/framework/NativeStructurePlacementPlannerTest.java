@@ -146,6 +146,18 @@ public class NativeStructurePlacementPlannerTest {
     }
 
     @Test
+    public void transitionBandRejectsNativeStructureStarts() {
+        Engine engine = engine(77L, -64, 384, 150);
+        IrisComplex complex = mock(IrisComplex.class);
+        when(engine.getComplex()).thenReturn(complex);
+        when(complex.allowsNewGenerationChunk(0, 0)).thenReturn(false);
+        IrisStructurePlacement placement = nativePlacement();
+
+        assertNull(NativeStructurePlacementPlanner.planAt(engine, placement, 0, 0));
+        assertTrue(NativeStructurePlacementPlanner.plansAt(engine, 0, 0).isEmpty());
+    }
+
+    @Test
     public void weightedNativeSelectionPreservesAuthoredSourceOrder() {
         KList<IrisNativeStructure> first = new KList<>();
         first.add(new IrisNativeStructure().setStructure("test:a").setWeight(1));

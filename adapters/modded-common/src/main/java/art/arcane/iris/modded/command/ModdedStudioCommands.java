@@ -488,7 +488,7 @@ public final class ModdedStudioCommands {
         ModdedDimensionManager.Handle handle = null;
         try {
             replaceExistingStudio(server, owner, dimensionId);
-            handle = ModdedDimensionManager.create(server, dimensionId, pack, pack, seed);
+            handle = ModdedDimensionManager.createTransientStudio(server, dimensionId, pack, pack, seed);
             STUDIOS.put(owner, dimensionId);
             if (owner.equals(CONSOLE_OWNER)) {
                 completeConsoleOpen(source, dimensionId, pack, seed, handle);

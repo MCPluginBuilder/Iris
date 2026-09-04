@@ -134,9 +134,7 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
             }
 
             int topY = Math.min(hf, chunkHeight - 1);
-            HydrologyColumnSample hydrology = complex.getHydrologyRuntime() == null
-                    ? null
-                    : complex.getHydrologyRuntime().sample(realX, realZ).orElse(null);
+            HydrologyColumnSample hydrology = complex.sampleHydrologyColumn(realX, realZ);
             HydrologyColumnLayer hydrologyFluid = hydrology == null
                     ? null
                     : hydrology.primarySurfaceFluidLayer().orElse(null);
@@ -252,9 +250,7 @@ public class IrisTerrainNormalActuator extends EngineAssignedActuator<PlatformBl
             }
 
             if (upperContext != null) {
-                int rawUpperSurface = upperContext.getUpperSurfaceY(realX, realZ);
-                int upperGap = dimension.getUpperDimensionGap();
-                int upperSurfaceY = Math.max(rawUpperSurface, he + upperGap);
+                int upperSurfaceY = upperContext.getEffectiveSurfaceY(realX, realZ);
 
                 if (upperSurfaceY < chunkHeight - 1) {
                     IrisBiome upperBiome = upperContext.getUpperBiome(realX, realZ);

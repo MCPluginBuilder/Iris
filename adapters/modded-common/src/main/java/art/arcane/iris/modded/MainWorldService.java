@@ -142,6 +142,19 @@ public final class MainWorldService {
         }
     }
 
+    static Path configuredWorldRootIfPresent() throws IOException {
+        Path instanceRoot = Path.of("").toAbsolutePath().normalize();
+        Path properties = instanceRoot.resolve(PROPERTIES_NAME);
+        if (!Files.isRegularFile(properties)) {
+            return null;
+        }
+        try {
+            return resolveWorldRoot(instanceRoot, properties);
+        } catch (MissingWorldRootException missing) {
+            return null;
+        }
+    }
+
     /**
      * net.minecraft.server.Main reads server.properties as Paths.get("server.properties"), so the authoritative
      * instance root is the JVM working directory - not configDir().getParent(), which points somewhere else

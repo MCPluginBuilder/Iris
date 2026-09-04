@@ -1,6 +1,8 @@
 package art.arcane.iris.core.pack;
 
 import art.arcane.iris.core.lifecycle.BukkitStartupPaths;
+import art.arcane.iris.engine.history.GenerationRegistryContractFactory;
+import art.arcane.iris.engine.object.IrisBiomeCustom;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.Assume;
@@ -118,8 +120,8 @@ public class DefaultPackBootstrapProvisionerTest {
             assertTrue(Files.isRegularFile(installed.packRoots().get("underworld").resolve("dimensions/underworld_roof.json")));
             assertEquals(root.resolve("datapacks/iris"), installed.datapackRoot());
             assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("pack.mcmeta")));
-            assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("data/overworld/worldgen/biome/bootstrap_biome.json")));
-            assertTrue(Files.isRegularFile(installed.datapackRoot().resolve("data/underworld/worldgen/biome/underworld_biome.json")));
+            assertTrue(Files.isRegularFile(installedBiomePath(installed.datapackRoot(), "overworld", "bootstrap_biome")));
+            assertTrue(Files.isRegularFile(installedBiomePath(installed.datapackRoot(), "underworld", "underworld_biome")));
             assertFalse(Files.exists(dataDirectory.resolve("bootstrap/datapack")));
             assertTrue(DefaultPackBootstrapProvisioner.isProvisioned(
                     dataDirectory,
@@ -176,8 +178,8 @@ public class DefaultPackBootstrapProvisionerTest {
             assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UPDATED, rebuilt.status());
             assertEquals(2, requests.get());
             assertTrue(Files.isRegularFile(rebuilt.datapackRoot().resolve("pack.mcmeta")));
-            assertTrue(Files.isRegularFile(rebuilt.datapackRoot().resolve("data/overworld/worldgen/biome/bootstrap_biome.json")));
-            assertTrue(Files.isRegularFile(rebuilt.datapackRoot().resolve("data/underworld/worldgen/biome/underworld_biome.json")));
+            assertTrue(Files.isRegularFile(installedBiomePath(rebuilt.datapackRoot(), "overworld", "bootstrap_biome")));
+            assertTrue(Files.isRegularFile(installedBiomePath(rebuilt.datapackRoot(), "underworld", "underworld_biome")));
         } finally {
             if (!serverStopped) {
                 server.stop(0);
@@ -323,7 +325,7 @@ public class DefaultPackBootstrapProvisionerTest {
             assertEquals(1, requests.get());
             assertTrue(Files.isSymbolicLink(link));
             assertEquals(target.toRealPath(), link.toRealPath());
-            assertTrue(Files.isRegularFile(result.datapackRoot().resolve("data/overworld/worldgen/biome/local_biome.json")));
+            assertTrue(Files.isRegularFile(installedBiomePath(result.datapackRoot(), "overworld", "local_biome")));
 
             Files.writeString(target.resolve("biomes/local.json"), biomeJson("changed_biome"), StandardCharsets.UTF_8);
             assertFalse(DefaultPackBootstrapProvisioner.isProvisioned(
@@ -375,7 +377,7 @@ public class DefaultPackBootstrapProvisionerTest {
 
             assertEquals(DefaultPackBootstrapProvisioner.ProvisionStatus.UPDATED, updated.status());
             assertEquals(2, requests.get());
-            assertTrue(Files.isRegularFile(updated.datapackRoot().resolve("data/second/worldgen/biome/second_biome.json")));
+            assertTrue(Files.isRegularFile(installedBiomePath(updated.datapackRoot(), "second", "second_biome")));
             assertTrue(Files.isRegularFile(updated.datapackRoot().resolve("data/world_local/worldgen/biome/world_local_biome.json")));
         } finally {
             server.stop(0);
@@ -406,7 +408,7 @@ public class DefaultPackBootstrapProvisionerTest {
 
             assertEquals(3, requests.get());
             assertTrue(Files.readString(editedBiome).contains("locally_edited_biome"));
-            assertTrue(Files.isRegularFile(updated.datapackRoot().resolve("data/overworld/worldgen/biome/locally_edited_biome.json")));
+            assertTrue(Files.isRegularFile(installedBiomePath(updated.datapackRoot(), "overworld", "locally_edited_biome")));
             Properties marker = new Properties();
             try (InputStream input = Files.newInputStream(dataDirectory.resolve("bootstrap/provisioned.properties"))) {
                 marker.load(input);
@@ -446,8 +448,7 @@ public class DefaultPackBootstrapProvisionerTest {
 
             assertEquals(3, requests.get());
             assertTrue(Files.readString(editedBiome).contains("underworld_local_edit"));
-            assertTrue(Files.isRegularFile(updated.datapackRoot()
-                    .resolve("data/underworld/worldgen/biome/underworld_local_edit.json")));
+            assertTrue(Files.isRegularFile(installedBiomePath(updated.datapackRoot(), "underworld", "underworld_local_edit")));
             Properties marker = loadProperties(dataDirectory.resolve("bootstrap/provisioned.properties"));
             assertEquals("true", marker.getProperty("pack.overworld.managed"));
             assertEquals("false", marker.getProperty("pack.underworld.managed"));
@@ -491,12 +492,9 @@ public class DefaultPackBootstrapProvisionerTest {
                     .contains("overworld_first"));
             assertTrue(Files.readString(dataDirectory.resolve("packs/underworld/biomes/local.json"))
                     .contains("underworld_second"));
-            assertTrue(Files.isRegularFile(updated.datapackRoot()
-                    .resolve("data/overworld/worldgen/biome/overworld_first.json")));
-            assertTrue(Files.isRegularFile(updated.datapackRoot()
-                    .resolve("data/underworld/worldgen/biome/underworld_second.json")));
-            assertFalse(Files.exists(updated.datapackRoot()
-                    .resolve("data/underworld/worldgen/biome/underworld_first.json")));
+            assertTrue(Files.isRegularFile(installedBiomePath(updated.datapackRoot(), "overworld", "overworld_first")));
+            assertTrue(Files.isRegularFile(installedBiomePath(updated.datapackRoot(), "underworld", "underworld_second")));
+            assertFalse(Files.exists(installedBiomePath(updated.datapackRoot(), "underworld", "underworld_first")));
         } finally {
             if (initialServer != null) {
                 initialServer.stop(0);
@@ -666,6 +664,17 @@ public class DefaultPackBootstrapProvisionerTest {
         } finally {
             delete(serverRoot);
         }
+    }
+
+    private static Path installedBiomePath(Path datapackRoot, String dimension, String id) {
+        String resourceKey = GenerationRegistryContractFactory.customBiomeResourceKey(
+                dimension, new IrisBiomeCustom().setId(id)
+        );
+        int separator = resourceKey.indexOf(':');
+        return datapackRoot.resolve("data")
+                .resolve(resourceKey.substring(0, separator))
+                .resolve("worldgen/biome")
+                .resolve(resourceKey.substring(separator + 1) + ".json");
     }
 
     private static DefaultPackBootstrapProvisioner.ProvisionOptions options(

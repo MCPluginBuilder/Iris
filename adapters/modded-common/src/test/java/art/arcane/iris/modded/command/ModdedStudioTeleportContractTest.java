@@ -21,8 +21,8 @@ public class ModdedStudioTeleportContractTest {
         assertTrue(open.contains("TRANSITIONS.submit("));
         assertFalse(open.contains("orTimeout("));
         assertFalse(open.contains("deadlineNanos"));
-        assertBefore(execute, "replaceExistingStudio(", "ModdedDimensionManager.create(");
-        assertBefore(execute, "ModdedDimensionManager.create(", "ModdedDimensionManager.teleportAsync(");
+        assertBefore(execute, "replaceExistingStudio(", "ModdedDimensionManager.createTransientStudio(");
+        assertBefore(execute, "ModdedDimensionManager.createTransientStudio(", "ModdedDimensionManager.teleportAsync(");
         assertFalse(execute.contains("deadlineNanos"));
         assertFalse(source.contains("player.teleportTo(studio"));
     }

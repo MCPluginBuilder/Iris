@@ -31,6 +31,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.NativeStructureVolume;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.PlatformGenerationRegistry;
 import art.arcane.iris.spi.PlatformStructureHooks.JigsawSourceMetadata;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.collection.KList;
@@ -57,9 +58,14 @@ import java.awt.Color;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 
 public interface INMSBinding {
+    default PlatformGenerationRegistry generationRegistry() {
+        throw new UnsupportedOperationException(
+                "The active NMS binding does not expose generation registry definitions."
+        );
+    }
+
     boolean hasTile(Material material);
 
     boolean hasTile(Location l);
@@ -270,8 +276,18 @@ public interface INMSBinding {
     default void uninjectBukkit() {
     }
 
-    default boolean awaitServerShutdownBoundary(long timeout, TimeUnit unit) {
-        return true;
+    default void deferPluginClassLoaderClose() {
+    }
+
+    default void releasePluginClassLoaderClose() {
+    }
+
+    default boolean isServerStopping() {
+        return false;
+    }
+
+    default ServerShutdownBoundary createServerShutdownBoundary() {
+        return new ServerShutdownBoundary(() -> true, Thread.currentThread());
     }
 
     KMap<Material, List<BlockProperty>> getBlockProperties();

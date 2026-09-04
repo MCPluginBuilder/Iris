@@ -55,6 +55,7 @@ import art.arcane.volmlib.util.director.help.DirectorMiniMenu;
 import art.arcane.volmlib.util.localization.BukkitLanguageSwitcher;
 import art.arcane.iris.core.link.MultiverseCoreLink;
 import art.arcane.iris.core.nms.INMS;
+import art.arcane.iris.core.nms.ServerShutdownBoundary;
 import art.arcane.iris.core.gui.BukkitGuiHost;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.service.BoardSVC;
@@ -139,6 +140,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileDescriptor;
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -160,6 +163,7 @@ import java.util.regex.Pattern;
 @SuppressWarnings("CanBeFinal")
 public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     private static final long SERVER_SHUTDOWN_BOUNDARY_TIMEOUT_SECONDS = 300L;
+    private static final PrintStream SHUTDOWN_ERRORS = new PrintStream(new FileOutputStream(FileDescriptor.err), true);
     private static final long SERVER_STOP_PREGEN_TIMEOUT_MILLIS = 30000L;
     private static final Queue<Runnable> syncJobs = new ShurikenQueue<>();
 
@@ -190,6 +194,8 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     private final AtomicBoolean sharedRuntimeClosed = new AtomicBoolean(false);
     private final AtomicBoolean startupBoundaryRestart = new AtomicBoolean(false);
     private final AtomicBoolean terminalCleanupCompleted = new AtomicBoolean(false);
+    private final AtomicBoolean runtimeTeardownFailed = new AtomicBoolean(false);
+    private volatile boolean generatorDrainCompleted;
     private volatile PlaceholderRegistration papiRegistration;
     private volatile IrisPapiListener papiListener;
     private volatile IrisPapiState papiState;
@@ -206,6 +212,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     private BukkitDebugDump debugDump;
     private volatile SettingsHotloadWatch settingsHotloadWatch;
     private volatile Thread serverLifecycleThread;
+    private volatile ServerShutdownBoundary serverShutdownBoundary;
 
     public static VolmitSender getSender() {
         if (sender == null) {
@@ -427,6 +434,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         if (e == null) {
             return;
         }
+        if (instance != null && instance.serverStopTeardownDeferred.get()) {
+            e.printStackTrace(SHUTDOWN_ERRORS);
+            return;
+        }
 
         boolean debug = false;
         if (instance != null) {
@@ -466,6 +477,11 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     public static void reportError(String context, Throwable e) {
         Throwable error = e == null ? new IllegalStateException("Unknown Iris failure") : e;
         String message = context == null || context.isBlank() ? "Unhandled Iris failure." : context;
+        if (instance != null && instance.serverStopTeardownDeferred.get()) {
+            SHUTDOWN_ERRORS.println("[Iris] " + message);
+            error.printStackTrace(SHUTDOWN_ERRORS);
+            return;
+        }
 
         try {
             if (instance != null) {
@@ -603,6 +619,8 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         sharedRuntimeClosed.set(false);
         startupBoundaryRestart.set(false);
         terminalCleanupCompleted.set(false);
+        runtimeTeardownFailed.set(false);
+        generatorDrainCompleted = false;
         deferredShutdownGenerators.clear();
         MultiBurst.burst.reopen();
         MultiBurst.ioBurst.reopen();
@@ -742,6 +760,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
     public void addShutdownHook() {
         removeShutdownHook();
         serverLifecycleThread = Thread.currentThread();
+        serverShutdownBoundary = INMS.isBound() ? INMS.get().createServerShutdownBoundary() : null;
         shutdownHook = new Thread(this::runShutdownHook, "Iris-ShutdownHook");
         try {
             Runtime.getRuntime().addShutdownHook(shutdownHook);
@@ -963,6 +982,10 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 drainWorldGenerators(reason, timeoutSeconds);
             }
 
+            if (serverStopTeardownDeferred.get() && !generatorDrainCompleted) {
+                return;
+            }
+
             if (services != null && servicesDisabled.compareAndSet(false, true)) {
                 // Only services whose onEnable actually completed; disabling a service that
                 // never initialized runs teardown against uninitialized state.
@@ -970,6 +993,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                     try {
                         service.onDisable();
                     } catch (Throwable e) {
+                        runtimeTeardownFailed.set(true);
                         Iris.reportError("Failed to disable " + service.getClass().getSimpleName() + ".", e);
                     }
                 }
@@ -979,8 +1003,18 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
                 return;
             }
 
-            J.attempt(MultiBurst.burst::close);
-            J.attempt(MultiBurst.ioBurst::close);
+            try {
+                MultiBurst.burst.close();
+            } catch (Throwable failure) {
+                runtimeTeardownFailed.set(true);
+                Iris.reportError("Failed to close Iris generation workers.", failure);
+            }
+            try {
+                MultiBurst.ioBurst.close();
+            } catch (Throwable failure) {
+                runtimeTeardownFailed.set(true);
+                Iris.reportError("Failed to close Iris I/O workers.", failure);
+            }
             clearQueues();
             IrisServices.clear();
         }
@@ -988,6 +1022,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
 
     private void quiesceRuntimeForServerShutdown(String reason) {
         serverStopTeardownDeferred.set(true);
+        INMS.get().deferPluginClassLoaderClose();
         JigsawStudioService jigsawStudioService = IrisServices.getOrNull(JigsawStudioService.class);
         if (jigsawStudioService != null) {
             try {
@@ -1060,29 +1095,35 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             return;
         }
         if (!awaitServerShutdownBoundary()) {
-            Iris.warn("Iris skipped JVM-hook runtime teardown because Paper did not reach its post-world-close boundary.");
+            SHUTDOWN_ERRORS.println("[Iris] Paper did not reach its post-world-close boundary; retaining the runtime and plugin class loader until JVM exit.");
             return;
         }
         finishDeferredRuntimeTeardown("shutdown-hook", 30L);
     }
 
     private boolean awaitServerShutdownBoundary() {
-        if (!INMS.isBound()) {
+        ServerShutdownBoundary boundary = serverShutdownBoundary;
+        if (boundary == null) {
             return true;
         }
         try {
-            return INMS.get().awaitServerShutdownBoundary(
+            return boundary.await(
                     SERVER_SHUTDOWN_BOUNDARY_TIMEOUT_SECONDS,
                     TimeUnit.SECONDS
             );
         } catch (Throwable e) {
-            Iris.reportError("Failed to await Paper's post-world-close shutdown boundary.", e);
+            SHUTDOWN_ERRORS.println("[Iris] Failed to await Paper's post-world-close shutdown boundary.");
+            e.printStackTrace(SHUTDOWN_ERRORS);
             return false;
         }
     }
 
     private void finishDeferredRuntimeTeardown(String reason, long timeoutSeconds) {
         teardownRuntime(reason, timeoutSeconds);
+        if (serverStopTeardownDeferred.get() && !generatorDrainCompleted) {
+            SHUTDOWN_ERRORS.println("[Iris] Runtime cleanup is incomplete; retaining services, pools and the plugin class loader until JVM exit.");
+            return;
+        }
         finishTerminalCleanup();
     }
 
@@ -1094,10 +1135,34 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         try {
             runPostShutdown();
         } catch (Throwable e) {
+            runtimeTeardownFailed.set(true);
             Iris.reportError("Failed to run Iris post-shutdown cleanup.", e);
         } finally {
+            if (serverStopTeardownDeferred.get() && hasActiveShutdownResources()) {
+                runtimeTeardownFailed.set(true);
+                SHUTDOWN_ERRORS.println("[Iris] Owned background work remains active after cleanup; retaining the plugin class loader until JVM exit.");
+            }
             IrisPlatforms.unbind();
+            if (serverStopTeardownDeferred.get() && runtimeTeardownFailed.get()) {
+                SHUTDOWN_ERRORS.println("[Iris] Runtime cleanup failed; retaining the plugin class loader until JVM exit.");
+            } else {
+                try {
+                    INMS.get().releasePluginClassLoaderClose();
+                } catch (Throwable failure) {
+                    SHUTDOWN_ERRORS.println("[Iris] Failed to release the plugin class loader after runtime cleanup.");
+                    failure.printStackTrace(SHUTDOWN_ERRORS);
+                }
+            }
         }
+    }
+
+    private boolean hasActiveShutdownResources() {
+        if (!MultiBurst.burst.isTerminated() || !MultiBurst.ioBurst.isTerminated()) {
+            return true;
+        }
+        return services != null
+                && services.get(PreservationSVC.class) instanceof PreservationSVC preservation
+                && preservation.hasActiveResources();
     }
 
     private void drainWorldGenerators(String reason, long timeoutSeconds) {
@@ -1115,6 +1180,7 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
             }
         }
         if (generators.isEmpty()) {
+            generatorDrainCompleted = true;
             Iris.debug("No Iris worlds to freeze.");
             return;
         }
@@ -1139,12 +1205,15 @@ public class Iris extends VolmitPlugin implements Listener, ReloadAware {
         try {
             CompletableFuture.allOf(closes.toArray(new CompletableFuture<?>[0]))
                     .get(timeoutSeconds, TimeUnit.SECONDS);
-            Iris.debug("All Iris chunk generators parked. Safe to unload.");
+            generatorDrainCompleted = closes.size() == generators.size();
+            if (generatorDrainCompleted) {
+                Iris.debug("All Iris chunk generators parked. Safe to unload.");
+            }
         } catch (TimeoutException e) {
-            Iris.warn("Iris generator drain timed out after " + timeoutSeconds + "s; unload proceeding anyway.");
+            Iris.reportError("Iris generator drain timed out after " + timeoutSeconds + "s.", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            Iris.warn("Iris generator drain interrupted; unload proceeding.");
+            Iris.reportError("Iris generator drain was interrupted.", e);
         } catch (ExecutionException e) {
             Iris.reportError(e.getCause() == null ? e : e.getCause());
         }

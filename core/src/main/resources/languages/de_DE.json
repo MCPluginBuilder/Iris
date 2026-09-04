@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "Radius in Chunks um die Mitte",
     "iris.director.commanddeveloper.param.center_chunk_x": "X-Koordinate des zentralen Chunk",
     "iris.director.commanddeveloper.param.center_chunk_z": "Z-Koordinate des zentralen Chunk",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "Pack einer Welt aktualisieren (UNSICHER!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "Aktualisierung der Weltgenerierung vormerken",
     "iris.director.commanddeveloper.param.world_update": "Die Welt aktualisiert",
     "iris.director.commanddeveloper.param.pack_install_into_world": "Das in der Welt zu installierende Pack",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "Stellen Sie sicher, dass Sie ein Backup erstellen & Lesen Sie zuerst die Warnungen!",
@@ -1053,15 +1053,13 @@
       "other": "§7  ... und {count} weitere Warnungen.",
       "one": "§7  ... und {count} weitere Warnung."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cErstelle vor der Verwendung immer eine Sicherungskopie.",
-      "§eMögliche Probleme sind unter anderem:",
-      "§e - Beschädigte Chunk-Übergänge zwischen alten und neuen Chunks (vor und nach dem Update)",
-      "§e - Regenerierte Chunks, die nicht zu den alten Chunks passen",
-      "§e - Strukturen, die bei der Regeneration nicht erneut erzeugt werden",
-      "§e - Nicht zusammenpassende Höhlengänge",
-      "§e - Nicht zusammenpassende Geländeschichten",
-      "§cWenn du die Risiken verstanden und eine Sicherungskopie erstellt hast:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cSichere die gesamte Welt, bevor du diese Aktualisierung vormerkst.",
+      "§eVorhandene Chunks werden weder neu generiert noch überschrieben.",
+      "§eNeue Chunks verwenden nach dem Neustart das vorgemerkte Pack und gehen an der gespeicherten Grenze ineinander über.",
+      "§eSeed, Höhe, Umgebung und Dimensionstyp der Welt dürfen sich nicht ändern.",
+      "§eJede Sicherung muss das vollständige Verzeichnis iris/generation enthalten.",
+      "§cSo merkst du die Aktualisierung vor und forderst einen sauberen Neustart an:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aImportiere §f{total}§a Strukturen aus vanilla und Datapacks (mode={mode}, includeNonJigsaw={includeNonJigsaw})...",

@@ -1,5 +1,6 @@
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.object.IrisNativeStructure;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisStructureAnchorMode;
@@ -20,9 +21,13 @@ public final class NativeStructurePlacementPlanner {
     }
 
     public static KList<NativeStructureStartPlan> plansAt(Engine engine, int chunkX, int chunkZ) {
+        Engine activeEngine = Objects.requireNonNull(engine, "Native structure planner requires an engine");
+        if (!allowsStart(activeEngine, chunkX, chunkZ)) {
+            return new KList<>();
+        }
         Map<String, NativeStructureStartPlan> plansByStructure = new LinkedHashMap<>();
-        for (IrisStructurePlacement placement : StructurePlacementScope.placementsAt(engine, chunkX, chunkZ)) {
-            NativeStructureStartPlan plan = planAt(engine, placement, chunkX, chunkZ);
+        for (IrisStructurePlacement placement : StructurePlacementScope.placementsAt(activeEngine, chunkX, chunkZ)) {
+            NativeStructureStartPlan plan = planAt(activeEngine, placement, chunkX, chunkZ);
             if (plan != null) {
                 String structureKey = normalize(plan.source().getStructure());
                 NativeStructureStartPlan current = plansByStructure.get(structureKey);
@@ -41,6 +46,9 @@ public final class NativeStructurePlacementPlanner {
             return null;
         }
         Engine activeEngine = Objects.requireNonNull(engine, "Native structure planner requires an engine");
+        if (!allowsStart(activeEngine, chunkX, chunkZ)) {
+            return null;
+        }
         if (activeEngine.getSeedManager() == null) {
             throw new IllegalStateException("Native structure planner requires a bound seed manager");
         }
@@ -161,6 +169,11 @@ public final class NativeStructurePlacementPlanner {
                 ? engine.getDimension().getFluidHeight()
                 : (int) Math.round(engine.getComplex().getRiverWaterSurfaceStream().get(blockX, blockZ));
         return engine.getHeight(blockX, blockZ, true) < localFluidHeight;
+    }
+
+    private static boolean allowsStart(Engine engine, int chunkX, int chunkZ) {
+        IrisComplex complex = engine.getComplex();
+        return complex == null || complex.allowsNewGenerationChunk(chunkX, chunkZ);
     }
 
     private static int comparePlacementPriority(IrisStructurePlacement left, IrisStructurePlacement right) {

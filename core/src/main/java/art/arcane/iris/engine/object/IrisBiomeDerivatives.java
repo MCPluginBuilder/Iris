@@ -114,30 +114,34 @@ final class IrisBiomeDerivatives {
 
     static String getSkyBiomeKey(IrisBiome biome, RNG rng, Engine engine, double x, double y, double z) {
         KList<String> biomeSkyScatter = biome.getBiomeSkyScatter();
+        String logicalKey;
 
         if (biomeSkyScatter.size() == 1) {
-            return namespacedBiomeKey(biomeSkyScatter.get(0));
-        }
-
-        if (biomeSkyScatter.isEmpty()) {
+            logicalKey = namespacedBiomeKey(biomeSkyScatter.get(0));
+        } else if (biomeSkyScatter.isEmpty()) {
             return getGroundBiomeKey(biome, rng, engine, x, y, z);
+        } else {
+            logicalKey = namespacedBiomeKey(biomeSkyScatter.get(
+                    biome.getBiomeGenerator(rng, engine).fit(0, biomeSkyScatter.size() - 1, x, y, z)
+            ));
         }
-
-        return namespacedBiomeKey(biomeSkyScatter.get(biome.getBiomeGenerator(rng, engine).fit(0, biomeSkyScatter.size() - 1, x, y, z)));
+        return physicalBiomeKey(engine, logicalKey);
     }
 
     static String getGroundBiomeKey(IrisBiome biome, RNG rng, Engine engine, double x, double y, double z) {
         KList<String> biomeScatter = biome.getBiomeScatter();
+        String logicalKey;
 
         if (biomeScatter.isEmpty()) {
-            return biome.getDerivativeKey();
+            logicalKey = biome.getDerivativeKey();
+        } else if (biomeScatter.size() == 1) {
+            logicalKey = namespacedBiomeKey(biomeScatter.get(0));
+        } else {
+            logicalKey = namespacedBiomeKey(biomeScatter.get(
+                    biome.getBiomeGenerator(rng, engine).fit(0, biomeScatter.size() - 1, x, y, z)
+            ));
         }
-
-        if (biomeScatter.size() == 1) {
-            return namespacedBiomeKey(biomeScatter.get(0));
-        }
-
-        return namespacedBiomeKey(biomeScatter.get(biome.getBiomeGenerator(rng, engine).fit(0, biomeScatter.size() - 1, x, y, z)));
+        return physicalBiomeKey(engine, logicalKey);
     }
 
     static IrisBiomeCustom getCustomBiome(IrisBiome biome, RNG rng, Engine engine, double x, double y, double z) {
@@ -148,5 +152,12 @@ final class IrisBiomeDerivatives {
         }
 
         return customDerivitives.get(biome.getBiomeGenerator(rng, engine).fit(0, customDerivitives.size() - 1, x, y, z));
+    }
+
+    private static String physicalBiomeKey(Engine engine, String logicalKey) {
+        if (engine == null || logicalKey == null) {
+            return logicalKey;
+        }
+        return engine.getData().physicalBiomeResourceKey(engine.getDimension(), logicalKey);
     }
 }

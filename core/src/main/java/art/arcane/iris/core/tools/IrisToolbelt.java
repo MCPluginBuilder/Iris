@@ -28,6 +28,7 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.IrisWorldStorage;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.pregenerator.PregenPerformanceProfile;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
@@ -57,7 +58,6 @@ import org.jetbrains.annotations.ApiStatus;
 
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -74,7 +74,6 @@ import art.arcane.volmlib.util.localization.MessageArgument;
 public class IrisToolbelt {
     @ApiStatus.Internal
     public static Map<String, Boolean> toolbeltConfiguration = new HashMap<>();
-    private static final Method BUKKIT_IS_STOPPING_METHOD = resolveBukkitIsStoppingMethod();
 
     /**
      * Finds an installed dimension or returns null.
@@ -582,26 +581,7 @@ public class IrisToolbelt {
     }
 
     public static boolean isServerStopping() {
-        Method method = BUKKIT_IS_STOPPING_METHOD;
-        if (method != null) {
-            try {
-                Object value = method.invoke(null);
-                if (value instanceof Boolean) {
-                    return (Boolean) value;
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-
-        return !BukkitPlatform.hasPlugin() || !BukkitPlatform.plugin().isEnabled();
-    }
-
-    private static Method resolveBukkitIsStoppingMethod() {
-        try {
-            return Bukkit.class.getMethod("isStopping");
-        } catch (Throwable ignored) {
-            return null;
-        }
+        return INMS.isBound() && INMS.get().isServerStopping();
     }
 
     public static void beginWorldMaintenance(World world, String reason) {

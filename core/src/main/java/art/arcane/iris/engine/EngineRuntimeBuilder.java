@@ -20,7 +20,8 @@ package art.arcane.iris.engine;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
-import art.arcane.iris.engine.EngineRuntime.BiomeMaxes;
+import art.arcane.iris.engine.GenerationRuntime.BiomeMaxes;
+import art.arcane.iris.engine.framework.SeedManager;
 import art.arcane.iris.engine.IrisEngine.LifecycleState;
 import art.arcane.iris.engine.framework.EngineEffects;
 import art.arcane.iris.engine.framework.EngineEffectsProvider;
@@ -28,14 +29,14 @@ import art.arcane.iris.engine.framework.EngineMode;
 import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.EngineWorldManager;
 import art.arcane.iris.engine.framework.EngineWorldManagerProvider;
+import art.arcane.iris.engine.mantle.EngineMantle;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
+import art.arcane.iris.engine.history.GenerationKernelRegistry;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomePaletteLayer;
 import art.arcane.iris.engine.object.IrisDecorator;
 import art.arcane.iris.engine.object.IrisDimension;
-import art.arcane.iris.engine.object.IrisDimensionMode;
-import art.arcane.iris.engine.object.IrisDimensionModeType;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
-import art.arcane.iris.engine.object.IrisStaticObjectLayer;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.util.project.context.IrisContext;
@@ -43,6 +44,9 @@ import art.arcane.volmlib.util.io.IO;
 import art.arcane.volmlib.util.math.M;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -62,19 +66,53 @@ final class EngineRuntimeBuilder {
     }
 
     EngineRuntime buildRuntime() {
-        return buildRuntime(engine.getTarget());
+        return buildRuntime(
+                engine.getTarget(),
+                engine.getInitialMantleStorageDirectory(),
+                engine.getInitialKernelVersion(),
+                engine.getInitialTransitionPlan(),
+                null);
     }
 
     EngineRuntime buildRuntime(EngineTarget runtimeTarget) {
-        RuntimeAssembly assembly = new RuntimeAssembly(RuntimeAssembly.nextRuntimeId(), runtimeTarget);
+        GenerationRuntime active = requireRuntime("hotload the engine runtime").generation();
+        return buildRuntime(
+                runtimeTarget,
+                active.mantleStorageDirectory(),
+                active.kernelVersion(),
+                active.transitionPlan(),
+                active.mantle());
+    }
+
+    private EngineRuntime buildRuntime(
+            EngineTarget runtimeTarget,
+            Path mantleStorageDirectory,
+            GenerationKernelRegistry.Version kernelVersion,
+            TransitionGenerationPlan transitionPlan,
+            EngineMantle transferredMantle
+    ) {
+        RuntimeAssembly assembly = new RuntimeAssembly(
+                RuntimeAssembly.nextRuntimeId(),
+                runtimeTarget,
+                mantleStorageDirectory,
+                selectRuntimeKernel(kernelVersion),
+                transitionPlan);
         engine.runtimeAssembly.set(assembly);
         try (IrisContext.Scope ignored = IrisContext.open(engine, engine.getGenerationSessions().currentSessionId(), null)) {
             IrisLogging.debug("Setup Engine " + assembly.cacheId);
             long started = M.ms();
-            assembly.complex = new IrisComplex(engine);
+            if (transferredMantle == null) {
+                assembly.mantle = assembly.runtimeKernel.createMantle(engine, assembly.mantleStorageDirectory);
+                assembly.ownsMantle = true;
+            } else {
+                assembly.mantle = transferredMantle;
+            }
+            IrisLogging.debug("[IrisEngine timing] new IrisEngineMantle=" + (M.ms() - started) + "ms");
+            started = M.ms();
+            assembly.complex = assembly.runtimeKernel.createComplex(engine, assembly.transitionPlan);
             IrisLogging.debug("[IrisEngine timing] complex=" + (M.ms() - started) + "ms");
             started = M.ms();
-            assembly.upperContext = buildUpperContext();
+            assembly.upperContext = assembly.runtimeKernel.createUpperContext(engine);
             IrisLogging.debug("[IrisEngine timing] buildUpperContext=" + (M.ms() - started) + "ms");
             started = M.ms();
             assembly.effects = IrisServices.get(EngineEffectsProvider.class).create(engine);
@@ -84,13 +122,11 @@ final class EngineRuntimeBuilder {
             IrisLogging.debug("[IrisEngine timing] EngineEffects=" + (M.ms() - started) + "ms");
             assembly.hash32 = new CompletableFuture<>();
             started = M.ms();
-            engine.getMantle().hotload();
+            assembly.mantle.hotload();
             IrisLogging.debug("[IrisEngine timing] mantle.hotload=" + (M.ms() - started) + "ms");
             started = M.ms();
-            assembly.mode = createMode();
-            IrisStaticObjectLayer staticObjects = engine.getDimension().getStaticObjectLayer(engine.getData());
-            assembly.mode.registerStage((x, z, blocks, biomes, multicore, context) ->
-                    staticObjects.apply(engine, x, z, blocks));
+            assembly.mode = assembly.runtimeKernel.createMode(engine);
+            assembly.runtimeKernel.registerStaticObjects(engine, assembly.mode);
             IrisLogging.debug("[IrisEngine timing] setupMode=" + (M.ms() - started) + "ms");
             started = M.ms();
             assembly.worldManager = IrisServices.get(EngineWorldManagerProvider.class).create(engine);
@@ -99,7 +135,7 @@ final class EngineRuntimeBuilder {
             }
             IrisLogging.debug("[IrisEngine timing] IrisWorldManager=" + (M.ms() - started) + "ms");
             BiomeMaxes biomeMaxes = computeBiomeMaxes();
-            return assembly.freeze(biomeMaxes);
+            return assembly.freezeRuntime(biomeMaxes);
         } catch (Throwable e) {
             Throwable cleanupFailure = engine.shutdownSequence.closeAssembly(assembly, e);
             if (cleanupFailure != e) {
@@ -111,8 +147,54 @@ final class EngineRuntimeBuilder {
         }
     }
 
+    GenerationRuntime buildDetachedGenerationRuntime(EngineTarget runtimeTarget, Path mantleStorageDirectory) {
+        return buildDetachedGenerationRuntime(
+                runtimeTarget,
+                mantleStorageDirectory,
+                GenerationKernelRegistry.standard().current(),
+                null);
+    }
+
+    GenerationRuntime buildDetachedGenerationRuntime(
+            EngineTarget runtimeTarget,
+            Path mantleStorageDirectory,
+            GenerationKernelRegistry.Version kernelVersion,
+            TransitionGenerationPlan transitionPlan
+    ) {
+        RuntimeAssembly assembly = new RuntimeAssembly(
+                RuntimeAssembly.nextRuntimeId(),
+                runtimeTarget,
+                mantleStorageDirectory,
+                selectRuntimeKernel(kernelVersion),
+                transitionPlan);
+        engine.runtimeAssembly.set(assembly);
+        try (IrisContext.Scope ignored = IrisContext.open(engine, engine.getGenerationSessions().currentSessionId(), null)) {
+            IrisLogging.debug("Setup Detached Generation Runtime " + assembly.cacheId);
+            assembly.mantle = assembly.runtimeKernel.createMantle(engine, assembly.mantleStorageDirectory);
+            assembly.ownsMantle = true;
+            assembly.complex = assembly.runtimeKernel.createComplex(engine, assembly.transitionPlan);
+            assembly.upperContext = assembly.runtimeKernel.createUpperContext(engine);
+            assembly.hash32 = CompletableFuture.completedFuture(computePackHash(runtimeTarget.getData()));
+            assembly.mantle.hotload();
+            assembly.mode = assembly.runtimeKernel.createMode(engine);
+            assembly.runtimeKernel.registerStaticObjects(engine, assembly.mode);
+            return assembly.freezeGeneration(computeBiomeMaxes());
+        } catch (Throwable e) {
+            Throwable cleanupFailure = engine.shutdownSequence.closeAssembly(assembly, e);
+            if (cleanupFailure != e) {
+                e.addSuppressed(cleanupFailure);
+            }
+            throw new IllegalStateException("Failed to build a detached Iris generation runtime.", e);
+        } finally {
+            engine.runtimeAssembly.remove();
+        }
+    }
+
     void publishRuntime(EngineRuntime next, EngineRuntime previous) {
-        Throwable retirementFailure = engine.shutdownSequence.closeRuntime(previous, null);
+        Throwable retirementFailure = engine.shutdownSequence.closeRuntime(
+                previous,
+                next.generation().mantle(),
+                null);
         if (retirementFailure != null) {
             retirementFailure = engine.shutdownSequence.closeRuntime(next, retirementFailure);
             engine.lifecycleState = LifecycleState.FAILED;
@@ -123,7 +205,7 @@ final class EngineRuntimeBuilder {
         }
 
         engine.runtime = next;
-        engine.publishedTarget = next.target();
+        engine.publishedTarget = next.generation().target();
         engine.getGenerationSessions().activateNextSession();
         engine.lifecycleState = LifecycleState.RUNNING;
         engine.getClosing().set(false);
@@ -150,33 +232,11 @@ final class EngineRuntimeBuilder {
             throw new IllegalStateException("Failed to start the Iris world manager.", e);
         }
         scheduleRuntimeTasks(next);
-        IrisLogging.debug("Engine Setup Complete " + next.cacheId());
+        IrisLogging.debug("Engine Setup Complete " + next.generation().cacheId());
     }
 
     private void scheduleRuntimeTasks(EngineRuntime engineRuntime) {
-        try {
-            if (!engine.backgroundTasks.scheduleTrackedTask(() -> {
-                try {
-                    File[] roots = engine.getData().getLoaders()
-                            .values()
-                            .stream()
-                            .map(ResourceLoader::getFolderName)
-                            .map(name -> new File(engine.getData().getDataFolder(), name))
-                            .filter(File::exists)
-                            .filter(File::isDirectory)
-                            .toArray(File[]::new);
-                    engineRuntime.hash32().complete(IO.hashRecursiveMeta(roots));
-                } catch (Throwable e) {
-                    engineRuntime.hash32().completeExceptionally(e);
-                    throw propagate(e);
-                }
-            })) {
-                throw new IllegalStateException("Iris background task admission closed before pack hashing.");
-            }
-        } catch (Throwable e) {
-            engineRuntime.hash32().completeExceptionally(e);
-            IrisLogging.reportError(e);
-        }
+        schedulePackHash(engineRuntime.generation());
         try {
             if (!engine.backgroundTasks.scheduleTrackedTask(() -> engine.getPlatformHooks().refreshDatapackWorkspace(engine))) {
                 throw new IllegalStateException("Iris background task admission closed before datapack workspace refresh.");
@@ -186,56 +246,34 @@ final class EngineRuntimeBuilder {
         }
     }
 
-    UpperDimensionContext buildUpperContext() {
-        IrisDimension dim = engine.getDimension();
-        if (!dim.hasUpperDimension()) {
-            return null;
+    private void schedulePackHash(GenerationRuntime generationRuntime) {
+        try {
+            if (!engine.backgroundTasks.scheduleTrackedTask(() -> {
+                try {
+                    generationRuntime.hash32().complete(computePackHash(generationRuntime.data()));
+                } catch (Throwable e) {
+                    generationRuntime.hash32().completeExceptionally(e);
+                    throw propagate(e);
+                }
+            })) {
+                throw new IllegalStateException("Iris background task admission closed before pack hashing.");
+            }
+        } catch (Throwable e) {
+            generationRuntime.hash32().completeExceptionally(e);
+            IrisLogging.reportError(e);
         }
-        String upperKey = dim.getUpperDimension();
-        IrisDimension upperDim = upperKey.equals(dim.getLoadKey())
-                ? dim
-                : IrisData.loadAnyDimension(upperKey, engine.getData());
-        if (upperDim != null) {
-            UpperDimensionContext ctx = UpperDimensionContext.create(engine, upperDim);
-            IrisLogging.info("Upper dimension enabled: " + upperKey
-                    + (ctx.isSelfReferencing() ? " (self-referencing)" : " (cross-referencing)"));
-            return ctx;
-        }
-        IrisLogging.warn("Upper dimension '" + upperKey + "' could not be resolved, skipping upper terrain.");
-        return null;
     }
 
-    private EngineMode createMode() {
-        Throwable configuredFailure = null;
-        try {
-            IrisDimensionMode configuredMode = engine.getDimension().getMode();
-            if (configuredMode == null) {
-                configuredMode = new IrisDimensionMode();
-                engine.getDimension().setMode(configuredMode);
-            }
-            EngineMode configured = configuredMode.create(engine);
-            if (configured == null) {
-                throw new IllegalStateException("Dimension mode factory returned null");
-            }
-            return configured;
-        } catch (Throwable e) {
-            configuredFailure = e;
-            IrisLogging.reportError(e);
-            if (engine.getModeFallbackLogged().compareAndSet(false, true)) {
-                IrisLogging.warn("Failed to initialize configured dimension mode for " + engine.getDimension().getLoadKey() + ", falling back to OVERWORLD mode.");
-            }
-        }
-
-        try {
-            EngineMode fallback = IrisDimensionModeType.OVERWORLD.create(engine);
-            if (fallback == null) {
-                throw new IllegalStateException("OVERWORLD mode factory returned null");
-            }
-            return fallback;
-        } catch (Throwable fallbackFailure) {
-            fallbackFailure.addSuppressed(configuredFailure);
-            throw new IllegalStateException("Both configured and fallback Iris engine modes failed.", fallbackFailure);
-        }
+    private long computePackHash(IrisData data) {
+        File[] roots = data.getLoaders()
+                .values()
+                .stream()
+                .map(ResourceLoader::getFolderName)
+                .map(name -> new File(data.getDataFolder(), name))
+                .filter(File::exists)
+                .filter(File::isDirectory)
+                .toArray(File[]::new);
+        return IO.hashRecursiveMeta(roots);
     }
 
     BiomeMaxes computeBiomeMaxes() {
@@ -289,11 +327,27 @@ final class EngineRuntimeBuilder {
         return current;
     }
 
+    static GenerationKernelRegistry.RuntimeKernel selectRuntimeKernel(
+            GenerationKernelRegistry.Version version
+    ) {
+        try {
+            return GenerationKernelRegistry.standard().select(version);
+        } catch (IOException failure) {
+            throw new IllegalArgumentException("Unsupported executable Iris generation kernel "
+                    + version + ".", failure);
+        }
+    }
+
     static final class RuntimeAssembly {
         private static final AtomicInteger RUNTIME_IDS = new AtomicInteger();
 
         final int cacheId;
         final EngineTarget target;
+        final Path mantleStorageDirectory;
+        final GenerationKernelRegistry.Version kernelVersion;
+        final GenerationKernelRegistry.RuntimeKernel runtimeKernel;
+        final SeedManager seedManager;
+        final TransitionGenerationPlan transitionPlan;
 
         static int nextRuntimeId() {
             return RUNTIME_IDS.incrementAndGet();
@@ -302,28 +356,75 @@ final class EngineRuntimeBuilder {
         UpperDimensionContext upperContext;
         EngineEffects effects;
         EngineMode mode;
+        EngineMantle mantle;
         EngineWorldManager worldManager;
         CompletableFuture<Long> hash32;
+        boolean ownsMantle;
 
         RuntimeAssembly(int cacheId, EngineTarget target) {
-            this.cacheId = cacheId;
-            this.target = target;
-        }
-
-        EngineRuntime freeze(BiomeMaxes biomeMaxes) {
-            if (complex == null || effects == null || mode == null || worldManager == null || hash32 == null) {
-                throw new IllegalStateException("Cannot publish an incomplete Iris engine runtime.");
-            }
-            return new EngineRuntime(
+            this(
                     cacheId,
                     target,
+                    null,
+                    selectRuntimeKernel(GenerationKernelRegistry.standard().current()),
+                    null);
+        }
+
+        RuntimeAssembly(int cacheId, EngineTarget target, Path mantleStorageDirectory) {
+            this(
+                    cacheId,
+                    target,
+                    mantleStorageDirectory,
+                    selectRuntimeKernel(GenerationKernelRegistry.standard().current()),
+                    null);
+        }
+
+        RuntimeAssembly(
+                int cacheId,
+                EngineTarget target,
+                Path mantleStorageDirectory,
+                GenerationKernelRegistry.RuntimeKernel runtimeKernel,
+                TransitionGenerationPlan transitionPlan
+        ) {
+            this.cacheId = cacheId;
+            this.target = target;
+            this.mantleStorageDirectory = mantleStorageDirectory == null
+                    ? null
+                    : IrisEngineMantle.normalizeStorageDirectory(mantleStorageDirectory);
+            this.runtimeKernel = Objects.requireNonNull(runtimeKernel, "executable generation kernel");
+            this.seedManager = this.runtimeKernel.createSeedManager(target.getWorld().getRawWorldSeed());
+            this.kernelVersion = this.runtimeKernel.version();
+            this.transitionPlan = transitionPlan;
+        }
+
+        GenerationRuntime freezeGeneration(BiomeMaxes biomeMaxes) {
+            if (complex == null || mode == null || mantle == null || mantleStorageDirectory == null || hash32 == null) {
+                throw new IllegalStateException("Cannot publish an incomplete Iris generation runtime.");
+            }
+            return new GenerationRuntime(
+                    cacheId,
+                    target,
+                    target.getData(),
+                    target.getDimension(),
+                    kernelVersion,
+                    runtimeKernel,
+                    seedManager,
+                    transitionPlan,
                     complex,
                     upperContext,
-                    effects,
                     mode,
-                    worldManager,
+                    mantle,
+                    mantleStorageDirectory,
                     hash32,
                     biomeMaxes);
         }
+
+        EngineRuntime freezeRuntime(BiomeMaxes biomeMaxes) {
+            if (effects == null || worldManager == null) {
+                throw new IllegalStateException("Cannot publish an incomplete Iris engine runtime.");
+            }
+            return new EngineRuntime(freezeGeneration(biomeMaxes), effects, worldManager);
+        }
+
     }
 }

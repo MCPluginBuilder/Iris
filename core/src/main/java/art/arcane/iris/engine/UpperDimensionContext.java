@@ -3,6 +3,8 @@ package art.arcane.iris.engine;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.history.GenerationBlend;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.image.IrisImageMapRuntime;
 import art.arcane.iris.engine.object.InferredType;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -31,24 +33,30 @@ public class UpperDimensionContext implements DataProvider {
     private static final NoiseBounds ZERO_NOISE_BOUNDS = new NoiseBounds(0D, 0D);
     private final IrisDimension dimension;
     private final IrisData data;
-    private final int chunkHeight;
     private final ProceduralStream<Double> heightStream;
+    private final ProceduralStream<Double> lowerHeightStream;
+    private final ProceduralStream<Double> unblendedLowerHeightStream;
     private final ProceduralStream<IrisBiome> biomeStream;
     private final ProceduralStream<IrisRegion> regionStream;
     private final ProceduralStream<PlatformBlockState> rockStream;
     private final IrisImageMapRuntime imageMapRuntime;
     private final boolean selfReferencing;
+    private final TransitionGenerationPlan transitionPlan;
+    private final CeilingLayout ceilingLayout;
 
     private UpperDimensionContext(ContextState state) {
         this.dimension = state.dimension();
         this.data = state.data();
-        this.chunkHeight = state.chunkHeight();
         this.heightStream = state.heightStream();
+        this.lowerHeightStream = state.lowerHeightStream();
+        this.unblendedLowerHeightStream = state.unblendedLowerHeightStream();
         this.biomeStream = state.biomeStream();
         this.regionStream = state.regionStream();
         this.rockStream = state.rockStream();
         this.imageMapRuntime = state.imageMapRuntime();
         this.selfReferencing = state.selfReferencing();
+        this.transitionPlan = state.transitionPlan();
+        this.ceilingLayout = new CeilingLayout(state.chunkHeight(), state.minimumGap());
     }
 
     public static UpperDimensionContext create(Engine engine, IrisDimension upperDim) {
@@ -66,12 +74,16 @@ public class UpperDimensionContext implements DataProvider {
                 engine.getDimension(),
                 engine.getData(),
                 chunkHeight,
-                complex.getNaturalHeightStream(),
-                complex.getNaturalTrueBiomeStream(),
+                complex.getUnblendedNaturalHeightStream(),
+                complex.getHeightStream(),
+                complex.getUnblendedNaturalHeightStream(),
+                complex.getUnblendedNaturalTrueBiomeStream(),
                 complex.getRegionStream(),
                 complex.getRockStream(),
                 complex.getImageMapRuntime(),
-                true
+                true,
+                complex.getTransitionGenerationPlan(),
+                engine.getDimension().getUpperDimensionGap()
         ));
     }
 
@@ -285,11 +297,15 @@ public class UpperDimensionContext implements DataProvider {
                 upperData,
                 chunkHeight,
                 heightStream,
+                engine.getComplex().getHeightStream(),
+                engine.getComplex().getUnblendedNaturalHeightStream(),
                 finalBiomeStream,
                 regionStream,
                 rockStream,
                 imageMapRuntime,
-                false
+                false,
+                engine.getComplex().getTransitionGenerationPlan(),
+                engine.getDimension().getUpperDimensionGap()
         ));
     }
 
@@ -401,9 +417,35 @@ public class UpperDimensionContext implements DataProvider {
                 remainingDepth - 1);
     }
 
-    public int getUpperSurfaceY(int x, int z) {
-        double rawHeight = heightStream.get((double) x, (double) z);
-        return chunkHeight - 1 - (int) Math.round(rawHeight);
+    public int getEffectiveSurfaceY(int x, int z) {
+        double depth = Math.max(0D, Math.min(ceilingLayout.height() - 1D, heightStream.getDouble(x, z)));
+        if (transitionPlan != null) {
+            TransitionGenerationPlan.TerrainSample sample = transitionPlan.terrainSampleAt(x, z);
+            if (sample.newEpochWeight() < 1D && sample.hasHistoricalSignature()) {
+                int targetLowerSurfaceY = (int) Math.min(ceilingLayout.height(),
+                        Math.round(unblendedLowerHeightStream.getDouble(x, z)));
+                int targetSurfaceY = effectiveSurfaceY(depth, ceilingLayout, targetLowerSurfaceY);
+                double targetDepth = Math.max(0D, ceilingLayout.height() - 1D - targetSurfaceY);
+                depth = blendCeilingDepth(targetDepth, sample);
+            }
+        }
+        int lowerSurfaceY = (int) Math.min(ceilingLayout.height(), Math.round(lowerHeightStream.getDouble(x, z)));
+        return effectiveSurfaceY(depth, ceilingLayout, lowerSurfaceY);
+    }
+
+    static double blendCeilingDepth(double newDepth, TransitionGenerationPlan.TerrainSample sample) {
+        if (sample.newEpochWeight() == 1D || !sample.hasHistoricalSignature()) {
+            return newDepth;
+        }
+        return GenerationBlend.interpolate(
+                sample.historicalUpperCeilingDepth(), newDepth, sample.newEpochWeight());
+    }
+
+    static int effectiveSurfaceY(double depth, CeilingLayout layout, int lowerSurfaceY) {
+        long mirroredSurface = layout.height() - 1L - Math.round(depth);
+        long gapSurface = (long) lowerSurfaceY + layout.minimumGap();
+        long surface = Math.max(0L, Math.max(mirroredSurface, gapSurface));
+        return surface >= layout.height() - 1L ? layout.height() : (int) surface;
     }
 
     public IrisBiome getUpperBiome(int x, int z) {
@@ -440,11 +482,23 @@ public class UpperDimensionContext implements DataProvider {
             IrisData data,
             int chunkHeight,
             ProceduralStream<Double> heightStream,
+            ProceduralStream<Double> lowerHeightStream,
+            ProceduralStream<Double> unblendedLowerHeightStream,
             ProceduralStream<IrisBiome> biomeStream,
             ProceduralStream<IrisRegion> regionStream,
             ProceduralStream<PlatformBlockState> rockStream,
             IrisImageMapRuntime imageMapRuntime,
-            boolean selfReferencing
+            boolean selfReferencing,
+            TransitionGenerationPlan transitionPlan,
+            int minimumGap
     ) {
+    }
+
+    record CeilingLayout(int height, int minimumGap) {
+        CeilingLayout {
+            if (height <= 0 || minimumGap < 0) {
+                throw new IllegalArgumentException("Upper ceiling height must be positive and gap non-negative");
+            }
+        }
     }
 }

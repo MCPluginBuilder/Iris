@@ -18,6 +18,7 @@
 
 package art.arcane.iris.engine.mantle.components;
 
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.TileData;
@@ -122,6 +123,25 @@ public class CaveObjectPlacementTransactionTest {
         transaction.setData(5, 30, 7, "object@1");
 
         assertEquals(CaveObjectPlacementTransaction.CommitResult.REJECTED_HYDROLOGY, transaction.commit());
+        verify(delegate, never()).set(anyInt(), anyInt(), anyInt(), any());
+        verify(delegate, never()).setData(anyInt(), anyInt(), anyInt(), any());
+    }
+
+    @Test
+    public void transitionIntersectionRejectsTheWholePlacement() {
+        Engine engine = mock(Engine.class);
+        when(engine.getHeight()).thenReturn(128);
+        IrisComplex complex = mock(IrisComplex.class);
+        when(engine.getComplex()).thenReturn(complex);
+        when(complex.allowsNewDiscreteContentAt(4, 7)).thenReturn(false);
+        IObjectPlacer delegate = mock(IObjectPlacer.class);
+        when(delegate.getEngine()).thenReturn(engine);
+        CaveObjectPlacementTransaction transaction = new CaveObjectPlacementTransaction(delegate, 20, 10);
+
+        transaction.set(4, 30, 7, mock(PlatformBlockState.class));
+        transaction.setData(4, 30, 7, "object@1");
+
+        assertEquals(CaveObjectPlacementTransaction.CommitResult.REJECTED_TRANSITION, transaction.commit());
         verify(delegate, never()).set(anyInt(), anyInt(), anyInt(), any());
         verify(delegate, never()).setData(anyInt(), anyInt(), anyInt(), any());
     }

@@ -28,6 +28,8 @@ import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.object.IrisGeneratorStyle;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.TileData;
@@ -73,6 +75,7 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     private final int z;
     private final int windowSide;
     private final AtomicReferenceArray<MantleChunk<Matter>> window;
+    private final TransitionGenerationPlan transitionGenerationPlan;
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     @EqualsAndHashCode.Exclude
@@ -97,6 +100,8 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
         this.radius = accessRadius;
         this.x = x;
         this.z = z;
+        IrisComplex complex = engineMantle.getComplex();
+        this.transitionGenerationPlan = complex == null ? null : complex.getTransitionGenerationPlan();
         // Every coordinate acquireChunk accepts lives in this window, so a flat array replaces the
         // boxed per-block map lookup on the placement and carve hot paths.
         this.windowSide = (this.radius * 2) + 1;
@@ -230,7 +235,7 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     }
 
     public <T> void setData(int x, int y, int z, T t) {
-        if (t == null) {
+        if (t == null || !allowsWrite(x, z)) {
             return;
         }
 
@@ -264,7 +269,7 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     }
 
     public boolean setDataIfAbsent(int x, int y, int z, MatterCavern value) {
-        if (value == null) {
+        if (value == null || !allowsWrite(x, z)) {
             return false;
         }
 
@@ -305,7 +310,7 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     }
 
     public boolean carveDataIfAbsent(int x, int y, int z, MatterCavern value) {
-        if (value == null || y < 0 || y >= mantle.getWorldHeight()) {
+        if (value == null || !allowsWrite(x, z) || y < 0 || y >= mantle.getWorldHeight()) {
             return false;
         }
 
@@ -341,7 +346,7 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     }
 
     public void setForcedCarve(int x, int y, int z, MatterCavern value) {
-        if (value == null || y < 0 || y >= mantle.getWorldHeight()) {
+        if (value == null || !allowsWrite(x, z) || y < 0 || y >= mantle.getWorldHeight()) {
             return;
         }
         MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
@@ -366,7 +371,7 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     }
 
     public void clearBlock(int x, int y, int z) {
-        if (y < 0 || y >= mantle.getWorldHeight()) {
+        if (!allowsWrite(x, z) || y < 0 || y >= mantle.getWorldHeight()) {
             return;
         }
         MantleChunk<Matter> chunk = acquireChunk(x >> 4, z >> 4);
@@ -400,6 +405,10 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
 
         if (y < 0 || y >= mantle.getWorldHeight()) {
             return null;
+        }
+
+        if (!allowsWrite(x, z)) {
+            return getDataIfPresent(x, y, z, type);
         }
 
         MantleChunk<Matter> chunk = acquireChunk(cx, cz);
@@ -526,7 +535,10 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
 
     public boolean restorePrerequisiteData(int x, int y, int z, Class<?> type) {
         Objects.requireNonNull(type, "type");
-        if (y < 0 || y >= mantle.getWorldHeight() || !isPreObjectType(type)) {
+        if (!allowsWrite(x, z)
+                || y < 0
+                || y >= mantle.getWorldHeight()
+                || !isPreObjectType(type)) {
             return false;
         }
 
@@ -551,7 +563,7 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     }
 
     public boolean restorePrerequisiteCell(int x, int y, int z) {
-        if (y < 0 || y >= mantle.getWorldHeight()) {
+        if (!allowsWrite(x, z) || y < 0 || y >= mantle.getWorldHeight()) {
             return false;
         }
 
@@ -584,7 +596,7 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     }
 
     public void clearData(int x, int y, int z, Class<?> type) {
-        if (y < 0 || y >= mantle.getWorldHeight()) {
+        if (!allowsWrite(x, z) || y < 0 || y >= mantle.getWorldHeight()) {
             return;
         }
 
@@ -624,7 +636,7 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     }
 
     private void setCustomBlock(int x, int y, int z, PlatformBlockState baseState, Identifier identifier) {
-        if (y < 0 || y >= mantle.getWorldHeight()) {
+        if (!allowsWrite(x, z) || y < 0 || y >= mantle.getWorldHeight()) {
             return;
         }
         if (y == 0 && engineMantle.getEngine().getDimension().isBedrock()) {
@@ -709,6 +721,11 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
             return null;
         }
         return matter.getSlice(type).get(x, y, z);
+    }
+
+    private boolean allowsWrite(int blockX, int blockZ) {
+        return transitionGenerationPlan == null
+                || !transitionGenerationPlan.isHistoricalBlock(blockX, blockZ);
     }
 
     @SuppressWarnings("unchecked")

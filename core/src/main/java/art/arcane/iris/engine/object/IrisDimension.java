@@ -30,6 +30,7 @@ import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.iris.core.nms.datapack.IDataFixer.Dimension;
 import art.arcane.iris.engine.data.cache.AtomicCache;
+import art.arcane.iris.engine.history.GenerationRegistryContractFactory;
 import art.arcane.iris.engine.object.annotations.ArrayType;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
@@ -64,6 +65,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -71,6 +73,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
@@ -721,16 +724,21 @@ public class IrisDimension extends IrisRegistrant {
     }
 
     public void installBiomes(IDataFixer fixer, DataProvider data, KList<File> datapackRoots, KSet<String> biomes) throws IOException {
-        String namespace = getLoadKey().toLowerCase(Locale.ROOT);
-        installBiomes(fixer, data, datapackRoots, namespace, "", biomes);
+        installBiomes(fixer, data, datapackRoots, biomes, IrisCustomBiomeAliasResolver.none());
     }
 
-    public void installBiomes(IDataFixer fixer, DataProvider data, KList<File> datapackRoots,
-                              String namespace, String pathPrefix, KSet<String> biomes) throws IOException {
+    public void installBiomes(
+            IDataFixer fixer,
+            DataProvider data,
+            KList<File> datapackRoots,
+            KSet<String> biomes,
+            IrisCustomBiomeAliasResolver aliasResolver
+    ) throws IOException {
         // Tag membership is accumulated in memory and flushed once per tag at the end of the walk. Writing a
         // tag file per (biome, tag) pair made staging quadratic: every write re-read, re-parsed and re-emitted
         // a file that grows with every biome added to that tag.
         KMap<String, KSet<String>> tagMembership = new KMap<>();
+        IrisData packData = Objects.requireNonNull(data.getData(), "Iris biome datapack data");
 
         for (IrisBiome irisBiome : getAllBiomes(data)) {
             if (!irisBiome.isCustom()) {
@@ -743,37 +751,97 @@ public class IrisDimension extends IrisRegistrant {
             // comes from the chunk generator's generation-settings getter, not from the datapack.
             String derivativeKey = irisBiome.getVanillaDerivativeKey();
 
-            ContentGate contentGate = getLoader() == null ? null : getLoader().getContentGate();
+            ContentGate contentGate = packData.getContentGate();
 
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                String customBiomeId = customBiome.getId();
                 String json = customBiome.generateJson(fixer, contentGate);
+                String currentPhysicalKey = GenerationRegistryContractFactory.customBiomeResourceKey(
+                        getLoadKey(),
+                        customBiome,
+                        contentGate
+                );
+                String physicalKey = aliasResolver.physicalResourceKey(
+                        this,
+                        irisBiome,
+                        customBiome,
+                        currentPhysicalKey
+                );
+                String logicalKey = getLoadKey().toLowerCase(Locale.ROOT)
+                        + ":" + customBiome.getId().toLowerCase(Locale.ROOT);
 
                 synchronized (biomes) {
-                    if (!biomes.add(customBiomeId)) {
-                        IrisLogging.debug("Duplicate Data Pack Biome: " + getLoadKey() + "/" + customBiomeId);
-                        continue;
+                    biomes.add(physicalKey);
+                }
+
+                LinkedHashSet<String> resourceKeys = new LinkedHashSet<>();
+                resourceKeys.add(physicalKey);
+                Collection<String> aliases = aliasResolver.aliases(this, irisBiome, customBiome, physicalKey);
+                if (aliases == null) {
+                    throw new IOException("Custom biome alias resolver returned null for '" + logicalKey + "'.");
+                }
+                if (!aliases.isEmpty()
+                        && physicalKey.equals(packData.customBiomeResourceKey(this, customBiome.getId()))) {
+                    resourceKeys.addAll(aliases);
+                }
+                for (String resourceKey : resourceKeys) {
+                    String normalizedKey = normalizeResourceKey(resourceKey);
+                    if (normalizedKey == null) {
+                        throw new IOException("Invalid custom biome resource key '" + resourceKey + "'.");
                     }
+                    String emittedJson = aliasResolver.generatedSource(
+                            GenerationRegistryContractFactory.BIOME_REGISTRY,
+                            normalizedKey,
+                            json,
+                            fixer
+                    );
+                    for (File datapackRoot : datapackRoots) {
+                        writeCustomBiomeDefinition(datapackRoot.toPath(), normalizedKey, emittedJson);
+                    }
+                    collectBiomeTags(
+                            tagMembership,
+                            normalizedKey,
+                            customBiome.getEffectiveTags(derivativeKey)
+                    );
                 }
-
-                String biomePath = pathPrefix.isBlank()
-                        ? customBiomeId
-                        : pathPrefix + "/" + customBiomeId;
-                for (File datapackRoot : datapackRoots) {
-                    File output = new File(datapackRoot, "data/" + namespace + "/worldgen/biome/" + biomePath + ".json");
-
-                    IrisLogging.debug("    Installing Data Pack Biome: " + output.getPath());
-                    output.getParentFile().mkdirs();
-                    IO.writeAll(output, json);
-                }
-                collectBiomeTags(tagMembership, namespace + ":" + biomePath,
-                        customBiome.getEffectiveTags(derivativeKey));
             }
         }
 
         for (File datapackRoot : datapackRoots) {
             installBiomeTags(datapackRoot, tagMembership);
         }
+    }
+
+    private static void writeCustomBiomeDefinition(
+            Path datapackRoot,
+            String resourceKey,
+            String json
+    ) throws IOException {
+        int separator = resourceKey.indexOf(':');
+        String namespace = resourceKey.substring(0, separator);
+        String path = resourceKey.substring(separator + 1);
+        Path biomeRoot = datapackRoot.resolve("data")
+                .resolve(namespace)
+                .resolve("worldgen")
+                .resolve("biome")
+                .toAbsolutePath()
+                .normalize();
+        Path output = biomeRoot.resolve(path + ".json").normalize();
+        if (!output.startsWith(biomeRoot)) {
+            throw new IOException("Unsafe custom biome resource key '" + resourceKey + "'.");
+        }
+        if (Files.isRegularFile(output)) {
+            String existing = Files.readString(output, StandardCharsets.UTF_8);
+            String existingFingerprint = GenerationRegistryContractFactory
+                    .fingerprintCustomBiomeDefinition(existing);
+            String candidateFingerprint = GenerationRegistryContractFactory
+                    .fingerprintCustomBiomeDefinition(json);
+            if (!existingFingerprint.equals(candidateFingerprint)) {
+                throw new IOException("Conflicting custom biome output for '" + resourceKey + "'.");
+            }
+            return;
+        }
+        IrisLogging.debug("    Installing Data Pack Biome: " + output);
+        writeAtomic(output, json);
     }
 
     public static void clearGeneratedBiomeTags(KList<File> datapackRoots) {
@@ -931,11 +999,25 @@ public class IrisDimension extends IrisRegistrant {
     }
 
     public void installDimensionType(IDataFixer fixer, KList<File> datapackRoots) throws IOException {
-        IrisDimensionType type = getDimensionType();
-        String json = type.toJson(fixer);
-        String dimensionTypeKey = getDimensionTypeKey();
+        installDimensionType(fixer, datapackRoots, IrisCustomBiomeAliasResolver.none());
+    }
 
-        IrisLogging.debug("    Installing Data Pack Dimension Type: \"iris:" + dimensionTypeKey + '"');
+    public void installDimensionType(
+            IDataFixer fixer,
+            KList<File> datapackRoots,
+            IrisCustomBiomeAliasResolver sourceResolver
+    ) throws IOException {
+        IrisDimensionType type = getDimensionType();
+        String dimensionTypeKey = getDimensionTypeKey();
+        String resourceKey = "iris:" + dimensionTypeKey;
+        String json = Objects.requireNonNull(sourceResolver, "sourceResolver").generatedSource(
+                GenerationRegistryContractFactory.DIMENSION_TYPE_REGISTRY,
+                resourceKey,
+                type.toJson(fixer),
+                fixer
+        );
+
+        IrisLogging.debug("    Installing Data Pack Dimension Type: \"" + resourceKey + '"');
         for (File datapackRoot : datapackRoots) {
             File output = new File(datapackRoot, "data/iris/dimension_type/" + dimensionTypeKey + ".json");
             output.getParentFile().mkdirs();

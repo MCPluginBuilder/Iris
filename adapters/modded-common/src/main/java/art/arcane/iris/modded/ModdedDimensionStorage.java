@@ -19,6 +19,7 @@
 package art.arcane.iris.modded;
 
 import art.arcane.iris.engine.IrisEngineMantle;
+import art.arcane.iris.engine.history.GenerationHistoryPaths;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.Level;
@@ -38,7 +39,8 @@ public final class ModdedDimensionStorage {
             "region",
             "entities",
             "poi",
-            IrisEngineMantle.STORAGE_FOLDER_NAME
+            IrisEngineMantle.STORAGE_FOLDER_NAME,
+            GenerationHistoryPaths.IRIS_DIRECTORY_NAME
     );
 
     private ModdedDimensionStorage() {

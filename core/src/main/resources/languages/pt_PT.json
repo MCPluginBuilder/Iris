@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "Raio em chunks ao redor do centro",
     "iris.director.commanddeveloper.param.center_chunk_x": "Centralizar o chunk X",
     "iris.director.commanddeveloper.param.center_chunk_z": "Centralizar o chunk Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "Actualizar a pack de um mundo (UNSAFE!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "Preparar uma atualização da geração do mundo",
     "iris.director.commanddeveloper.param.world_update": "O mundo a actualizar",
     "iris.director.commanddeveloper.param.pack_install_into_world": "O pacote para instalar no mundo",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "Certifique-se de fazer um backup & Leia primeiro os avisos!",
@@ -1053,15 +1053,13 @@
       "other": "§7    ...  e {count} mais avisos.",
       "one": "§7    ...  e {count} Mais aviso."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cFaça sempre uma cópia de segurança antes de usar esta função",
-      "§eOs possíveis problemas incluem, entre outros:",
-      "§e - Chunks partidos (cortes) entre chunks antigos e novos (antes da atualização & depois dela)",
-      "§e - Chunks regenerados que não encaixam nos chunks antigos",
-      "§e - Estruturas que não voltam a surgir durante a regeneração",
-      "§e - Cavernas que não ficam alinhadas",
-      "§e - Camadas de terreno que não ficam alinhadas",
-      "§cQuando compreender os riscos e tiver criado uma cópia de segurança:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cFaça uma cópia de segurança do mundo inteiro antes de preparar esta atualização.",
+      "§eOs chunks existentes não serão regenerados nem reescritos.",
+      "§eApós o reinício, os novos chunks usarão o pacote preparado com uma transição gradual no limite guardado.",
+      "§eNão é possível alterar a semente, a altura, o ambiente nem o tipo de dimensão do mundo.",
+      "§eCada cópia de segurança deve conservar todo o diretório iris/generation.",
+      "§cPara preparar a atualização e pedir um reinício normal:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aImportação §f{total}§a vanilla & estruturas do pacote de dados (modo={mode}, includeNonJigsaw={includeNonJigsaw})...",

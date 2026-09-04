@@ -172,15 +172,13 @@ public final class BukkitRuntimeMessages {
                     + " (dimension blockFallbacks, block backup)."
     );
     public static final LinesKey COMMAND_DEVELOPER_UPDATE_WORLD_WARNING = LinesKey.of(
-            "iris.bukkit.runtime.commanddeveloper.update_world_warning",
-            C.RED + "You should always make a backup before using this",
-            C.YELLOW + "Issues caused by this can be, but are not limited to:",
-            C.YELLOW + " - Broken chunks (cut-offs) between old and new chunks (before & after the update)",
-            C.YELLOW + " - Regenerated chunks that do not fit in with the old chunks",
-            C.YELLOW + " - Structures not spawning again when regenerating",
-            C.YELLOW + " - Caves not lining up",
-            C.YELLOW + " - Terrain layers not lining up",
-            C.RED + "Now that you are aware of the risks, and have made a back-up:",
+            "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning",
+            C.RED + "Back up the complete world before staging this update.",
+            C.YELLOW + "Existing chunks will not be regenerated or rewritten.",
+            C.YELLOW + "New chunks use the staged pack after restart and blend across the frozen boundary.",
+            C.YELLOW + "The world seed, height, environment, and dimension type cannot change.",
+            C.YELLOW + "Every backup must retain the complete iris/generation directory.",
+            C.RED + "To stage the update and request a clean restart:",
             C.RED + "/iris developer update-world {world} {pack} confirm=true"
     );
     public static final TextKey BULK_STRUCTURE_IMPORTER_IMPORTING_VANILLA_DATAPACK_STRUCTURES_MODE_INCLUDENONJIGSAW = TextKey.of(

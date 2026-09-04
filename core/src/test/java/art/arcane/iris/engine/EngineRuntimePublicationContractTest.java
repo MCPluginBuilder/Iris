@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class EngineRuntimePublicationContractTest {
@@ -35,6 +36,69 @@ public class EngineRuntimePublicationContractTest {
         assertBefore(publish, "engine.getClosing().set(true)", "closeRuntime(next, e)");
         assertBefore(publish, "closeBackgroundTaskAdmission()", "closeRuntime(next, e)");
         assertBefore(publish, "sealAndAwait(", "closeRuntime(next, e)");
+    }
+
+    @Test
+    public void detachedRuntimeBuildDoesNotCreateWorldOwnedServices() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/engine/EngineRuntimeBuilder.java")).replace("\r\n", "\n");
+        int buildStart = source.indexOf("GenerationRuntime buildDetachedGenerationRuntime(");
+        int buildEnd = source.indexOf("void publishRuntime(", buildStart);
+        String build = source.substring(buildStart, buildEnd);
+
+        assertTrue(build.contains("assembly.runtimeKernel.createComplex(engine, assembly.transitionPlan)"));
+        assertTrue(build.contains("assembly.runtimeKernel.createMantle(engine, assembly.mantleStorageDirectory)"));
+        assertTrue(build.contains("assembly.mantle.hotload()"));
+        assertTrue(build.contains("assembly.runtimeKernel.createMode(engine)"));
+        assertTrue(build.contains("assembly.runtimeKernel.createUpperContext(engine)"));
+        assertTrue(build.contains("assembly.runtimeKernel.registerStaticObjects(engine, assembly.mode)"));
+        assertFalse(build.contains("EngineEffectsProvider"));
+        assertFalse(build.contains("EngineWorldManagerProvider"));
+        assertFalse(build.contains("worldManager().start()"));
+    }
+
+    @Test
+    public void runtimePublicationTransfersAnIdenticalMantleWithoutClosingIt() throws IOException {
+        String builderSource = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/engine/EngineRuntimeBuilder.java")).replace("\r\n", "\n");
+        String shutdownSource = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/engine/EngineShutdownSequence.java")).replace("\r\n", "\n");
+
+        assertTrue(builderSource.contains("next.generation().mantle()"));
+        assertTrue(shutdownSource.contains("generationRuntime.mantle() != retainedMantle"));
+    }
+
+    @Test
+    public void engineAndDetachedRuntimeAcceptExplicitMantleDirectories() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/engine/IrisEngine.java")).replace("\r\n", "\n");
+
+        assertTrue(source.contains("InitializationMode initializationMode,\n            Path mantleStorageDirectory"));
+        assertTrue(source.contains("EngineTarget runtimeTarget,\n            Path mantleStorageDirectory"));
+        assertTrue(source.contains("exclusive mantle storage directory"));
+    }
+
+    @Test
+    public void mantleIoPinsTheRuntimeDataAcrossWorkerThreads() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/engine/IrisEngineMantle.java")).replace("\r\n", "\n");
+
+        assertTrue(source.contains("runtimeData::get"));
+        assertTrue(source.contains("runtimeData.set(Objects.requireNonNull(engine.getData()"));
+        assertFalse(source.contains("createDataAdapter(engine::getData)"));
+    }
+
+    @Test
+    public void failedDetachedBuildReleasesTransferredTargetOwnership() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/engine/IrisEngine.java")).replace("\r\n", "\n");
+        int buildStart = source.indexOf("public GenerationRuntimeBinding buildDetachedGenerationRuntime(");
+        int buildEnd = source.indexOf("public void closeDetachedGenerationRuntime(", buildStart);
+        String build = source.substring(buildStart, buildEnd);
+
+        assertTrue(build.contains("detachedData.registerEngine(this)"));
+        assertTrue(build.contains("shutdownSequence.closeDetachedTarget(requiredTarget, null)"));
+        assertTrue(build.contains("shutdownSequence.closeDetachedGenerationRuntime(detached, null)"));
     }
 
     private static void assertBefore(String source, String first, String second) {

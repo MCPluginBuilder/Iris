@@ -223,7 +223,13 @@ public final class ModdedStartup {
             index++;
             long dimensionStartedAt = System.currentTimeMillis();
             try {
-                ModdedDimensionManager.create(server, dimension.id(), dimension.pack(), dimension.dimension(), dimension.seed());
+                ModdedDimensionManager.restorePersistent(
+                        server,
+                        dimension.id(),
+                        dimension.pack(),
+                        dimension.dimension(),
+                        dimension.seed()
+                );
                 injected++;
                 ModdedIrisLog.info("Iris re-injected {}/{} '{}' (pack={} dim={}) in {}ms",
                         index, dimensions.size(), dimension.id(), dimension.pack(), dimension.dimension(),

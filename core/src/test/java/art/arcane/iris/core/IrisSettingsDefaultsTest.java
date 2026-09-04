@@ -41,6 +41,17 @@ public class IrisSettingsDefaultsTest {
     }
 
     @Test
+    public void generationTransitionWidthHasSafeBounds() {
+        IrisSettings.IrisSettingsGenerator settings = new IrisSettings.IrisSettingsGenerator();
+
+        assertEquals(256, settings.getGenerationTransitionWidthBlocks());
+        settings.setGenerationTransitionWidthBlocks(1);
+        assertEquals(16, settings.getGenerationTransitionWidthBlocks());
+        settings.setGenerationTransitionWidthBlocks(20_000);
+        assertEquals(8_192, settings.getGenerationTransitionWidthBlocks());
+    }
+
+    @Test
     public void hotloadSnapshotIsValidatedBeforeReplacingLiveSettings() {
         IrisSettings previous = IrisSettings.settings;
         IrisSettings live = new IrisSettings();

@@ -21,6 +21,7 @@ package art.arcane.iris.engine.mantle.components;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
@@ -67,7 +68,13 @@ final class CaveObjectPlacementTransaction implements IObjectPlacer {
             return CommitResult.EMPTY;
         }
 
+        IrisComplex complex = engine == null ? null : engine.getComplex();
         for (BufferedMutation mutation : mutations) {
+            if (complex != null
+                    && !complex.allowsNewDiscreteContentAt(mutation.x(), mutation.z())) {
+                discard();
+                return CommitResult.REJECTED_TRANSITION;
+            }
             if (!isWithinBounds(mutation.x(), mutation.y(), mutation.z())) {
                 discard();
                 return CommitResult.REJECTED_BOUNDS;
@@ -252,6 +259,7 @@ final class CaveObjectPlacementTransaction implements IObjectPlacer {
     enum CommitResult {
         COMMITTED,
         EMPTY,
+        REJECTED_TRANSITION,
         REJECTED_BOUNDS,
         REJECTED_HYDROLOGY
     }

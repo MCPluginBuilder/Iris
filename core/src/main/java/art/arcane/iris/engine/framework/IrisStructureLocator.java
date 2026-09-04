@@ -178,6 +178,22 @@ public final class IrisStructureLocator {
         return resolveInChunk(engine, key, cx, cz) != null;
     }
 
+    public static LocateResult locateInChunk(Engine engine, String key, int chunkX, int chunkZ) {
+        if (!isPlaced(engine, key)) {
+            return NOT_FOUND_RESULT;
+        }
+        ResolvedStart resolved = resolveInChunk(engine, key, chunkX, chunkZ);
+        if (resolved == null) {
+            return NOT_FOUND_RESULT;
+        }
+        return new LocateResult(
+                LocateStatus.FOUND,
+                resolved.originX(),
+                resolved.baseY(),
+                resolved.originZ()
+        );
+    }
+
     public static LocateResult locate(Engine engine, String key, int fromBlockX, int fromBlockZ, int maxRadiusChunks) {
         return locate(engine, key, fromBlockX, fromBlockZ, maxRadiusChunks, (chunkX, chunkZ) -> true);
     }
@@ -567,7 +583,15 @@ public final class IrisStructureLocator {
                 "assembled pieces exceed the configured structure or world bounds")) {
             return null;
         }
+        if (!allowsResolvedFootprint(engine, placement, pieces)) {
+            return null;
+        }
         return new ResolvedPlacement(placement, selectedKey, structure, pieces, rng, originX, baseY, originZ, exactY);
+    }
+
+    public static boolean allowsResolvedFootprint(Engine engine, ResolvedPlacement resolved) {
+        Objects.requireNonNull(resolved, "resolved placement");
+        return allowsResolvedFootprint(engine, resolved.placement(), resolved.pieces());
     }
 
     public static boolean requirePlacementOutput(IrisStructurePlacement placement, String structureKey,
@@ -874,6 +898,34 @@ public final class IrisStructureLocator {
             maxZ = Math.max(maxZ, piece.getMaxZ());
         }
         return new int[]{minX, minY, minZ, maxX, maxY, maxZ};
+    }
+
+    private static boolean allowsResolvedFootprint(
+            Engine engine,
+            IrisStructurePlacement placement,
+            KList<PlacedStructurePiece> pieces
+    ) {
+        int[] bounds = computeBounds(pieces);
+        if (bounds == null) {
+            return false;
+        }
+        IrisStructureTerrain terrain = placement.resolvedTerrain();
+        IrisStructureTerrainMode mode = terrain.resolvedMode();
+        int padding = mode == IrisStructureTerrainMode.FORCE_CARVE
+                || mode == IrisStructureTerrainMode.BORE
+                ? Math.max(0, terrain.getHorizontalPadding())
+                : 0;
+        return engine.getComplex().allowsNewGenerationFootprint(
+                saturatedOffset(bounds[0], -padding),
+                saturatedOffset(bounds[2], -padding),
+                saturatedOffset(bounds[3], padding),
+                saturatedOffset(bounds[5], padding)
+        );
+    }
+
+    private static int saturatedOffset(int coordinate, int offset) {
+        long result = (long) coordinate + offset;
+        return (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, result));
     }
 
     private static int randomInclusive(RNG rng, int minimum, int maximum) {

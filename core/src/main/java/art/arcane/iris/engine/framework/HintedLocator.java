@@ -34,6 +34,7 @@ import art.arcane.volmlib.util.math.Position2;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 
 import java.util.ArrayDeque;
+import java.util.Comparator;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -107,10 +108,33 @@ public final class HintedLocator<T> implements Locator<T> {
     }
 
     @Override
+    public boolean matchesForSearch(Engine engine, Position2 chunk) {
+        return exact.matchesForSearch(engine, chunk);
+    }
+
+    @Override
+    public Position2 nearestRecorded(Engine engine, Position2 origin, int maxChunkRadius) {
+        return exact.nearestRecorded(engine, origin, maxChunkRadius);
+    }
+
+    @Override
+    public SearchCandidate nearestRecordedCandidate(Engine engine, Position2 origin, int maxChunkRadius) {
+        return exact.nearestRecordedCandidate(engine, origin, maxChunkRadius);
+    }
+
+    @Override
+    public SearchCandidate candidateForMatchedChunk(Engine engine, Position2 chunk) {
+        return exact.candidateForMatchedChunk(engine, chunk);
+    }
+
+    @Override
     public CompletableFuture<Position2> find(Engine engine, Position2 pos, long timeout, Consumer<Integer> checks) throws WrongEngineBroException {
         if (engine.isClosed()) {
             throw new WrongEngineBroException();
         }
+
+        SearchCandidate recorded = nearestRecordedCandidate(engine, pos, MAX_SAMPLE_RADIUS_CHUNKS);
+        int activeRadius = Locator.activeSearchRadius(pos, recorded, MAX_SAMPLE_RADIUS_CHUNKS);
 
         AtomicBoolean stop = new AtomicBoolean(false);
         CompletableFuture<Position2> search = MultiBurst.burst.completeValueAsync(() -> {
@@ -118,74 +142,109 @@ public final class HintedLocator<T> implements Locator<T> {
                  IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
                 SearchPlan plan = planner.apply(engine);
 
-                if (!plan.isPossible()) {
-                    return null;
-                }
-
-                return search(engine, plan, pos, timeout, checks, stop);
+                SearchCandidate nearest = search(engine, plan, pos, activeRadius, recorded, timeout, checks, stop);
+                return nearest == null ? null : nearest.chunk();
             }
         });
         return LocatorCanceller.requestScoped(search, stop);
     }
 
-    private Position2 search(Engine engine, SearchPlan plan, Position2 pos, long timeout, Consumer<Integer> checks, AtomicBoolean stop) {
+    private SearchCandidate search(
+            Engine engine,
+            SearchPlan plan,
+            Position2 pos,
+            int maximumRadius,
+            SearchCandidate recorded,
+            long timeout,
+            Consumer<Integer> checks,
+            AtomicBoolean stop
+    ) {
+        if (!plan.isPossible()
+                && !GenerationLocatorPolicy.hasHistoricalFallbackInSquare(engine, pos, maximumRadius)) {
+            return recorded;
+        }
         Locator<?> verifier = plan.getExactOverride() != null ? plan.getExactOverride() : exact;
         int stride = Math.max(1, plan.getStrideChunks());
-        int batchTarget = IrisSettings.getThreadCount(IrisSettings.get().getConcurrency().getParallelism()) * 32;
-        int maxRing = Math.max(1, MAX_SAMPLE_RADIUS_CHUNKS / stride);
+        int batchTarget = Math.max(1, IrisSettings.getThreadCount(IrisSettings.get().getConcurrency().getParallelism()) * 32);
+        int maxRing = Math.max(0, (maximumRadius + stride - 1) / stride + 1);
         PrecisionStopwatch stopwatch = PrecisionStopwatch.start();
         AtomicInteger covered = new AtomicInteger();
+        AtomicReference<SearchCandidate> nearest = new AtomicReference<>(recorded);
         KList<Position2> batch = new KList<>();
 
         for (int ring = 0; ring <= maxRing; ring++) {
             if (stop.get() || engine.isClosing() || stopwatch.getMilliseconds() >= timeout) {
-                return null;
+                return nearest.get();
             }
 
-            appendRing(batch, pos, ring, stride);
-
-            if (batch.size() < batchTarget && ring < maxRing) {
-                continue;
+            int cells = ring == 0 ? 1 : ring * 8;
+            for (int index = 0; index < cells; index++) {
+                Position2 sample = ringPosition(pos, ring, stride, index);
+                if (sample == null) {
+                    continue;
+                }
+                batch.add(sample);
+                if (batch.size() < batchTarget) {
+                    continue;
+                }
+                processBatch(engine, plan, verifier, batch, pos, maximumRadius, nearest,
+                        stride, timeout, stopwatch, covered, checks, stop);
+                batch.clear();
+                if (stop.get() || engine.isClosing() || stopwatch.getMilliseconds() >= timeout) {
+                    return nearest.get();
+                }
             }
 
-            Position2 result = processBatch(engine, plan, verifier, batch, stride, timeout, stopwatch, covered, checks, stop);
-            batch.clear();
-
-            if (result != null) {
-                return result;
+            int radius = Locator.activeSearchRadius(pos, nearest.get(), maximumRadius);
+            if (ring == maxRing || nearest.get() != null && (long) ring * stride > radius) {
+                if (!batch.isEmpty()) {
+                    processBatch(engine, plan, verifier, batch, pos, maximumRadius, nearest,
+                            stride, timeout, stopwatch, covered, checks, stop);
+                }
+                return nearest.get();
             }
         }
 
-        return null;
+        return nearest.get();
     }
 
-    private Position2 processBatch(Engine engine, SearchPlan plan, Locator<?> verifier, KList<Position2> batch, int stride, long timeout, PrecisionStopwatch stopwatch, AtomicInteger covered, Consumer<Integer> checks, AtomicBoolean stop) {
+    private void processBatch(Engine engine, SearchPlan plan, Locator<?> verifier, KList<Position2> batch,
+                              Position2 origin, int maximumRadius, AtomicReference<SearchCandidate> nearest,
+                              int stride, long timeout, PrecisionStopwatch stopwatch, AtomicInteger covered,
+                              Consumer<Integer> checks, AtomicBoolean stop) {
+        batch.sort(Comparator.comparingLong(sample -> chunkDistanceSquared(origin, sample)));
         int size = batch.size();
         boolean[] hits = new boolean[size];
         boolean fine = stride <= 1;
         CoarseSample coarse = plan.getCoarse();
-        AtomicBoolean matched = new AtomicBoolean(false);
+        int radius = Locator.activeSearchRadius(origin, nearest.get(), maximumRadius);
         BurstExecutor executor = MultiBurst.burst.burst(size);
 
         for (int i = 0; i < size; i++) {
             int index = i;
             Position2 sample = batch.get(i);
             executor.queue(() -> {
-                if (stop.get() || engine.isClosing() || (fine && matched.get())) {
+                if (stop.get() || engine.isClosing() || stopwatch.getMilliseconds() >= timeout
+                        || !intersectsSearchRadius(origin, sample, fine ? 0 : stride, radius)) {
                     return;
                 }
 
                 int blockX = (sample.getX() << 4) + 8;
                 int blockZ = (sample.getZ() << 4) + 8;
+                boolean historicalFallback = GenerationLocatorPolicy.hasHistoricalFallbackInSquare(
+                        engine,
+                        sample,
+                        fine ? 0 : stride
+                );
 
-                if (coarse != null && !coarse.test(blockX, blockZ)) {
+                if (!historicalFallback && (!plan.isPossible()
+                        || coarse != null && !coarse.test(blockX, blockZ))) {
                     return;
                 }
 
                 if (fine) {
-                    if (verifier.matches(engine, sample)) {
-                        hits[index] = true;
-                        matched.set(true);
+                    if (verifier.matchesForSearch(engine, sample)) {
+                        recordCandidate(engine, sample, origin, nearest);
                     }
 
                     return;
@@ -196,86 +255,107 @@ public final class HintedLocator<T> implements Locator<T> {
         }
 
         executor.complete();
-        covered.addAndGet(size * stride * stride);
+        covered.updateAndGet(value -> (int) Math.min(Integer.MAX_VALUE,
+                (long) value + (long) size * stride * stride));
         checks.accept(covered.get());
+
+        if (fine) {
+            return;
+        }
 
         for (int i = 0; i < size; i++) {
             if (!hits[i]) {
                 continue;
             }
 
-            if (fine) {
-                return batch.get(i);
-            }
-
             if (stop.get() || engine.isClosing() || stopwatch.getMilliseconds() >= timeout) {
-                return null;
+                return;
             }
 
-            Position2 refined = refine(engine, verifier, batch.get(i), stride, timeout, stopwatch, stop);
-
-            if (refined != null) {
-                return refined;
+            int searchRadius = Locator.activeSearchRadius(origin, nearest.get(), maximumRadius);
+            if (intersectsSearchRadius(origin, batch.get(i), stride, searchRadius)) {
+                refine(engine, verifier, batch.get(i), origin, searchRadius, nearest,
+                        stride, timeout, stopwatch, stop);
             }
         }
-
-        return null;
     }
 
-    private Position2 refine(Engine engine, Locator<?> verifier, Position2 candidate, int stride, long timeout, PrecisionStopwatch stopwatch, AtomicBoolean stop) {
+    private void refine(Engine engine, Locator<?> verifier, Position2 candidate, Position2 origin,
+                        int searchRadius, AtomicReference<SearchCandidate> nearest,
+                        int stride, long timeout, PrecisionStopwatch stopwatch, AtomicBoolean stop) {
         KList<Position2> cells = new KList<>();
 
         for (int ring = 0; ring <= stride; ring++) {
             if (stop.get() || engine.isClosing() || stopwatch.getMilliseconds() >= timeout) {
-                return null;
+                return;
             }
 
             cells.clear();
             appendRing(cells, candidate, ring, 1);
-            AtomicReference<Position2> found = new AtomicReference<>();
             BurstExecutor executor = MultiBurst.burst.burst(cells.size());
 
             for (Position2 cell : cells) {
                 executor.queue(() -> {
-                    if (stop.get() || engine.isClosing() || found.get() != null) {
+                    if (stop.get() || engine.isClosing() || stopwatch.getMilliseconds() >= timeout
+                            || !intersectsSearchRadius(origin, cell, 0, searchRadius)) {
                         return;
                     }
 
-                    if (verifier.matches(engine, cell)) {
-                        found.compareAndSet(null, cell);
+                    if (verifier.matchesForSearch(engine, cell)) {
+                        recordCandidate(engine, cell, origin, nearest);
                     }
                 });
             }
 
             executor.complete();
 
-            if (found.get() != null) {
-                return found.get();
-            }
         }
+    }
 
-        return null;
+    private void recordCandidate(Engine engine, Position2 chunk, Position2 origin,
+                                 AtomicReference<SearchCandidate> nearest) {
+        SearchCandidate candidate = candidateForMatchedChunk(engine, chunk);
+        if (candidate != null) {
+            Locator.updateNearest(nearest, candidate, origin);
+        }
+    }
+
+    private static long chunkDistanceSquared(Position2 origin, Position2 sample) {
+        long deltaX = (long) origin.getX() - sample.getX();
+        long deltaZ = (long) origin.getZ() - sample.getZ();
+        return deltaX * deltaX + deltaZ * deltaZ;
+    }
+
+    private static boolean intersectsSearchRadius(Position2 origin, Position2 sample, int extent, int radius) {
+        return Math.abs((long) sample.getX() - origin.getX()) <= (long) radius + extent
+                && Math.abs((long) sample.getZ() - origin.getZ()) <= (long) radius + extent;
     }
 
     static void appendRing(KList<Position2> batch, Position2 origin, int ring, int stride) {
+        int cells = ring == 0 ? 1 : ring * 8;
+        for (int index = 0; index < cells; index++) {
+            Position2 position = ringPosition(origin, ring, stride, index);
+            if (position != null) {
+                batch.add(position);
+            }
+        }
+    }
+
+    private static Position2 ringPosition(Position2 origin, int ring, int stride, int index) {
         if (ring == 0) {
-            batch.add(origin);
-            return;
+            return origin;
         }
-
-        int offset = ring * stride;
-
-        for (int dx = -ring; dx <= ring; dx++) {
-            int x = origin.getX() + (dx * stride);
-            batch.add(new Position2(x, origin.getZ() - offset));
-            batch.add(new Position2(x, origin.getZ() + offset));
+        int horizontalCells = (ring * 2 + 1) * 2;
+        int deltaX = index < horizontalCells ? index / 2 - ring : ((index & 1) == 0 ? -ring : ring);
+        int deltaZ = index < horizontalCells ? ((index & 1) == 0 ? -ring : ring)
+                : (index - horizontalCells) / 2 - ring + 1;
+        long chunkX = (long) origin.getX() + (long) deltaX * stride;
+        long chunkZ = (long) origin.getZ() + (long) deltaZ * stride;
+        if (chunkX < (Integer.MIN_VALUE >> 4) || chunkX > (Integer.MAX_VALUE >> 4)
+                || chunkZ < (Integer.MIN_VALUE >> 4) || chunkZ > (Integer.MAX_VALUE >> 4)) {
+            return null;
         }
-
-        for (int dz = -ring + 1; dz <= ring - 1; dz++) {
-            int z = origin.getZ() + (dz * stride);
-            batch.add(new Position2(origin.getX() - offset, z));
-            batch.add(new Position2(origin.getX() + offset, z));
-        }
+        return new Position2((int) chunkX, (int) chunkZ);
     }
 
     public static SearchPlan biomePlan(Engine engine, String biomeKey) {

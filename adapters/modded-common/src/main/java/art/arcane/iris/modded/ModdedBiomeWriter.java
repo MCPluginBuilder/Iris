@@ -97,11 +97,7 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
             return key;
         }
         Engine engine = context.getEngine();
-        String prefix = engine.getDimension().getLoadKey() + ":";
-        if (!key.regionMatches(true, 0, prefix, 0, prefix.length())) {
-            return key;
-        }
-        return ModdedWorldgenIds.biomeRef(engine, key.substring(prefix.length()));
+        return engine.getData().physicalBiomeResourceKey(engine.getDimension(), key);
     }
 
     @Override

@@ -3,6 +3,7 @@ package art.arcane.iris.engine.mantle.components;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.UpperDimensionContext;
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.MantleComponent;
@@ -47,6 +48,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -54,6 +56,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 public class MantleObjectComponentBoundaryRadiusTest {
     @Rule
@@ -100,6 +103,22 @@ public class MantleObjectComponentBoundaryRadiusTest {
                 .setVacuumSettings(new IrisVacuumSettings().setRadius(12));
 
         assertEquals(43, MantleObjectComponent.calculatePlacementReach(new IrisBlockVector(5, 4, 3), placement));
+    }
+
+    @Test
+    public void knownObjectFootprintMustClearTheTransitionBand() {
+        IrisComplex complex = mock(IrisComplex.class);
+        IrisObject object = new IrisObject(5, 4, 3);
+        IrisObjectPlacement placement = new IrisObjectPlacement();
+        when(complex.allowsNewGenerationFootprint(95, 195, 105, 205)).thenReturn(false);
+
+        assertFalse(MantleObjectComponent.allowsObjectPlacement(
+                complex,
+                object,
+                placement,
+                100,
+                200));
+        verify(complex).allowsNewGenerationFootprint(95, 195, 105, 205);
     }
 
     @Test

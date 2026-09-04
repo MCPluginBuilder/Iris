@@ -349,6 +349,11 @@ public class IrisSettings {
     public static class IrisSettingsGenerator {
         public String defaultWorldType = "overworld";
         public boolean preventLeafDecay = true;
+        public int generationTransitionWidthBlocks = 256;
+
+        public int getGenerationTransitionWidthBlocks() {
+            return Math.max(16, Math.min(generationTransitionWidthBlocks, 8_192));
+        }
     }
 
     @Data

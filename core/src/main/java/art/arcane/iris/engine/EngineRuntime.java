@@ -19,45 +19,26 @@
 package art.arcane.iris.engine;
 
 import art.arcane.iris.engine.framework.EngineEffects;
-import art.arcane.iris.engine.framework.EngineMode;
-import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.EngineWorldManager;
 
-import java.util.concurrent.CompletableFuture;
+import java.util.Objects;
 
 /**
  * Immutable snapshot of everything an {@link IrisEngine} publishes as a single unit.
  * Instances are built by {@link EngineRuntimeBuilder} and retired by {@link EngineShutdownSequence}.
  */
 record EngineRuntime(
-        int cacheId,
-        EngineTarget target,
-        IrisComplex complex,
-        UpperDimensionContext upperContext,
+        GenerationRuntime generation,
         EngineEffects effects,
-        EngineMode mode,
-        EngineWorldManager worldManager,
-        CompletableFuture<Long> hash32,
-        BiomeMaxes biomeMaxes
+        EngineWorldManager worldManager
 ) {
-    EngineRuntime withComplex(
-            int nextCacheId,
-            IrisComplex nextComplex,
-            UpperDimensionContext nextUpperContext,
-            BiomeMaxes nextBiomeMaxes
-    ) {
-        return new EngineRuntime(
-                nextCacheId,
-                target,
-                nextComplex,
-                nextUpperContext,
-                effects,
-                mode,
-                worldManager,
-                hash32,
-                nextBiomeMaxes);
+    EngineRuntime {
+        Objects.requireNonNull(generation, "generation runtime");
+        Objects.requireNonNull(effects, "engine effects");
+        Objects.requireNonNull(worldManager, "engine world manager");
     }
 
-    record BiomeMaxes(double objectDensity, double layerDensity, double decoratorDensity) {
+    EngineRuntime withGeneration(GenerationRuntime nextGeneration) {
+        return new EngineRuntime(nextGeneration, effects, worldManager);
     }
 }

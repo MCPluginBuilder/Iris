@@ -426,6 +426,8 @@ tasks.named('neoforgeJar').configure {
 }
 
 List<String> commonModdedArtifactEntries = [
+    'META-INF/iris/generation-kernels/catalog.tsv',
+    'META-INF/iris/generation-kernels/abi-1.seal',
     'art/arcane/iris/engine/IrisEngine.class',
     'art/arcane/iris/spi/IrisPlatform.class',
     'art/arcane/volmlib/util/mantle/io/Lz4IOWorkerCodecSupport.class',
@@ -530,6 +532,8 @@ tasks.register('verifyModdedArtifacts') {
 // the two plugin descriptors and the slimjar manifests. Nothing in the reference graph points at
 // them, so a shadowJar exclude that drops one is silent until a server hits that path.
 List<String> requiredBukkitArtifactEntries = [
+    'META-INF/iris/generation-kernels/catalog.tsv',
+    'META-INF/iris/generation-kernels/abi-1.seal',
     'plugin.yml',
     'paper-plugin.yml',
     'slimjar.dat',

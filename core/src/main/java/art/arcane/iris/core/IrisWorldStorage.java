@@ -1,5 +1,6 @@
 package art.arcane.iris.core;
 
+import art.arcane.iris.engine.history.GenerationHistory;
 import art.arcane.volmlib.util.bukkit.WorldIdentity;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
@@ -404,10 +405,6 @@ public final class IrisWorldStorage {
         return Optional.ofNullable(NamespacedKey.fromString(namespace + ":" + key));
     }
 
-    public static File packRoot(NamespacedKey key) {
-        return new File(dimensionRoot(key), "iris/pack");
-    }
-
     public static File requireFrozenDimensionRoot(
             File worldContainer,
             File levelRoot,
@@ -485,26 +482,28 @@ public final class IrisWorldStorage {
         return configuredRoot;
     }
 
-    public static File requireFrozenPackRoot(File dimensionRoot) {
+    public static File requireActiveGenerationPackRoot(File dimensionRoot) {
         Path root = Objects.requireNonNull(dimensionRoot, "dimensionRoot")
                 .toPath()
                 .toAbsolutePath()
                 .normalize();
-        Path irisRoot = root.resolve("iris");
-        Path packRoot = irisRoot.resolve("pack");
-        for (Path path : new Path[]{root, irisRoot, packRoot}) {
-            if (Files.isSymbolicLink(path)) {
-                throw new IllegalStateException("Frozen Iris pack path contains a symbolic link: " + path);
-            }
-            if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)
-                    && !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
-                throw new IllegalStateException("Frozen Iris pack path is not a directory: " + path);
-            }
+        try {
+            return GenerationHistory.open(root).activePackRoot().toFile();
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris generation history is unusable at " + root + ".", failure);
         }
-        if (!Files.isDirectory(packRoot, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IllegalStateException("Frozen Iris pack snapshot is missing: " + packRoot);
+    }
+
+    public static File requireActiveGenerationPackRoot(File dimensionRoot, long expectedWorldSeed) {
+        Path root = Objects.requireNonNull(dimensionRoot, "dimensionRoot")
+                .toPath()
+                .toAbsolutePath()
+                .normalize();
+        try {
+            return GenerationHistory.open(root, expectedWorldSeed).activePackRoot().toFile();
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris generation history is unusable at " + root + ".", failure);
         }
-        return packRoot.toFile();
     }
 
     private static boolean isExistingSafeDimensionRoot(Path storageRoot, Path dimensionRoot) {

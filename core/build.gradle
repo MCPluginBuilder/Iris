@@ -128,6 +128,7 @@ dependencies {
     testImplementation('junit:junit:4.13.2')
     testImplementation('org.mockito:mockito-core:5.23.0')
     testImplementation(libs.paper.api)
+    testImplementation(libs.log4j.core)
     testRuntimeOnly(libs.paper.api)
     testImplementation(libs.multiverseCore)
 }
@@ -520,3 +521,5 @@ tasks.register('bukkitPurityRatchet') {
 tasks.named('check').configure {
     dependsOn('bukkitPurityRatchet')
 }
+
+apply from: rootProject.file('gradle/generation-kernel-seals.gradle')

@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "중심 기준 반경(청크 단위)",
     "iris.director.commanddeveloper.param.center_chunk_x": "중심 청크 X",
     "iris.director.commanddeveloper.param.center_chunk_z": "중심 청크 Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "월드의 팩을 업데이트합니다(위험!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "월드 생성 업데이트 준비",
     "iris.director.commanddeveloper.param.world_update": "업데이트할 월드",
     "iris.director.commanddeveloper.param.pack_install_into_world": "월드에 설치할 팩",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "반드시 백업을 만들고 경고를 먼저 읽으세요!",
@@ -1053,15 +1053,13 @@
       "other": "§7    ...  · {count} 더 많은 경고.",
       "one": "§7    ...  · {count} 더 많은 경고."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§c당신은 항상 이것을 사용하기 전에 백업을해야합니다",
-      "§e이것에 의해 발생 하는 문제는, 하지만 제한 되지 않습니다:",
-      "§e - 이전과 새로운 청크 사이에 깨진 청크 (& 업데이트 후)",
-      "§e - 오래된 청크와 맞지 않는 재생된 덩크",
-      "§e - 재생할 때 구조가 다시 달지 않습니다.",
-      "§e - 동굴 안감",
-      "§e - 지형 층은 위로 안대지 않습니다",
-      "§c당신은 위험의 인식이며, 백업을했다 :",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§c이 업데이트를 준비하기 전에 월드 전체를 백업하세요.",
+      "§e기존 청크는 다시 생성하거나 덮어쓰지 않습니다.",
+      "§e재시작 후 새 청크는 준비된 팩을 사용하며 저장된 경계에서 지형을 점진적으로 연결합니다.",
+      "§e월드의 시드, 높이, 환경, 차원 유형은 변경할 수 없습니다.",
+      "§e모든 백업에는 iris/generation 디렉터리 전체가 포함되어야 합니다.",
+      "§c업데이트를 준비하고 정상 재시작을 요청하려면 다음 명령을 사용하세요:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§a관련 상품 §f{total}§a 바닐라 & datapack 구조 (mode={mode}, includeNonJigsaw={includeNonJigsaw})...",

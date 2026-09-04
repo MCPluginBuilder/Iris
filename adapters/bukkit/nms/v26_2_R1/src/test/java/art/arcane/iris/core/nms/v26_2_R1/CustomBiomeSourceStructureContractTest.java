@@ -28,10 +28,10 @@ public class CustomBiomeSourceStructureContractTest {
         assertTrue(source.contains("tryAcquireGenerationLease(\"bukkit_spawn_biome\")"));
         assertFalse(source.contains("Iris spawn biome lookup was rejected during an engine transition"));
         assertFalse(source.contains("Iris spawn biome lookup has no active engine runtime"));
-        assertTrue(source.contains("vanillaSpawnBiomes.get(biome.value())"));
-        assertTrue(source.contains("tryAcquireGenerationLease(\"bukkit_structure_biome\")"));
+        assertTrue(source.contains("runtimeBiomeState().vanillaSpawnBiomes().get(biome.value())"));
+        assertTrue(source.contains("requireGenerationLease(\n                     \"bukkit_structure_biome\""));
         assertTrue(source.contains("tryAcquireGenerationLease(\"bukkit_biomes_within\")"));
-        assertTrue(source.contains("tryAcquireGenerationLease(\"bukkit_visible_biome\")"));
+        assertTrue(source.contains("requireGenerationLease(\n                     \"bukkit_visible_biome\""));
         assertTrue(source.contains("if (engine.isClosed())"));
         assertTrue(source.contains("engine.isClosing() || e.isExpectedTeardown()"));
         assertTrue(source.contains("catch (GenerationSessionException e)"));
@@ -87,7 +87,7 @@ public class CustomBiomeSourceStructureContractTest {
         assertTrue(lookupEnd > lookupStart);
         String lookup = source.substring(lookupStart, lookupEnd);
 
-        assertTrue(lookup.contains("tryAcquireGenerationLease(\"bukkit_visible_biome\")"));
+        assertTrue(lookup.contains("requireGenerationLease(\n                     \"bukkit_visible_biome\""));
         assertTrue(lookup.contains("prepareVisibleBiomeBatch()"));
         assertTrue(lookup.contains("getVisibleNoiseBiomeWithActiveGenerationLease(x, y, z, sampler)"));
         assertTrue(lookup.indexOf("prepareVisibleBiomeBatch()")

@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "Радиус в чанках вокруг центра",
     "iris.director.commanddeveloper.param.center_chunk_x": "Центрный чанк X",
     "iris.director.commanddeveloper.param.center_chunk_z": "Обсуждение Center Bunk Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "Обновить пак мира (небезопасно!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "Подготовить обновление генерации мира",
     "iris.director.commanddeveloper.param.world_update": "Мир для обновления",
     "iris.director.commanddeveloper.param.pack_install_into_world": "Пакет для установки в мире",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "Обязательно сделайте резервную копию & Сначала прочитайте предупреждения!",
@@ -1053,15 +1053,13 @@
       "other": "§7    ...  и {count} Больше предупреждений.",
       "one": "§7    ...  и {count} Больше предупреждений."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cВсегда создавайте резервную копию перед использованием этой функции",
-      "§eВозможные проблемы включают, помимо прочего:",
-      "§e - Повреждённые чанки (обрезанные края) между старыми и новыми чанками (до обновления & после него)",
-      "§e - Перегенерированные чанки, которые не стыкуются со старыми чанками",
-      "§e - Структуры, которые не появляются повторно при регенерации",
-      "§e - Несовпадающие пещеры",
-      "§e - Несовпадающие слои рельефа",
-      "§cКогда вы понимаете риски и создали резервную копию:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cПеред подготовкой обновления создайте резервную копию всего мира.",
+      "§eСуществующие чанки не будут сгенерированы заново или перезаписаны.",
+      "§eПосле перезапуска новые чанки будут использовать подготовленный пакет с плавным переходом у сохранённой границы.",
+      "§eНельзя менять сид, высоту, окружение или тип измерения мира.",
+      "§eКаждая резервная копия должна содержать весь каталог iris/generation.",
+      "§cЧтобы подготовить обновление и запросить корректный перезапуск:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aимпортировать §f{total}§a vanilla & структуры пакета данных (режим ={mode}, includeNonJigsaw={includeNonJigsaw})...",

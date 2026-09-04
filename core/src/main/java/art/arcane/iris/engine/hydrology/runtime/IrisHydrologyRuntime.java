@@ -72,6 +72,7 @@ import java.util.Set;
 import java.nio.file.Path;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntConsumer;
+import java.util.function.Predicate;
 
 public final class IrisHydrologyRuntime implements AutoCloseable {
     private static final int MAXIMUM_CACHE_TILES = 64;
@@ -351,7 +352,15 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
             int z,
             int maximumDistance
     ) {
-        return nearestFeature(types, profileKey, x, z, maximumDistance, (int visited) -> { });
+        return nearestFeature(
+                types,
+                profileKey,
+                x,
+                z,
+                maximumDistance,
+                feature -> true,
+                (int visited) -> { }
+        );
     }
 
     /**
@@ -367,7 +376,31 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
             int maximumDistance,
             IntConsumer progress
     ) {
+        return nearestFeature(
+                types,
+                profileKey,
+                x,
+                z,
+                maximumDistance,
+                feature -> true,
+                progress
+        );
+    }
+
+    public Optional<HydrologyFeatureRef> nearestFeature(
+            Set<HydrologyFeatureType> types,
+            String profileKey,
+            int x,
+            int z,
+            int maximumDistance,
+            Predicate<HydrologyFeatureRef> eligibility,
+            IntConsumer progress
+    ) {
         Objects.requireNonNull(types);
+        Predicate<HydrologyFeatureRef> requiredEligibility = Objects.requireNonNull(
+                eligibility,
+                "eligibility"
+        );
         Objects.requireNonNull(progress);
         if (types.isEmpty() || maximumDistance < 0) {
             return Optional.empty();
@@ -393,7 +426,13 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
             for (HydrologyTile tile : cache.tiles(HydrologyFeatureSearch.ring(originTileX, originTileZ, ring))) {
                 visited++;
                 HydrologyFeatureRef feature = tile.nearestFeature(
-                        types, profileKey, x, z, maximumDistance).orElse(null);
+                        types,
+                        profileKey,
+                        x,
+                        z,
+                        maximumDistance,
+                        requiredEligibility
+                ).orElse(null);
                 if (feature == null) {
                     continue;
                 }

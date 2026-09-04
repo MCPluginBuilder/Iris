@@ -8,6 +8,7 @@ import net.bytebuddy.dynamic.loading.ClassReloadingStrategy;
 import java.io.File;
 import java.io.InputStream;
 import java.lang.instrument.Instrumentation;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
@@ -21,6 +22,32 @@ public class Agent {
 
     public static boolean isInstalled() {
         return doGetInstrumentation() != null;
+    }
+
+    public static void requireClassLoaderCloseDeferral() throws ReflectiveOperationException {
+        Class<?> installer = Class.forName(NAME, true, ClassLoader.getSystemClassLoader());
+        installer.getMethod("retainClassLoader", ClassLoader.class);
+        installer.getMethod("deferClassLoaderClose", ClassLoader.class);
+        installer.getMethod("releaseClassLoader", ClassLoader.class);
+    }
+
+    public static void retainClassLoader(ClassLoader loader) {
+        invokeClassLoaderLifecycle("retainClassLoader", loader);
+    }
+
+    public static void releaseClassLoader(ClassLoader loader) {
+        invokeClassLoaderLifecycle("releaseClassLoader", loader);
+    }
+
+    private static void invokeClassLoaderLifecycle(String method, ClassLoader loader) {
+        try {
+            Class.forName(NAME, true, ClassLoader.getSystemClassLoader())
+                    .getMethod(method, ClassLoader.class).invoke(null, loader);
+        } catch (InvocationTargetException exception) {
+            throw new IllegalStateException("Iris plugin class loader lifecycle failed", exception.getCause());
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Iris plugin class loader lifecycle is unavailable", exception);
+        }
     }
 
     public static Instrumentation getInstrumentation() {

@@ -60,9 +60,9 @@ public final class DirectorCommandMessages {
             "iris.director.commanddeveloper.param.center_chunk_z",
             "Center chunk Z"
     );
-    public static final TextKey COMMAND_DEVELOPER_DIRECTOR_UPDATE_PACK_WORLD_UNSAFE = TextKey.of(
-            "iris.director.commanddeveloper.director.update_pack_world_unsafe",
-            "Update the pack of a world (UNSAFE!)"
+    public static final TextKey COMMAND_DEVELOPER_DIRECTOR_STAGE_WORLD_GENERATION_UPDATE = TextKey.of(
+            "iris.director.commanddeveloper.director.stage_world_generation_update",
+            "Stage a world generation update"
     );
     public static final TextKey COMMAND_DEVELOPER_PARAM_WORLD_UPDATE = TextKey.of(
             "iris.director.commanddeveloper.param.world_update",
@@ -889,7 +889,7 @@ public final class DirectorCommandMessages {
             COMMAND_DEVELOPER_PARAM_RADIUS_CHUNKS_AROUND_CENTER,
             COMMAND_DEVELOPER_PARAM_CENTER_CHUNK_X,
             COMMAND_DEVELOPER_PARAM_CENTER_CHUNK_Z,
-            COMMAND_DEVELOPER_DIRECTOR_UPDATE_PACK_WORLD_UNSAFE,
+            COMMAND_DEVELOPER_DIRECTOR_STAGE_WORLD_GENERATION_UPDATE,
             COMMAND_DEVELOPER_PARAM_WORLD_UPDATE,
             COMMAND_DEVELOPER_PARAM_PACK_INSTALL_INTO_WORLD,
             COMMAND_DEVELOPER_PARAM_MAKE_SURE_MAKE_BACKUP_READ_WARNINGS_FIRST,

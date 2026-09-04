@@ -183,6 +183,9 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
     void generateOrigin(ObjectPassPlacer writer, int x, int z, ChunkContext context) {
         IrisComplex complex = context.getComplex();
+        if (!complex.allowsNewGenerationChunk(x, z)) {
+            return;
+        }
         boolean traceRegen = isRegenTraceThread();
         RNG rng = applyNoise(x, z, Cache.key(x, z) + seed());
         int xxx = 8 + (x << 4);
@@ -585,6 +588,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
             return;
         }
 
+        IrisComplex complex = getComplex();
         int blockX = x << 4;
         int blockZ = z << 4;
         boolean golden = GoldenDebugObjectPlacer.isGoldenDebugChunk(x, z);
@@ -693,6 +697,9 @@ public class MantleObjectComponent extends IrisMantleComponent {
                         placeResult = contained.resultY();
                         commitResult = contained.commitResult();
                     } else {
+                        if (!allowsObjectPlacement(complex, variant, placement, xx, zz)) {
+                            continue;
+                        }
                         String marker = placementMarker(variant, id, "procedural");
                         placeResult = variant.place(xx, -1, zz, placer, placement, rng, (b, data) -> {
                             if (marker != null) {
@@ -813,6 +820,12 @@ public class MantleObjectComponent extends IrisMantleComponent {
             boolean treePlacement,
             RNG rng
     ) {
+        IrisComplex complex = placer.getEngine() == null ? null : placer.getEngine().getComplex();
+        if (!allowsObjectPlacement(complex, object, placement, x, z)) {
+            return new ContainedPlacementResult(
+                    -1,
+                    CaveObjectPlacementTransaction.CommitResult.REJECTED_TRANSITION);
+        }
         CaveObjectPlacementTransaction transaction = new CaveObjectPlacementTransaction(placer, anchorY, minDepthBelowSurface);
         int placeY = anchorY;
         if (placement.getMode() == ObjectPlaceMode.CEILING_HANG) {
@@ -875,6 +888,10 @@ public class MantleObjectComponent extends IrisMantleComponent {
             int xx = rng.i(x, x + 16);
             int zz = rng.i(z, z + 16);
             IrisObjectPlacement effectivePlacement = resolveEffectivePlacement(objectPlacement, v);
+            if (!allowsObjectPlacement(complex, v, effectivePlacement, xx, zz)) {
+                rejected++;
+                continue;
+            }
             boolean treePlacement = isTreePlacement(v, effectivePlacement);
             int id = rng.i(0, Integer.MAX_VALUE);
             IObjectPlacer placePlacer = golden ? new GoldenDebugObjectPlacer(writer, scope + "/" + v.getLoadKey()) : writer;
@@ -1186,7 +1203,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     continue;
                 }
                 try {
-                    placeUpperObject(writer, rng, chunkX, chunkZ, i, upperCtx, dimension, complex, forcePlace, traceRegen, "upper-biome-surface");
+                    placeUpperObject(writer, rng, chunkX, chunkZ, i, upperCtx, complex, forcePlace, traceRegen, "upper-biome-surface");
                 } catch (Throwable e) {
                     IrisLogging.reportError(e);
                     IrisLogging.error("Failed to place upper-dimension objects in biome " + upperBiome.getName()
@@ -1201,7 +1218,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     continue;
                 }
                 try {
-                    placeUpperObject(writer, rng, chunkX, chunkZ, i, upperCtx, dimension, complex, forcePlace, traceRegen, "upper-region-surface");
+                    placeUpperObject(writer, rng, chunkX, chunkZ, i, upperCtx, complex, forcePlace, traceRegen, "upper-region-surface");
                 } catch (Throwable e) {
                     IrisLogging.reportError(e);
                     IrisLogging.error("Failed to place upper-dimension objects in region " + upperRegion.getName()
@@ -1219,14 +1236,12 @@ public class MantleObjectComponent extends IrisMantleComponent {
             int chunkZ,
             IrisObjectPlacement objectPlacement,
             UpperDimensionContext upperCtx,
-            IrisDimension dimension,
             IrisComplex complex,
             boolean forcePlace,
             boolean traceRegen,
             String scope
     ) {
         int chunkHeight = getEngineMantle().getEngine().getHeight();
-        int upperGap = dimension.getUpperDimensionGap();
         int minX = chunkX << 4;
         int minZ = chunkZ << 4;
         int density = objectPlacement.getDensity(rng, minX, minZ, getData());
@@ -1239,9 +1254,7 @@ public class MantleObjectComponent extends IrisMantleComponent {
 
             int xx = rng.i(minX, minX + 16);
             int zz = rng.i(minZ, minZ + 16);
-            int columnLowerSurfaceY = getEngineMantle().getEngine().getHeight(xx, zz, true);
-            int rawUpperSurface = upperCtx.getUpperSurfaceY(xx, zz);
-            int upperSurfaceY = Math.max(rawUpperSurface, columnLowerSurfaceY + upperGap);
+            int upperSurfaceY = upperCtx.getEffectiveSurfaceY(xx, zz);
             if (upperSurfaceY >= chunkHeight - 2) {
                 continue;
             }
@@ -1259,6 +1272,9 @@ public class MantleObjectComponent extends IrisMantleComponent {
             placement.setCarvingSupport(CarvingMode.ANYWHERE);
             if (forcePlace) {
                 placement.setForcePlace(true);
+            }
+            if (!allowsObjectPlacement(complex, v, placement, xx, zz)) {
+                continue;
             }
             boolean treePlacement = isTreePlacement(v, objectPlacement);
             String marker = placementMarker(v, id, "upper");
@@ -1777,6 +1793,31 @@ public class MantleObjectComponent extends IrisMantleComponent {
                 : 0;
         long reach = (long) footprint + translation + warp + vacuum;
         return reach > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) reach;
+    }
+
+    static boolean allowsObjectPlacement(
+            IrisComplex complex,
+            IrisObject object,
+            IrisObjectPlacement placement,
+            int anchorX,
+            int anchorZ
+    ) {
+        if (complex == null || object == null) {
+            return true;
+        }
+        int reach = calculatePlacementReach(
+                new IrisBlockVector(object.getW(), object.getH(), object.getD()),
+                placement);
+        return complex.allowsNewGenerationFootprint(
+                saturatedOffset(anchorX, -reach),
+                saturatedOffset(anchorZ, -reach),
+                saturatedOffset(anchorX, reach),
+                saturatedOffset(anchorZ, reach));
+    }
+
+    private static int saturatedOffset(int coordinate, int offset) {
+        long result = (long) coordinate + offset;
+        return (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, result));
     }
 
     private static int scaledDimension(int dimension, double scale) {

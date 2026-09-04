@@ -23,6 +23,8 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.history.GenerationBlend;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
 import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
 import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
@@ -66,6 +68,7 @@ import lombok.ToString;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -75,6 +78,7 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -114,6 +118,7 @@ public class IrisComplex implements DataProvider {
     private final transient IrisGenerator[][] frozenGenerators;
     @Getter(AccessLevel.NONE)
     private final transient Map<IrisRegion, Map<InferredType, ProceduralStream<IrisBiome>>> inferredBiomeStreams;
+    private final TransitionGenerationPlan transitionGenerationPlan;
     private RNG rng;
     private double fluidHeight;
     private IrisData data;
@@ -130,9 +135,11 @@ public class IrisComplex implements DataProvider {
     private ProceduralStream<IrisBiome> baseBiomeStream;
     private ProceduralStream<UUID> baseBiomeIDStream;
     private ProceduralStream<IrisBiome> naturalTrueBiomeStream;
+    private ProceduralStream<IrisBiome> unblendedNaturalTrueBiomeStream;
     private ProceduralStream<IrisBiome> trueBiomeStream;
     private ProceduralStream<PlatformBiome> trueBiomeDerivativeStream;
     private ProceduralStream<Double> naturalHeightStream;
+    private ProceduralStream<Double> unblendedNaturalHeightStream;
     private ProceduralStream<Double> heightStream;
     private ProceduralStream<Integer> roundedHeighteightStream;
     private ProceduralStream<Double> maxHeightStream;
@@ -168,10 +175,19 @@ public class IrisComplex implements DataProvider {
     private final Object childSelectionPlanLock = new Object();
 
     public IrisComplex(Engine engine) {
-        this(engine, false);
+        this(engine, false, null);
     }
 
     public IrisComplex(Engine engine, boolean simple) {
+        this(engine, simple, null);
+    }
+
+    public IrisComplex(Engine engine, TransitionGenerationPlan transitionGenerationPlan) {
+        this(engine, false, transitionGenerationPlan);
+    }
+
+    IrisComplex(Engine engine, boolean simple, TransitionGenerationPlan transitionGenerationPlan) {
+        this.transitionGenerationPlan = transitionGenerationPlan;
         int cacheSize = noiseCacheSize(engine, IrisSettings.get().getPerformance().getNoiseCacheSize());
         IrisBiome emptyBiome = new IrisBiome().setInferredType(InferredType.CAVE);
         UUID focusUUID = UUID.nameUUIDFromBytes("focus".getBytes());
@@ -294,10 +310,15 @@ public class IrisComplex implements DataProvider {
                     return mapped == null ? biome : mapped;
                 })
                 .cache2D("imageMappedBaseBiomeStream", engine, cacheSize);
-        naturalHeightStream = ProceduralStream.of(
-                (x, z) -> sampleNaturalTerrainHeight(engine, x, z),
+        unblendedNaturalHeightStream = ProceduralStream.of(
+                (x, z) -> sampleUnblendedNaturalTerrainHeight(engine, x, z),
                 Interpolated.DOUBLE
-        ).cache2DDouble("naturalHeightStream", engine, cacheSize);
+        ).cache2DDouble("unblendedNaturalHeightStream", engine, cacheSize);
+        naturalHeightStream = transitionGenerationPlan == null ? unblendedNaturalHeightStream
+                : unblendedNaturalHeightStream.convertAware2D((newHeight, x, z) -> blendNaturalTerrainHeight(
+                        newHeight,
+                        transitionGenerationPlan.terrainSampleAt(blockCoordinate(x), blockCoordinate(z))))
+                .cache2DDouble("naturalHeightStream", engine, cacheSize);
         naturalTrueBiomeStream = focusBiome != null ? ProceduralStream.of((x, y) -> focusBiome, Interpolated.of(a -> 0D,
                         b -> focusBiome))
                 .cache2D("naturalTrueBiomeStream-focus", engine, cacheSize) : naturalHeightStream
@@ -308,6 +329,14 @@ public class IrisComplex implements DataProvider {
                             : mapped;
                 })
                 .cache2D("naturalTrueBiomeStream", engine, cacheSize);
+        unblendedNaturalTrueBiomeStream = transitionGenerationPlan == null || focusBiome != null
+                ? naturalTrueBiomeStream
+                : unblendedNaturalHeightStream.convertAware2D((h, x, z) -> {
+                    IrisBiome mapped = imageMapRuntime.sampleBiome(x, z);
+                    return mapped == null
+                            ? fixBiomeType(h, baseBiomeStream.get(x, z), regionStream.get(x, z), x, z, fluidHeight)
+                            : mapped;
+                }).cache2D("unblendedNaturalTrueBiomeStream", engine, cacheSize);
         IrisHydrology configuredHydrology = engine.getDimension().getHydrology();
         if (hydrologyActive(configuredHydrology)) {
             hydrologyRuntime = new IrisHydrologyRuntime(new IrisHydrologyRuntimeContext(
@@ -451,8 +480,33 @@ public class IrisComplex implements DataProvider {
     }
 
     private double sampleNaturalTerrainHeight(Engine engine, double x, double z) {
+        double newHeight = sampleUnblendedNaturalTerrainHeight(engine, x, z);
+        if (transitionGenerationPlan == null) {
+            return newHeight;
+        }
+        TransitionGenerationPlan.TerrainSample sample = transitionGenerationPlan.terrainSampleAt(
+                blockCoordinate(x),
+                blockCoordinate(z));
+        return blendNaturalTerrainHeight(newHeight, sample);
+    }
+
+    private double sampleUnblendedNaturalTerrainHeight(Engine engine, double x, double z) {
         double proceduralHeight = getHeight(engine, x, z, engine.getSeedManager().getHeight());
         return imageMapRuntime.sampleTerrainHeight(x, z, proceduralHeight);
+    }
+
+    static double blendNaturalTerrainHeight(
+            double newHeight,
+            TransitionGenerationPlan.TerrainSample sample
+    ) {
+        Objects.requireNonNull(sample, "terrain transition sample");
+        if (sample.newEpochWeight() == 1D || !sample.hasHistoricalSignature()) {
+            return newHeight;
+        }
+        double historicalHeight = sample.nearestSignature().fluidHeight().isPresent()
+                ? sample.historicalOceanFloorHeight()
+                : sample.historicalSurfaceHeight();
+        return GenerationBlend.interpolate(historicalHeight, newHeight, sample.newEpochWeight());
     }
 
     static double calculateNaturalSlope(double naturalHeight, double easternHeight, double southernHeight) {
@@ -687,7 +741,9 @@ public class IrisComplex implements DataProvider {
         if (layer == null) {
             return 0D;
         }
-        return layer.feature().flowDeltaX() == 0 && layer.feature().flowDeltaZ() == 0 ? 0D : 1D;
+        return layer.feature().flowDeltaX() == 0 && layer.feature().flowDeltaZ() == 0
+                ? 0D
+                : transitionHydrologyWeight(x, z);
     }
 
     private double resolveHydrologyCarveWeight(double x, double z) {
@@ -695,10 +751,11 @@ public class IrisComplex implements DataProvider {
         if (layer == null) {
             return 0D;
         }
+        double hydrologyWeight = transitionHydrologyWeight(x, z);
         if (layer.channel()) {
-            return 1D;
+            return hydrologyWeight;
         }
-        return layer.shore() ? 0.75D : 0.5D;
+        return hydrologyWeight * (layer.shore() ? 0.75D : 0.5D);
     }
 
     private double resolveHydrologyFluidSurface(double x, double z) {
@@ -706,13 +763,144 @@ public class IrisComplex implements DataProvider {
         return layer == null ? fluidHeight : layer.fluidHeadY();
     }
 
+    public HydrologyColumnSample sampleHydrologyColumn(double x, double z) {
+        if (hydrologyRuntime == null) {
+            return null;
+        }
+        if (transitionGenerationPlan == null) {
+            return hydrologyRuntime.sample(x, z).orElse(null);
+        }
+        double hydrologyWeight = transitionHydrologyWeight(x, z);
+        if (hydrologyWeight == 0D) {
+            return null;
+        }
+        HydrologyColumnSample sample = hydrologyRuntime.sample(x, z).orElse(null);
+        if (sample == null || hydrologyWeight == 1D) {
+            return sample;
+        }
+        return taperHydrologySample(sample, hydrologyWeight);
+    }
+
+    static HydrologyColumnSample taperHydrologySample(
+            HydrologyColumnSample sample,
+            double hydrologyWeight
+    ) {
+        Objects.requireNonNull(sample, "hydrology sample");
+        if (hydrologyWeight == 1D) {
+            return sample;
+        }
+        ArrayList<HydrologyColumnLayer> taperedLayers = new ArrayList<>(sample.layers().size());
+        for (HydrologyColumnLayer layer : sample.layers()) {
+            taperedLayers.add(taperHydrologyLayer(layer, sample.naturalHeight(), hydrologyWeight));
+        }
+        return new HydrologyColumnSample(
+                sample.x(),
+                sample.z(),
+                sample.naturalHeight(),
+                sample.seaLevel(),
+                sample.ocean(),
+                sample.parentBiomeKey(),
+                taperedLayers);
+    }
+
+    private static HydrologyColumnLayer taperHydrologyLayer(
+            HydrologyColumnLayer layer,
+            int naturalHeight,
+            double hydrologyWeight
+    ) {
+        return new HydrologyColumnLayer(
+                layer.feature(),
+                GenerationBlend.interpolateHeight(naturalHeight, layer.bedY(), hydrologyWeight),
+                GenerationBlend.interpolateHeight(naturalHeight, layer.fluidHeadY(), hydrologyWeight),
+                GenerationBlend.interpolateHeight(naturalHeight, layer.ceilingY(), hydrologyWeight),
+                layer.channel(),
+                layer.shore(),
+                layer.grading(),
+                layer.connectedFluid(),
+                layer.fallingFluid(),
+                layer.receivingPool(),
+                layer.terrainOwned(),
+                layer.fluidOwned(),
+                layer.oceanApron(),
+                layer.profileKey(),
+                layer.surfaceBiomeKey(),
+                layer.mouthBiomeKey(),
+                layer.shoreBiomeKey(),
+                layer.bankBiomeKey(),
+                layer.floodedCaveBiomeKey());
+    }
+
     private HydrologyColumnSample hydrologySample(double x, double z) {
-        return hydrologyRuntime == null ? null : hydrologyRuntime.sample(x, z).orElse(null);
+        return sampleHydrologyColumn(x, z);
+    }
+
+    private double transitionHydrologyWeight(double x, double z) {
+        return transitionGenerationPlan == null
+                ? 1D
+                : transitionGenerationPlan.hydrologyWeightAt(blockCoordinate(x), blockCoordinate(z));
     }
 
     /** Whether the column's hydrology can be sampled without waiting for a plan (see Engine.answersFromNaturalTerrain). */
     public boolean isHydrologyPlanned(int x, int z) {
-        return hydrologyRuntime == null || hydrologyRuntime.isPlanned(x, z);
+        return hydrologyRuntime == null
+                || transitionHydrologyWeight(x, z) == 0D
+                || hydrologyRuntime.isPlanned(x, z);
+    }
+
+    public boolean isHistoricalChunk(int chunkX, int chunkZ) {
+        return transitionGenerationPlan != null
+                && transitionGenerationPlan.boundary().isHistoricalChunk(chunkX, chunkZ);
+    }
+
+    public boolean allowsMantleWrite(int blockX, int blockZ) {
+        return transitionGenerationPlan == null
+                || !transitionGenerationPlan.isHistoricalBlock(blockX, blockZ);
+    }
+
+    public boolean allowsMantleChunkWrite(int chunkX, int chunkZ) {
+        return transitionGenerationPlan == null
+                || !transitionGenerationPlan.boundary().isHistoricalChunk(chunkX, chunkZ);
+    }
+
+    public boolean allowsNewDiscreteContentAt(int blockX, int blockZ) {
+        return transitionGenerationPlan == null
+                || transitionGenerationPlan.allowsNewDiscreteContentAt(blockX, blockZ);
+    }
+
+    public boolean allowsNewGenerationChunk(int chunkX, int chunkZ) {
+        if (transitionGenerationPlan == null) {
+            return true;
+        }
+        int minimumX = Math.multiplyExact(chunkX, 16);
+        int minimumZ = Math.multiplyExact(chunkZ, 16);
+        return transitionGenerationPlan.allowsNewFootprint(
+                minimumX,
+                minimumZ,
+                Math.addExact(minimumX, 15),
+                Math.addExact(minimumZ, 15));
+    }
+
+    public boolean allowsNewGenerationFootprint(
+            int minimumX,
+            int minimumZ,
+            int maximumX,
+            int maximumZ
+    ) {
+        return transitionGenerationPlan == null
+                || transitionGenerationPlan.allowsNewFootprint(minimumX, minimumZ, maximumX, maximumZ);
+    }
+
+    public Optional<String> historicalPhysicalBiomeKeyAt(int blockX, int blockY, int blockZ) {
+        return transitionGenerationPlan == null
+                ? Optional.empty()
+                : transitionGenerationPlan.historicalPhysicalBiomeKeyAt(blockX, blockY, blockZ);
+    }
+
+    private static int blockCoordinate(double coordinate) {
+        if (!Double.isFinite(coordinate)) {
+            throw new IllegalArgumentException("Generation coordinate must be finite");
+        }
+        return (int) Math.floor(coordinate);
     }
 
     /** The natural terrain height of a column, from the natural height stream only: never touches hydrology or its caches. */

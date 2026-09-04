@@ -22,8 +22,10 @@ import art.arcane.iris.engine.EngineBackgroundTasks.BackgroundTaskDrain;
 import art.arcane.iris.engine.EngineRuntimeBuilder.RuntimeAssembly;
 import art.arcane.iris.engine.IrisEngine.LifecycleState;
 import art.arcane.iris.engine.framework.GenerationSessionException;
+import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.NativeStructureOwnershipStore;
 import art.arcane.iris.engine.framework.PreservationRegistry;
+import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 
@@ -38,7 +40,6 @@ final class EngineShutdownSequence {
     private final IrisEngine engine;
     private boolean runtimeReleased;
     private boolean targetReleased;
-    private boolean mantleReleased;
     private boolean engineDataReleased;
     private boolean preservationReleased;
 
@@ -47,6 +48,17 @@ final class EngineShutdownSequence {
     }
 
     void close() {
+        if (!engine.beginShutdown()) {
+            return;
+        }
+        Throwable routerFailure = runCleanup(null, engine::closeAttachedGenerationHistoryRuntimeRouter);
+        if (routerFailure != null) {
+            synchronized (engine.lifecycleLock) {
+                engine.lifecycleState = LifecycleState.FAILED;
+            }
+            reportIncompleteClose(routerFailure);
+            return;
+        }
         Throwable failure;
         synchronized (engine.lifecycleLock) {
             if (engine.closed) {
@@ -122,14 +134,10 @@ final class EngineShutdownSequence {
                     if (runtimeReleased) {
                         failure = releaseTarget(failure);
                     }
-                    if (targetReleased) {
-                        failure = releaseMantle(failure);
-                    }
                     if (prefetchFailure == null
                             && engineDataFailure == null
                             && runtimeReleased
-                            && targetReleased
-                            && mantleReleased) {
+                            && targetReleased) {
                         failure = releaseEngineDataForShutdown(failure);
                     }
                     if (engineDataReleased) {
@@ -140,7 +148,6 @@ final class EngineShutdownSequence {
             if (failure == null
                     && runtimeReleased
                     && targetReleased
-                    && mantleReleased
                     && engineDataReleased
                     && preservationReleased) {
                 engine.closed = true;
@@ -185,10 +192,10 @@ final class EngineShutdownSequence {
                 () -> NativeStructureOwnershipStore.close(engine));
         cleanupFailure = appendFailure(cleanupFailure, ownershipFailure);
         if (ownershipFailure == null) {
+            cleanupFailure = closeDetachedGenerationRuntimes(cleanupFailure);
             cleanupFailure = closeRuntime(engine.runtime, cleanupFailure);
             engine.runtime = null;
-            cleanupFailure = runCleanup(cleanupFailure, engine.getTarget()::close);
-            cleanupFailure = runCleanup(cleanupFailure, engine.getMantle()::close);
+            cleanupFailure = runCleanup(cleanupFailure, engine.publishedTarget::close);
             cleanupFailure = runCleanup(cleanupFailure, engine.engineDataStore::releaseEngineData);
             engine.closed = true;
             cleanupFailure = runCleanup(cleanupFailure, () -> {
@@ -232,24 +239,79 @@ final class EngineShutdownSequence {
                 assembly.hash32.cancel(true);
             }
         });
+        if (assembly.mantle != null && assembly.ownsMantle) {
+            assembly.ownsMantle = false;
+            failure = runCleanup(failure, assembly.mantle::saveAllNow);
+            failure = runCleanup(failure, assembly.mantle::close);
+        }
         return failure;
     }
 
     Throwable closeRuntime(EngineRuntime engineRuntime, Throwable failure) {
+        return closeRuntime(engineRuntime, null, failure);
+    }
+
+    Throwable closeRuntime(
+            EngineRuntime engineRuntime,
+            EngineMantle retainedMantle,
+            Throwable failure
+    ) {
         if (engineRuntime == null) {
             return failure;
         }
         failure = runCleanup(failure, engineRuntime.worldManager()::close);
         failure = runCleanup(failure, engineRuntime.effects()::close);
-        failure = runCleanup(failure, engineRuntime.mode()::close);
-        failure = runCleanup(failure, engineRuntime.complex()::close);
-        failure = runCleanup(failure, () -> engineRuntime.hash32().cancel(true));
+        return closeGenerationRuntime(engineRuntime.generation(), retainedMantle, failure);
+    }
+
+    Throwable closeGenerationRuntime(GenerationRuntime generationRuntime, Throwable failure) {
+        return closeGenerationRuntime(generationRuntime, null, failure);
+    }
+
+    Throwable closeGenerationRuntime(
+            GenerationRuntime generationRuntime,
+            EngineMantle retainedMantle,
+            Throwable failure
+    ) {
+        if (generationRuntime == null) {
+            return failure;
+        }
+        failure = runCleanup(failure, generationRuntime.mode()::close);
+        failure = runCleanup(failure, generationRuntime.complex()::close);
+        failure = runCleanup(failure, () -> generationRuntime.hash32().cancel(true));
+        if (generationRuntime.mantle() != retainedMantle) {
+            failure = runCleanup(failure, generationRuntime.mantle()::saveAllNow);
+            failure = runCleanup(failure, generationRuntime.mantle()::close);
+        }
+        return failure;
+    }
+
+    Throwable closeDetachedGenerationRuntime(GenerationRuntime generationRuntime, Throwable failure) {
+        IrisEngine.GenerationRuntimeBinding binding = new IrisEngine.GenerationRuntimeBinding(
+                engine,
+                generationRuntime);
+        try (IrisEngine.GenerationRuntimeScope ignored = engine.generationRuntimeScopes.open(binding)) {
+            failure = closeGenerationRuntime(generationRuntime, failure);
+        } catch (Throwable scopeFailure) {
+            failure = appendFailure(failure, scopeFailure);
+        }
+        return closeDetachedTarget(generationRuntime.target(), failure);
+    }
+
+    Throwable closeDetachedTarget(EngineTarget target, Throwable failure) {
+        failure = runCleanup(failure, () -> target.getData().unregisterEngine(engine));
+        failure = runCleanup(failure, target::close);
+        failure = runCleanup(failure, target.getData()::close);
         return failure;
     }
 
     private Throwable releaseRuntime(Throwable failure) {
         if (runtimeReleased) {
             return failure;
+        }
+        Throwable detachedFailure = closeDetachedGenerationRuntimes(null);
+        if (detachedFailure != null) {
+            return appendFailure(failure, detachedFailure);
         }
         Throwable runtimeFailure = closeRuntime(engine.runtime, null);
         if (runtimeFailure != null) {
@@ -260,27 +322,27 @@ final class EngineShutdownSequence {
         return failure;
     }
 
+    private Throwable closeDetachedGenerationRuntimes(Throwable failure) {
+        GenerationRuntime[] detachedRuntimes = engine.detachedGenerationRuntimes.toArray(new GenerationRuntime[0]);
+        for (GenerationRuntime detached : detachedRuntimes) {
+            Throwable detachedFailure = closeDetachedGenerationRuntime(detached, null);
+            failure = appendFailure(failure, detachedFailure);
+            if (detachedFailure == null) {
+                engine.detachedGenerationRuntimes.remove(detached);
+            }
+        }
+        return failure;
+    }
+
     private Throwable releaseTarget(Throwable failure) {
         if (targetReleased) {
             return failure;
         }
-        Throwable targetFailure = runCleanup(null, engine.getTarget()::close);
+        Throwable targetFailure = runCleanup(null, engine.publishedTarget::close);
         if (targetFailure != null) {
             return appendFailure(failure, targetFailure);
         }
         targetReleased = true;
-        return failure;
-    }
-
-    private Throwable releaseMantle(Throwable failure) {
-        if (mantleReleased) {
-            return failure;
-        }
-        Throwable mantleFailure = runCleanup(null, engine.getMantle()::close);
-        if (mantleFailure != null) {
-            return appendFailure(failure, mantleFailure);
-        }
-        mantleReleased = true;
         return failure;
     }
 

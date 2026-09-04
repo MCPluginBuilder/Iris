@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.iris.util.project.context.IrisContext;
@@ -40,6 +41,10 @@ public interface EngineMode extends Staged {
 
     default EngineStage burst(EngineStage... stages) {
         return (x, z, blocks, biomes, multicore, ctx) -> {
+            IrisEngine generationEngine = getEngine() instanceof IrisEngine irisEngine ? irisEngine : null;
+            IrisEngine.GenerationRuntimeBinding generationRuntime = generationEngine == null
+                    ? null
+                    : generationEngine.captureGenerationRuntimeBinding();
             BurstExecutor e = burst().burst(stages.length);
             e.setMulticore(multicore);
             // BurstExecutor.complete() logs-and-swallows stage failures; without re-propagation
@@ -52,7 +57,10 @@ public interface EngineMode extends Staged {
                     if (failure.get() != null) {
                         return;
                     }
-                    try (IrisContext.Scope stageScope = IrisContext.open(getEngine(), ctx.getGenerationSessionId(), ctx)) {
+                    try (IrisEngine.GenerationRuntimeScope runtimeScope = generationEngine == null
+                            ? null
+                            : generationEngine.openGenerationRuntimeScope(generationRuntime);
+                         IrisContext.Scope stageScope = IrisContext.open(getEngine(), ctx.getGenerationSessionId(), ctx)) {
                         i.generate(x, z, blocks, biomes, multicore, ctx);
                     } catch (Throwable t) {
                         failure.compareAndSet(null, t);
@@ -98,8 +106,16 @@ public interface EngineMode extends Staged {
                 inline.generate(x, z, blocks, biomes, false, ctx);
                 return;
             }
+            IrisEngine generationEngine = getEngine() instanceof IrisEngine irisEngine ? irisEngine : null;
+            IrisEngine.GenerationRuntimeBinding generationRuntime = generationEngine == null
+                    ? null
+                    : generationEngine.captureGenerationRuntimeBinding();
             java.util.concurrent.CompletableFuture<Void> background = burst().completeValueAsync(() -> {
-                fanOut.generate(x, z, blocks, biomes, true, ctx);
+                try (IrisEngine.GenerationRuntimeScope runtimeScope = generationEngine == null
+                        ? null
+                        : generationEngine.openGenerationRuntimeScope(generationRuntime)) {
+                    fanOut.generate(x, z, blocks, biomes, true, ctx);
+                }
                 return null;
             });
             Throwable inlineFailure = null;

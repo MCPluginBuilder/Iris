@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Bukkit twin of the modded imported-feature stage. Same control, same semantics, same seeds: with
@@ -57,9 +58,7 @@ final class ImportedFeatureStage {
     private static final String CYCLE_MARKER = "Feature order cycle found";
 
     private final Engine engine;
-    private volatile FeatureTable featureTable;
-    private volatile IrisDimension inertDimension;
-    private volatile int settledRuntimeId;
+    private final ConcurrentHashMap<Integer, RuntimeFeatureState> runtimeStates = new ConcurrentHashMap<>();
 
     ImportedFeatureStage(Engine engine) {
         this.engine = engine;
@@ -71,7 +70,8 @@ final class ImportedFeatureStage {
      * does today.
      */
     BiomeGenerationSettings generationSettings(Holder<Biome> biome) {
-        FeatureTable table = featureTable;
+        RuntimeFeatureState state = currentState();
+        FeatureTable table = state == null ? null : state.featureTable();
         if (table == null) {
             return null;
         }
@@ -82,50 +82,46 @@ final class ImportedFeatureStage {
     /**
      * Builds the table on the first decorated chunk, or leaves the stage inert. A feature-order cycle is
      * reported once here and degrades to features-off; it never reaches chunk generation as a crash.
-     *
-     * <p>The volatile fast path is unlocked, so a prepared stage costs two reads per chunk. The build is
-     * synchronized: every worldgen thread decorating a chunk calls this, and two threads that both found the
-     * stage unprepared would each run {@code FeatureSorter}, whose cycle detection is the expensive part.
      */
     void prepare(WorldGenLevel level) {
         IrisDimension dimension = engine.getDimension();
         int runtimeId = engine.getCacheID();
-        if (settled(dimension, runtimeId)) {
+        if (settled(runtimeStates.get(runtimeId), dimension)) {
             return;
         }
         synchronized (this) {
-            if (settled(dimension, runtimeId)) {
+            if (settled(runtimeStates.get(runtimeId), dimension)) {
                 return;
             }
-            build(level, dimension);
-            settledRuntimeId = runtimeId;
+            runtimeStates.put(runtimeId, build(level, dimension));
         }
     }
 
-    private boolean settled(IrisDimension dimension, int runtimeId) {
-        if (settledRuntimeId != runtimeId) {
-            return false;
-        }
-        FeatureTable current = featureTable;
-        if (current != null && current.dimension() == dimension) {
-            return true;
-        }
-        return inertDimension == dimension;
+    void evictRuntime(int runtimeId) {
+        runtimeStates.remove(runtimeId);
     }
 
-    private void build(WorldGenLevel level, IrisDimension dimension) {
+    private RuntimeFeatureState currentState() {
+        IrisDimension dimension = engine.getDimension();
+        RuntimeFeatureState state = runtimeStates.get(engine.getCacheID());
+        return settled(state, dimension) ? state : null;
+    }
+
+    private static boolean settled(RuntimeFeatureState state, IrisDimension dimension) {
+        return state != null && state.dimension() == dimension;
+    }
+
+    private RuntimeFeatureState build(WorldGenLevel level, IrisDimension dimension) {
         IrisImportedFeatureControl control;
         try {
             control = NativeFeatureGenerationPolicy.control(engine);
         } catch (RuntimeException error) {
             IrisLogging.error("Iris could not read importedFeatures for this dimension; features off: "
                     + error);
-            markInert(dimension);
-            return;
+            return new RuntimeFeatureState(dimension, null);
         }
         if (!control.shouldGenerateFeatures()) {
-            markInert(dimension);
-            return;
+            return new RuntimeFeatureState(dimension, null);
         }
         FeatureTable built;
         try {
@@ -133,23 +129,15 @@ final class ImportedFeatureStage {
         } catch (Throwable error) {
             IrisLogging.error("Iris importedFeatures is off for " + dimensionKey()
                     + ": feature table construction failed: " + error);
-            markInert(dimension);
-            return;
+            return new RuntimeFeatureState(dimension, null);
         }
         if (built == null) {
-            markInert(dimension);
-            return;
+            return new RuntimeFeatureState(dimension, null);
         }
-        featureTable = built;
-        inertDimension = null;
         IrisLogging.info("Iris importedFeatures on for " + dimensionKey() + ": " + built.biomes().size()
                 + " biomes, " + built.steps().size() + " steps, " + built.derivatives().size()
                 + " custom-biome derivative maps");
-    }
-
-    private void markInert(IrisDimension dimension) {
-        featureTable = null;
-        inertDimension = dimension;
+        return new RuntimeFeatureState(dimension, built);
     }
 
     private FeatureTable buildTable(WorldGenLevel level, IrisImportedFeatureControl control,
@@ -198,7 +186,6 @@ final class ImportedFeatureStage {
      */
     private Set<String> visibleBiomeKeys() {
         Set<String> keys = new LinkedHashSet<>();
-        String namespace = engine.getDimension().getLoadKey().toLowerCase(Locale.ROOT);
         for (IrisBiome irisBiome : engine.getAllBiomes()) {
             addKey(keys, irisBiome.getStructureDerivativeKey());
             addKey(keys, irisBiome.getDerivativeKey());
@@ -213,7 +200,7 @@ final class ImportedFeatureStage {
                 continue;
             }
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                addKey(keys, namespace + ":" + customBiome.getId());
+                addKey(keys, engine.getData().customBiomeResourceKey(engine.getDimension(), customBiome));
             }
         }
         return keys;
@@ -226,7 +213,6 @@ final class ImportedFeatureStage {
     private Map<String, Holder<Biome>> customBiomeDerivatives(Registry<Biome> registry,
                                                               Map<String, Holder<Biome>> byKey) {
         Map<String, Holder<Biome>> derivatives = new HashMap<>();
-        String namespace = engine.getDimension().getLoadKey().toLowerCase(Locale.ROOT);
         for (IrisBiome irisBiome : engine.getAllBiomes()) {
             if (!irisBiome.isCustom()) {
                 continue;
@@ -246,7 +232,10 @@ final class ImportedFeatureStage {
                 continue;
             }
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                derivatives.put(namespace + ":" + customBiome.getId().toLowerCase(Locale.ROOT), derivative);
+                derivatives.put(
+                        engine.getData().customBiomeResourceKey(engine.getDimension(), customBiome),
+                        derivative
+                );
             }
         }
         return derivatives;
@@ -277,7 +266,8 @@ final class ImportedFeatureStage {
      * control is disabled or the table degraded.
      */
     void run(WorldGenLevel level, ChunkAccess chunk, ChunkGenerator owner) {
-        FeatureTable table = featureTable;
+        RuntimeFeatureState state = currentState();
+        FeatureTable table = state == null ? null : state.featureTable();
         if (table == null) {
             return;
         }
@@ -404,5 +394,8 @@ final class ImportedFeatureStage {
                                 Map<String, Holder<Biome>> byKey,
                                 List<FeatureSorter.StepFeatureData> steps,
                                 Map<String, Holder<Biome>> derivatives, boolean filtered) {
+    }
+
+    private record RuntimeFeatureState(IrisDimension dimension, FeatureTable featureTable) {
     }
 }

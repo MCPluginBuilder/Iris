@@ -2,20 +2,26 @@ package art.arcane.iris.core.nms;
 
 import org.junit.Test;
 
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.lang.reflect.Method;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class ServerShutdownBoundaryTest {
     @Test
     public void await_returnsImmediatelyWhenBoundaryIsAlreadyReached() {
-        assertTrue(ServerShutdownBoundary.await(
+        assertTrue(new ServerShutdownBoundary(
                 () -> true,
-                Thread.currentThread(),
+                Thread.currentThread()).await(
                 0L,
                 TimeUnit.MILLISECONDS
         ));
@@ -23,9 +29,9 @@ public class ServerShutdownBoundaryTest {
 
     @Test
     public void await_doesNotJoinTheCallingServerThread() {
-        assertFalse(ServerShutdownBoundary.await(
+        assertFalse(new ServerShutdownBoundary(
                 () -> false,
-                Thread.currentThread(),
+                Thread.currentThread()).await(
                 5L,
                 TimeUnit.SECONDS
         ));
@@ -44,11 +50,10 @@ public class ServerShutdownBoundaryTest {
             await(releaseServer);
             boundaryReached.set(true);
         }, "server-boundary-test");
+        ServerShutdownBoundary boundary = new ServerShutdownBoundary(boundaryReached::get, serverThread);
         Thread waiterThread = new Thread(() -> {
             waiterStarted.countDown();
-            result.set(ServerShutdownBoundary.await(
-                    boundaryReached::get,
-                    serverThread,
+            result.set(boundary.await(
                     5L,
                     TimeUnit.SECONDS
             ));
@@ -76,9 +81,9 @@ public class ServerShutdownBoundaryTest {
         serverThread.start();
 
         try {
-            assertFalse(ServerShutdownBoundary.await(
+            assertFalse(new ServerShutdownBoundary(
                     () -> false,
-                    serverThread,
+                    serverThread).await(
                     0L,
                     TimeUnit.MILLISECONDS
             ));
@@ -86,6 +91,34 @@ public class ServerShutdownBoundaryTest {
             releaseServer.countDown();
             serverThread.join();
         }
+    }
+
+    @Test
+    public void preparationLinksTheBoundarySupplierBeforeShutdown() {
+        AtomicInteger reads = new AtomicInteger();
+        ServerShutdownBoundary boundary = new ServerShutdownBoundary(
+                () -> reads.incrementAndGet() > 1, Thread.currentThread());
+
+        assertEquals(1, reads.get());
+        assertTrue(boundary.await(0L, TimeUnit.MILLISECONDS));
+    }
+
+    @Test
+    public void preparedBoundaryRemainsUsableAfterItsClassLoaderCloses() throws Exception {
+        URL classes = ServerShutdownBoundary.class.getProtectionDomain().getCodeSource().getLocation();
+        AtomicBoolean reached = new AtomicBoolean(false);
+        BooleanSupplier supplier = reached::get;
+        Object boundary;
+        Method awaitMethod;
+        try (URLClassLoader loader = new URLClassLoader(new URL[]{classes}, ClassLoader.getPlatformClassLoader())) {
+            Class<?> type = Class.forName(ServerShutdownBoundary.class.getName(), true, loader);
+            boundary = type.getConstructor(BooleanSupplier.class, Thread.class)
+                    .newInstance(supplier, Thread.currentThread());
+            awaitMethod = type.getMethod("await", long.class, TimeUnit.class);
+        }
+
+        reached.set(true);
+        assertEquals(Boolean.TRUE, awaitMethod.invoke(boundary, 0L, TimeUnit.MILLISECONDS));
     }
 
     private static void await(CountDownLatch latch) {

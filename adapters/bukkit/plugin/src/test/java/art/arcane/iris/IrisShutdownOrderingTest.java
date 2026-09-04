@@ -10,12 +10,62 @@ import static org.junit.Assert.assertTrue;
 
 public class IrisShutdownOrderingTest {
     @Test
+    public void serverStopHoldsThePluginLoaderUntilTerminalCleanupCompletes() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("iris.startupSource")));
+        String quiesce = section(source, "private void quiesceRuntimeForServerShutdown", "private void startPostStopFinisher");
+        String cleanup = section(source, "private void finishTerminalCleanup()", "private void drainWorldGenerators");
+        String teardown = section(source, "private void teardownRuntime", "private void quiesceRuntimeForServerShutdown");
+        String deferred = section(source, "private void finishDeferredRuntimeTeardown", "private void finishTerminalCleanup");
+
+        assertOrdered(quiesce, "serverStopTeardownDeferred.set(true)", "deferPluginClassLoaderClose()",
+                "jigsawStudioService.quiesceForServerShutdown()");
+        assertOrdered(cleanup, "runPostShutdown()", "hasActiveShutdownResources()", "IrisPlatforms.unbind()",
+                "runtimeTeardownFailed.get()", "releasePluginClassLoaderClose()");
+        assertTrue(cleanup.contains("!MultiBurst.burst.isTerminated() || !MultiBurst.ioBurst.isTerminated()"));
+        assertTrue(cleanup.contains("preservation.hasActiveResources()"));
+        assertOrdered(teardown, "drainWorldGenerators(reason, timeoutSeconds)", "!generatorDrainCompleted",
+                "return;", "service.onDisable()");
+        assertOrdered(deferred, "teardownRuntime(reason, timeoutSeconds)", "!generatorDrainCompleted",
+                "SHUTDOWN_ERRORS.println", "return;", "finishTerminalCleanup()");
+    }
+
+    @Test
+    public void deferredShutdownErrorsBypassClosedLoggingServices() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("iris.startupSource")));
+        String throwableReport = section(source, "public static void reportError(Throwable e)",
+                "public static void reportError(String context, Throwable e)");
+        String contextualReport = section(source, "public static void reportError(String context, Throwable e)",
+                "public static void dump()");
+
+        assertOrdered(throwableReport, "serverStopTeardownDeferred.get()",
+                "e.printStackTrace(SHUTDOWN_ERRORS)", "boolean debug = false");
+        assertOrdered(contextualReport, "serverStopTeardownDeferred.get()",
+                "SHUTDOWN_ERRORS.println(", "error.printStackTrace(SHUTDOWN_ERRORS)", "Iris.error(message)");
+    }
+
+    @Test
     public void drainWorldGenerators_closesGeneratorsWithoutEagerMantleSave() throws Exception {
         String source = Files.readString(Path.of(System.getProperty("iris.startupSource")));
         String drain = section(source, "private void drainWorldGenerators", "private void setupPapi");
 
         assertTrue("Shutdown must close each Iris generator", drain.contains("generator.closeAsync()"));
         assertFalse("Shutdown must not close Mantle plates before generation drains", drain.contains("saveAllNow()"));
+    }
+
+    @Test
+    public void shutdownBoundaryIsPreparedBeforeHookRegistrationAndDoesNotUseClosedBindings() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("iris.startupSource")));
+        String registration = section(source, "public void addShutdownHook()", "public void removeShutdownHook()");
+        String boundary = section(source, "private boolean awaitServerShutdownBoundary()",
+                "private void finishDeferredRuntimeTeardown");
+
+        assertOrdered(registration, "createServerShutdownBoundary()", "new Thread(this::runShutdownHook",
+                "Runtime.getRuntime().addShutdownHook");
+        assertTrue(boundary.contains("boundary.await("));
+        assertFalse(boundary.contains("INMS.get()"));
+        assertFalse(boundary.contains("Iris.reportError"));
+        assertTrue(source.contains("new FileOutputStream(FileDescriptor.err)"));
+        assertOrdered(boundary, "SHUTDOWN_ERRORS.println(", "e.printStackTrace(SHUTDOWN_ERRORS)", "return false;");
     }
 
     @Test
@@ -43,6 +93,7 @@ public class IrisShutdownOrderingTest {
                 "finishDeferredRuntimeTeardown(\"startup-boundary-restart-hook\", 30L)",
                 "return;",
                 "awaitServerShutdownBoundary()",
+                "SHUTDOWN_ERRORS.println",
                 "finishDeferredRuntimeTeardown(\"shutdown-hook\", 30L)");
         assertOrdered(finisher,
                 "finisher.setDaemon(false)",
@@ -85,8 +136,8 @@ public class IrisShutdownOrderingTest {
         assertOrdered(teardown,
                 "drainWorldGenerators(reason, timeoutSeconds)",
                 "service.onDisable()",
-                "MultiBurst.burst::close",
-                "MultiBurst.ioBurst::close");
+                "MultiBurst.burst.close()",
+                "MultiBurst.ioBurst.close()");
         assertTrue("Engine service must retain its generator close behind deferred service teardown",
                 engineDisable.contains("startClose("));
         assertTrue("Studio service must retain its generator close behind deferred service teardown",

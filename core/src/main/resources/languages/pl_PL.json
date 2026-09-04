@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "Promień w chunkach wokół centrum",
     "iris.director.commanddeveloper.param.center_chunk_x": "Środek chunka X",
     "iris.director.commanddeveloper.param.center_chunk_z": "Środek chunka Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "Aktualizacja pakietu świata (UNSAFE!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "Przygotuj aktualizację generowania świata",
     "iris.director.commanddeveloper.param.world_update": "Świat do aktualizacji",
     "iris.director.commanddeveloper.param.pack_install_into_world": "Paczka do instalacji na świecie",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "Upewnij się, aby zrobić kopię zapasową & najpierw przeczytaj ostrzeżenia!",
@@ -1053,15 +1053,13 @@
       "other": "§7    ...  oraz {count} więcej ostrzeżeń.",
       "one": "§7    ...  oraz {count} Więcej ostrzeżeń."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cPrzed użyciem tej funkcji zawsze wykonaj kopię zapasową",
-      "§eMożliwe problemy obejmują między innymi:",
-      "§e - Uszkodzone chunki (ucięte krawędzie) pomiędzy starymi i nowymi chunkami (przed aktualizacją & po niej)",
-      "§e - Ponownie wygenerowane chunki, które nie pasują do starych chunków",
-      "§e - Struktury, które nie pojawiają się ponownie podczas regeneracji",
-      "§e - Niedopasowane jaskinie",
-      "§e - Niedopasowane warstwy terenu",
-      "§cGdy rozumiesz ryzyko i masz wykonaną kopię zapasową:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cPrzed przygotowaniem aktualizacji wykonaj kopię zapasową całego świata.",
+      "§eIstniejące chunki nie zostaną ponownie wygenerowane ani nadpisane.",
+      "§ePo restarcie nowe chunki użyją przygotowanego pakietu i stopniowo połączą się z terenem przy zapisanej granicy.",
+      "§eNie można zmienić ziarna, wysokości, środowiska ani typu wymiaru świata.",
+      "§eKażda kopia zapasowa musi zawierać cały katalog iris/generation.",
+      "§cAby przygotować aktualizację i zażądać prawidłowego restartu:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aPrzywóz §f{total}§a vanilla & struktury datapack (tryb ={mode}, includeNonJigsaw={includeNonJigsaw})...",

@@ -28,6 +28,7 @@ import net.minecraft.resources.Identifier;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.Function;
 
 final class ModdedDimensionMetadata {
     private ModdedDimensionMetadata() {
@@ -45,7 +46,10 @@ final class ModdedDimensionMetadata {
 
     static Set<String> collectConfiguredBiomeKeys(IrisDimension dimension, IrisData data) {
         LinkedHashSet<String> keys = new LinkedHashSet<>(
-                collectConfiguredBiomeKeys(dimension.getReachableBiomes(() -> data), dimension.getLoadKey()));
+                collectConfiguredBiomeKeys(
+                        dimension.getReachableBiomes(() -> data),
+                        customBiome -> data.customBiomeResourceKey(dimension, customBiome)
+                ));
         for (IrisRegion region : dimension.getAllRegions(() -> data)) {
             if (region == null) {
                 continue;
@@ -60,9 +64,11 @@ final class ModdedDimensionMetadata {
         return Set.copyOf(keys);
     }
 
-    static Set<String> collectConfiguredBiomeKeys(Iterable<IrisBiome> biomes, String dimensionLoadKey) {
+    static Set<String> collectConfiguredBiomeKeys(
+            Iterable<IrisBiome> biomes,
+            Function<IrisBiomeCustom, String> customBiomeKey
+    ) {
         LinkedHashSet<String> keys = new LinkedHashSet<>();
-        String namespace = dimensionLoadKey.toLowerCase(Locale.ROOT);
         for (IrisBiome irisBiome : biomes) {
             if (irisBiome == null) {
                 continue;
@@ -75,7 +81,7 @@ final class ModdedDimensionMetadata {
                 continue;
             }
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                keys.add(namespace + ":" + customBiome.getId().toLowerCase(Locale.ROOT));
+                keys.add(customBiomeKey.apply(customBiome).toLowerCase(Locale.ROOT));
             }
         }
         return Set.copyOf(keys);

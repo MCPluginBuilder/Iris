@@ -20,7 +20,7 @@ package art.arcane.iris.engine;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.protocol.IrisProtocolServer;
-import art.arcane.iris.engine.EngineRuntime.BiomeMaxes;
+import art.arcane.iris.engine.GenerationRuntime.BiomeMaxes;
 import art.arcane.iris.engine.EngineRuntimeBuilder.RuntimeAssembly;
 import art.arcane.iris.engine.IrisEngine.LifecycleState;
 import art.arcane.iris.engine.framework.EngineTarget;
@@ -53,25 +53,37 @@ final class EngineHotloader {
     void hotloadComplex() {
         synchronized (engine.lifecycleLock) {
             engine.requireRunning("rebuild the biome complex");
+            requireMutableGenerationRuntime("rebuild the biome complex");
             engine.awaitNativeStructureBootstrap("complex hotload");
             engine.lifecycleState = LifecycleState.HOTLOADING;
             EngineRuntime previous = engine.runtime;
+            GenerationRuntime previousGeneration = previous.generation();
             IrisComplex nextComplex = null;
             try {
                 engine.sealForTransition("complex hotload", false);
-                RuntimeAssembly assembly = new RuntimeAssembly(RuntimeAssembly.nextRuntimeId(), previous.target());
+                RuntimeAssembly assembly = new RuntimeAssembly(
+                        RuntimeAssembly.nextRuntimeId(),
+                        previousGeneration.target(),
+                        previousGeneration.mantleStorageDirectory(),
+                        previousGeneration.runtimeKernel(),
+                        previousGeneration.transitionPlan());
                 engine.runtimeAssembly.set(assembly);
                 EngineRuntime next;
                 try (IrisContext.Scope ignored = IrisContext.open(engine, engine.getGenerationSessions().currentSessionId(), null)) {
-                    assembly.complex = new IrisComplex(engine);
+                    assembly.complex = assembly.runtimeKernel.createComplex(engine, assembly.transitionPlan);
                     nextComplex = assembly.complex;
-                    assembly.upperContext = engine.runtimeBuilder.buildUpperContext();
+                    assembly.upperContext = assembly.runtimeKernel.createUpperContext(engine);
                     BiomeMaxes biomeMaxes = engine.runtimeBuilder.computeBiomeMaxes();
-                    next = previous.withComplex(assembly.cacheId, assembly.complex, assembly.upperContext, biomeMaxes);
+                    GenerationRuntime nextGeneration = previousGeneration.withComplex(
+                            assembly.cacheId,
+                            assembly.complex,
+                            assembly.upperContext,
+                            biomeMaxes);
+                    next = previous.withGeneration(nextGeneration);
                 } finally {
                     engine.runtimeAssembly.remove();
                 }
-                Throwable retirementFailure = runCleanup(null, previous.complex()::close);
+                Throwable retirementFailure = runCleanup(null, previousGeneration.complex()::close);
                 if (retirementFailure != null) {
                     retirementFailure = runCleanup(retirementFailure, nextComplex::close);
                     nextComplex = null;
@@ -84,7 +96,7 @@ final class EngineHotloader {
                 engine.getClosing().set(false);
                 engine.backgroundTasks.openBackgroundTaskAdmission();
             } catch (Throwable e) {
-                if (nextComplex != null && nextComplex != previous.complex()) {
+                if (nextComplex != null && nextComplex != previousGeneration.complex()) {
                     Throwable cleanupFailure = runCleanup(null, nextComplex::close);
                     if (cleanupFailure != null) {
                         e.addSuppressed(cleanupFailure);
@@ -101,6 +113,7 @@ final class EngineHotloader {
     void hotloadSilently() {
         synchronized (engine.lifecycleLock) {
             engine.requireRunning("hotload");
+            requireMutableGenerationRuntime("hotload");
             engine.awaitNativeStructureBootstrap("hotload");
             engine.lifecycleState = LifecycleState.HOTLOADING;
             EngineRuntime previousRuntime = engine.runtime;
@@ -172,6 +185,13 @@ final class EngineHotloader {
                 }
                 throw new IllegalStateException("Iris hotload failed.", e);
             }
+        }
+    }
+
+    private void requireMutableGenerationRuntime(String operation) {
+        if (engine.getGenerationHistoryRuntimeRouter().isPresent()) {
+            throw new IllegalStateException("Cannot " + operation
+                    + " while immutable Iris generation history is attached; stage a world update and restart instead.");
         }
     }
 

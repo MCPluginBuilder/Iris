@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "Radio in chunk intorno al centro",
     "iris.director.commanddeveloper.param.center_chunk_x": "Centro chunk X",
     "iris.director.commanddeveloper.param.center_chunk_z": "Coordinata Z del Chunk centrale",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "Aggiorna il Pack di un mondo (NON SICURO!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "Prepara un aggiornamento della generazione del mondo",
     "iris.director.commanddeveloper.param.world_update": "Il mondo per aggiornare",
     "iris.director.commanddeveloper.param.pack_install_into_world": "Il Pack da installare nel mondo",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "Assicurarsi di fare un backup & leggere prima gli avvertimenti!",
@@ -1053,15 +1053,13 @@
       "other": "§7  ... e altri {count} avvisi.",
       "one": "§7  ... e {count} altro avviso."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cCrea sempre un backup prima di usare questa funzione.",
-      "§eI possibili problemi includono, tra gli altri:",
-      "§e - Transizioni Chunk danneggiate tra Chunk vecchi e nuovi (prima e dopo l'aggiornamento)",
-      "§e - Chunk rigenerati che non si raccordano con i vecchi Chunk",
-      "§e - Strutture che non vengono generate di nuovo durante la rigenerazione",
-      "§e - Grotte che non si raccordano",
-      "§e - Strati del terreno che non si raccordano",
-      "§cDopo aver compreso i rischi e creato un backup:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cEsegui un backup dell'intero mondo prima di preparare questo aggiornamento.",
+      "§eI chunk esistenti non saranno rigenerati né riscritti.",
+      "§eDopo il riavvio, i nuovi chunk useranno il pacchetto preparato con una transizione graduale al confine salvato.",
+      "§eIl seed, l'altezza, l'ambiente e il tipo di dimensione del mondo non possono cambiare.",
+      "§eOgni backup deve conservare l'intera cartella iris/generation.",
+      "§cPer preparare l'aggiornamento e richiedere un riavvio regolare:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aImportazione di §f{total}§a strutture vanilla e datapack (mode={mode}, includeNonJigsaw={includeNonJigsaw})...",

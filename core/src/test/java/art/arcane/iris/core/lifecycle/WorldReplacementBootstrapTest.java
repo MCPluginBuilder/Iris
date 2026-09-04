@@ -6,6 +6,11 @@ import art.arcane.iris.core.lifecycle.BukkitWorldConfiguration.WorldGeneratorSna
 import art.arcane.iris.core.lifecycle.WorldReplacementFilesystem.ReplacementPaths;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Phase;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Transaction;
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationEpochContractFactory;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationPackFingerprint;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -59,18 +64,17 @@ public class WorldReplacementBootstrapTest {
     }
 
     @Test
-    public void publishesArmedReplacementAfterFinderAddsNestedMetadata() throws Exception {
+    public void rejectsNestedMetadataAddedAfterImmutableEpochPublication() throws Exception {
         Transaction transaction = stagedTransaction(Phase.ARMED, true, "original");
         configureReplacement(transaction);
-        Path dimensions = paths(transaction).stage().resolve("iris/pack/dimensions");
+        Path dimensions = activePackRoot(paths(transaction).stage()).resolve("dimensions");
         Files.writeString(dimensions.resolve(".DS_Store"), "Finder metadata");
 
-        WorldReplacementBootstrap.ReconcileResult result = reconcile();
+        assertThrows(IOException.class, this::reconcile);
 
-        assertEquals(1, result.published());
-        assertEquals("replacement", replacementContent(target.worldDirectory()));
-        assertEquals("original", Files.readString(backup(transaction).resolve("original.txt")));
-        assertEquals(Phase.PUBLISHED, loadSingle().phase());
+        assertTrue(Files.isDirectory(paths(transaction).stage()));
+        assertEquals("original", Files.readString(target.worldDirectory().resolve("original.txt")));
+        assertEquals(Phase.ARMED, loadSingle().phase());
     }
 
     @Test
@@ -267,12 +271,8 @@ public class WorldReplacementBootstrapTest {
         UUID endId = UUID.randomUUID();
         ReplacementPaths endPaths = WorldReplacementFilesystem.paths(endTarget, endId);
         writeOriginalTarget(endPaths, "end-original");
-        Path endDimension = endPaths.stage().resolve("iris/pack/dimensions/theend.json");
-        Files.createDirectories(endDimension.getParent());
-        Files.writeString(endDimension, "end-replacement");
-        String endFingerprint = WorldReplacementFilesystem.fingerprintPack(
-                endPaths.stage().resolve("iris/pack")
-        );
+        Path endPack = createStagedHistory(endPaths.stage(), "theend", "end-replacement", SEED);
+        String endFingerprint = WorldReplacementFilesystem.fingerprintPack(endPack);
         Transaction end = new Transaction(
                 endId,
                 endKey,
@@ -295,8 +295,8 @@ public class WorldReplacementBootstrapTest {
         assertEquals(0, result.rolledBack());
         assertEquals(0, result.retained());
         assertEquals("replacement", replacementContent(target.worldDirectory()));
-        assertEquals("end-replacement", Files.readString(endTarget.worldDirectory()
-                .resolve("iris/pack/dimensions/theend.json")));
+        assertEquals("end-replacement", Files.readString(activePackRoot(endTarget.worldDirectory())
+                .resolve("dimensions/theend.json")));
         assertEquals("nether-original", Files.readString(backup(nether).resolve("original.txt")));
         assertEquals("end-original", Files.readString(endPaths.backup().resolve("original.txt")));
         List<Transaction> published = WorldReplacementJournal.load(dataDirectory, levelRoot);
@@ -317,13 +317,14 @@ public class WorldReplacementBootstrapTest {
         UUID overworldId = UUID.randomUUID();
         ReplacementPaths overworldPaths = WorldReplacementFilesystem.paths(overworldTarget, overworldId);
         writeOriginalTarget(overworldPaths, "overworld-original");
-        Path overworldDimension = overworldPaths.stage().resolve("iris/pack/dimensions/overworld.json");
-        Files.createDirectories(overworldDimension.getParent());
-        Files.writeString(overworldDimension, "overworld-replacement");
-        WorldReplacementEntryGuard.stage(levelRoot, overworldPaths.stage(), overworldId);
-        String overworldFingerprint = WorldReplacementFilesystem.fingerprintPack(
-                overworldPaths.stage().resolve("iris/pack")
+        Path overworldPack = createStagedHistory(
+                overworldPaths.stage(),
+                "overworld",
+                "overworld-replacement",
+                overworldSeed
         );
+        WorldReplacementEntryGuard.stage(levelRoot, overworldPaths.stage(), overworldId);
+        String overworldFingerprint = WorldReplacementFilesystem.fingerprintPack(overworldPack);
         Transaction overworld = new Transaction(
                 overworldId,
                 overworldKey,
@@ -358,7 +359,7 @@ public class WorldReplacementBootstrapTest {
                 target.worldDirectory()
         );
         assertEquals("overworld-replacement", Files.readString(
-                overworldTarget.worldDirectory().resolve("iris/pack/dimensions/overworld.json")
+                activePackRoot(overworldTarget.worldDirectory()).resolve("dimensions/overworld.json")
         ));
         assertEquals("replacement", replacementContent(target.worldDirectory()));
         assertEquals("overworld-original", Files.readString(overworldPaths.backup().resolve("original.txt")));
@@ -474,10 +475,8 @@ public class WorldReplacementBootstrapTest {
         if (originalPresent) {
             writeOriginalTarget(paths, originalContent);
         }
-        Path dimension = paths.stage().resolve("iris/pack/dimensions/underworld.json");
-        Files.createDirectories(dimension.getParent());
-        Files.writeString(dimension, "replacement");
-        String fingerprint = WorldReplacementFilesystem.fingerprintPack(paths.stage().resolve("iris/pack"));
+        Path pack = createStagedHistory(paths.stage(), "underworld", "replacement", SEED);
+        String fingerprint = WorldReplacementFilesystem.fingerprintPack(pack);
         Transaction transaction = new Transaction(
                 id,
                 WORLD_KEY,
@@ -545,6 +544,51 @@ public class WorldReplacementBootstrapTest {
     }
 
     private String replacementContent(Path worldDirectory) throws Exception {
-        return Files.readString(worldDirectory.resolve("iris/pack/dimensions/underworld.json"));
+        return Files.readString(activePackRoot(worldDirectory).resolve("dimensions/underworld.json"));
+    }
+
+    private Path createStagedHistory(Path world, String dimensionKey, String content, long seed)
+            throws Exception {
+        Path source = world.resolveSibling(world.getFileName() + "." + dimensionKey + ".pack-source");
+        Path dimension = source.resolve("dimensions").resolve(dimensionKey + ".json");
+        Files.createDirectories(dimension.getParent());
+        Files.writeString(dimension, content);
+        String fingerprint = GenerationPackFingerprint.compute(
+                source,
+                GenerationPackFingerprint.CURRENT_VERSION
+        );
+        Files.createDirectory(world);
+        return GenerationHistory.create(
+                world,
+                source,
+                fingerprint,
+                seed,
+                generationContract(dimensionKey),
+                GenerationRegistryContract.empty()
+        ).activePackRoot();
+    }
+
+    private static Path activePackRoot(Path world) throws IOException {
+        return GenerationHistory.open(world).activePackRoot();
+    }
+
+    private static GenerationEpoch.DimensionContract generationContract(String dimensionKey) {
+        return new GenerationEpoch.DimensionContract(
+                dimensionKey,
+                "iris:" + dimensionKey + "_type",
+                "NORMAL",
+                "OVERWORLD",
+                127,
+                -64,
+                384,
+                384,
+                1D,
+                false,
+                "none",
+                0,
+                "0".repeat(64),
+                GenerationEpochContractFactory.CURRENT_DIMENSION_TYPE_FINGERPRINT_SCHEMA,
+                "c".repeat(64)
+        );
     }
 }
