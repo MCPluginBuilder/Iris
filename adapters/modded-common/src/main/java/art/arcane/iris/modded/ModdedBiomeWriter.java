@@ -21,6 +21,7 @@ package art.arcane.iris.modded;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBiomeWriter;
 import art.arcane.iris.util.project.context.IrisContext;
@@ -97,7 +98,7 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
             return key;
         }
         Engine engine = context.getEngine();
-        String prefix = engine.getDimension().getLoadKey() + ":";
+        String prefix = engine.getDimension().getCustomBiomeKeyPrefix();
         if (!key.regionMatches(true, 0, prefix, 0, prefix.length())) {
             return key;
         }
@@ -138,13 +139,7 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
     }
 
     private int idForDerivative(Registry<Biome> registry, String key) {
-        int colon = key.indexOf(':');
-        if (colon <= 0 || colon >= key.length() - 1) {
-            return -1;
-        }
-        String dimensionLoadKey = key.substring(0, colon);
-        String customBiomeId = key.substring(colon + 1);
-        IrisBiome owner = findCustomBiomeOwner(dimensionLoadKey, customBiomeId);
+        IrisBiome owner = findCustomBiomeOwner(key);
         if (owner == null) {
             return -1;
         }
@@ -155,20 +150,18 @@ public final class ModdedBiomeWriter implements PlatformBiomeWriter {
         return idForKey(registry, derivativeKey);
     }
 
-    private IrisBiome findCustomBiomeOwner(String dimensionLoadKey, String customBiomeId) {
+    private IrisBiome findCustomBiomeOwner(String key) {
         for (Engine engine : ModdedWorldEngines.activeEngines()) {
             if (engine == null || engine.isClosed()) {
                 continue;
             }
-            if (!dimensionLoadKey.equalsIgnoreCase(engine.getDimension().getLoadKey())) {
-                continue;
-            }
-            for (IrisBiome biome : engine.getDimension().getAllBiomes(engine)) {
+            IrisDimension dimension = engine.getDimension();
+            for (IrisBiome biome : dimension.getAllBiomes(engine)) {
                 if (!biome.isCustom()) {
                     continue;
                 }
                 for (IrisBiomeCustom custom : biome.getCustomDerivitives()) {
-                    if (customBiomeId.equals(custom.getId())) {
+                    if (key.equalsIgnoreCase(dimension.getCustomBiomeKey(custom.getId()))) {
                         return biome;
                     }
                 }

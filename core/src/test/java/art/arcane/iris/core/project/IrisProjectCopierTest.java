@@ -87,6 +87,46 @@ public class IrisProjectCopierTest {
     }
 
     @Test
+    public void rewritesDimensionStackReferencesAcrossCopiedDimensionsWhenRenaming() throws Exception {
+        Path workspace = temporaryFolder.newFolder("dimension-stack-reference").toPath();
+        Path source = workspace.resolve("template-pack");
+        Files.createDirectories(source.resolve("dimensions"));
+        Files.writeString(source.resolve("dimensions/overworld.json"), """
+                {
+                  "name": "Source",
+                  "dimensionStack": {
+                    "dimensions": ["layers/sky", "overworld"],
+                    "spacer": 24
+                  }
+                }
+                """);
+        Files.createDirectories(source.resolve("dimensions/layers"));
+        Files.writeString(source.resolve("dimensions/layers/sky.json"), """
+                {
+                  "name": "Sky",
+                  "dimensionStack": {
+                    "dimensions": ["overworld", "layers/sky"]
+                  }
+                }
+                """);
+
+        IrisProjectCopier.copyProject(source.toFile(), workspace.toFile(), "overworld", "new-project");
+
+        JSONObject dimension = new JSONObject(Files.readString(
+                workspace.resolve("new-project/dimensions/new-project.json")));
+        assertEquals("layers/sky", dimension.getJSONObject("dimensionStack")
+                .getJSONArray("dimensions").getString(0));
+        assertEquals("new-project", dimension.getJSONObject("dimensionStack")
+                .getJSONArray("dimensions").getString(1));
+        JSONObject supportingDimension = new JSONObject(Files.readString(
+                workspace.resolve("new-project/dimensions/layers/sky.json")));
+        assertEquals("new-project", supportingDimension.getJSONObject("dimensionStack")
+                .getJSONArray("dimensions").getString(0));
+        assertEquals("layers/sky", supportingDimension.getJSONObject("dimensionStack")
+                .getJSONArray("dimensions").getString(1));
+    }
+
+    @Test
     public void existingTargetRemainsUnchanged() throws Exception {
         Path workspace = temporaryFolder.newFolder("packs").toPath();
         Path source = createSource(workspace, "source");

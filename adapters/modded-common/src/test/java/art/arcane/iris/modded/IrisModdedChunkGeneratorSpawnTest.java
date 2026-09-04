@@ -59,6 +59,7 @@ public class IrisModdedChunkGeneratorSpawnTest {
         String spawn = source.substring(spawnStart, spawnEnd);
 
         assertTrue(spawn.contains("spawnTables.initializeVanillaSpawnBiomes(registry)"));
+        assertTrue(spawn.contains("structureBiomeSource.getVisibleSurfaceBiome("));
         assertTrue(spawn.contains("spawnTables.vanillaSpawnBiome(visibleBiome.value())"));
         assertTrue(spawn.contains("NaturalSpawner.spawnMobsForChunkGeneration("));
         assertTrue(spawn.contains("new LegacyRandomSource(RandomSupport.generateUniqueSeed())"));

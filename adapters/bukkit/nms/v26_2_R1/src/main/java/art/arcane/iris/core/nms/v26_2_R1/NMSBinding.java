@@ -825,6 +825,11 @@ public class NMSBinding implements INMSBinding {
     }
 
     @Override
+    public void invalidateNativeStructureVolumeIndex(Engine engine) {
+        NativeStructureVolumeIndex.invalidate(engine);
+    }
+
+    @Override
     public int getBiomeId(Biome biome) {
         for (World i : Bukkit.getWorlds()) {
             if (i.getEnvironment().equals(World.Environment.NORMAL)) {

@@ -17,6 +17,7 @@ import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.Matter;
+import art.arcane.volmlib.util.matter.MatterBiomeInject;
 import org.junit.After;
 import org.junit.Test;
 
@@ -30,6 +31,8 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 public class IrisBiomeActuatorCoordinateTest {
@@ -67,6 +70,19 @@ public class IrisBiomeActuatorCoordinateTest {
         actuator.onActuate(100, -200, output, false, context);
 
         assertEquals(List.of("100,-200", "100,-199", "101,-200", "101,-199"), samples);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void stackedBiomeReplacementRemovesEveryExistingMarkerWithItsTypedSlice() {
+        Mantle<Matter> mantle = mock(Mantle.class);
+
+        IrisBiomeActuator.clearBiomeMatterRange(mantle, 100, -200, 4, 6);
+
+        verify(mantle).remove(100, 4, -200, MatterBiomeInject.class);
+        verify(mantle).remove(100, 5, -200, MatterBiomeInject.class);
+        verify(mantle).remove(100, 6, -200, MatterBiomeInject.class);
+        verifyNoMoreInteractions(mantle);
     }
 
     @SuppressWarnings("unchecked")

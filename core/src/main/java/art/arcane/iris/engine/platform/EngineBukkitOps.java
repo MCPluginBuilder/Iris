@@ -553,11 +553,15 @@ public final class EngineBukkitOps {
     }
 
     public static IrisRegion getRegion(Engine engine, Location l) {
-        return engine.getRegion(l.getBlockX(), l.getBlockZ());
+        return engine.getRegion(
+                l.getBlockX(), l.getBlockY() - engine.getWorld().minHeight(), l.getBlockZ());
     }
 
     public static IrisBiome getBiomeOrMantle(Engine engine, Location l) {
-        return engine.getBiomeOrMantle(l.getBlockX(), l.getBlockY(), l.getBlockZ());
+        return engine.getBiomeOrMantle(
+                l.getBlockX(),
+                l.getBlockY() - engine.getWorld().minHeight(),
+                l.getBlockZ());
     }
 
     public static IrisBiome getSurfaceBiome(Engine engine, Chunk c) {

@@ -163,7 +163,7 @@ public final class NativeStructureOwnershipRecovery {
                         level,
                         biome -> true,
                         generator.getSeaLevel(),
-                        (x, z) -> engine.getHeight(x, z, true) + engine.getMinHeight()
+                        (x, z) -> Engine.hostHeight(engine, x, z, true) + engine.getMinHeight()
                 );
         return NativeStructureFactory.generate(generationContext, holder, plan, references);
     }

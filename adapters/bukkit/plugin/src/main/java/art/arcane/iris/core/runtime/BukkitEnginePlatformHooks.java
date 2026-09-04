@@ -85,6 +85,11 @@ public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
     }
 
     @Override
+    public void prepareRuntimeHotload(Engine engine) {
+        INMS.get().invalidateNativeStructureVolumeIndex(engine);
+    }
+
+    @Override
     public void applyWorldBoundary(Engine engine) {
         IrisDimension expectedDimension = engine.getDimension();
         IrisWorldBoundary configuredBoundary = expectedDimension.getWorldBoundary();

@@ -22,12 +22,14 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.EngineRuntime.BiomeMaxes;
 import art.arcane.iris.engine.IrisEngine.LifecycleState;
+import art.arcane.iris.engine.actuator.IrisDimensionStackActuator;
 import art.arcane.iris.engine.framework.EngineEffects;
 import art.arcane.iris.engine.framework.EngineEffectsProvider;
 import art.arcane.iris.engine.framework.EngineMode;
 import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.EngineWorldManager;
 import art.arcane.iris.engine.framework.EngineWorldManagerProvider;
+import art.arcane.iris.engine.modifier.IrisCustomModifier;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomePaletteLayer;
 import art.arcane.iris.engine.object.IrisDecorator;
@@ -74,6 +76,9 @@ final class EngineRuntimeBuilder {
             assembly.complex = new IrisComplex(engine);
             IrisLogging.debug("[IrisEngine timing] complex=" + (M.ms() - started) + "ms");
             started = M.ms();
+            assembly.dimensionStackContext = buildDimensionStackContext();
+            IrisLogging.debug("[IrisEngine timing] buildDimensionStackContext=" + (M.ms() - started) + "ms");
+            started = M.ms();
             assembly.upperContext = buildUpperContext();
             IrisLogging.debug("[IrisEngine timing] buildUpperContext=" + (M.ms() - started) + "ms");
             started = M.ms();
@@ -91,6 +96,14 @@ final class EngineRuntimeBuilder {
             IrisStaticObjectLayer staticObjects = engine.getDimension().getStaticObjectLayer(engine.getData());
             assembly.mode.registerStage((x, z, blocks, biomes, multicore, context) ->
                     staticObjects.apply(engine, x, z, blocks));
+            if (assembly.dimensionStackContext != null) {
+                IrisDimensionStackActuator dimensionStack = new IrisDimensionStackActuator(engine);
+                assembly.mode.registerStage((x, z, blocks, biomes, multicore, context) ->
+                        dimensionStack.actuate(x, z, blocks, multicore, context));
+                IrisCustomModifier stackCustom = new IrisCustomModifier(engine);
+                assembly.mode.registerStage((x, z, blocks, biomes, multicore, context) ->
+                        stackCustom.modify(x, z, blocks, multicore, context));
+            }
             IrisLogging.debug("[IrisEngine timing] setupMode=" + (M.ms() - started) + "ms");
             started = M.ms();
             assembly.worldManager = IrisServices.get(EngineWorldManagerProvider.class).create(engine);
@@ -205,6 +218,21 @@ final class EngineRuntimeBuilder {
         return null;
     }
 
+    DimensionStackContext buildDimensionStackContext() {
+        IrisDimension dimension = engine.getDimension();
+        if (!dimension.hasDimensionStack()) {
+            return null;
+        }
+        if (dimension.hasUpperDimension()) {
+            throw new IllegalStateException("Dimension '" + dimension.getLoadKey()
+                    + "' cannot enable both dimensionStack and upperDimension.");
+        }
+        DimensionStackContext context = DimensionStackContext.create(engine, dimension.getDimensionStack());
+        IrisLogging.info("Dimension stack enabled: "
+                + String.join(" -> ", dimension.getDimensionStack().getDimensions()));
+        return context;
+    }
+
     private EngineMode createMode() {
         Throwable configuredFailure = null;
         try {
@@ -300,6 +328,7 @@ final class EngineRuntimeBuilder {
         }
         IrisComplex complex;
         UpperDimensionContext upperContext;
+        DimensionStackContext dimensionStackContext;
         EngineEffects effects;
         EngineMode mode;
         EngineWorldManager worldManager;
@@ -319,6 +348,7 @@ final class EngineRuntimeBuilder {
                     target,
                     complex,
                     upperContext,
+                    dimensionStackContext,
                     effects,
                     mode,
                     worldManager,

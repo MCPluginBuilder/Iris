@@ -20,6 +20,7 @@ package art.arcane.iris.engine.modifier;
 
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedModifier;
+import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDepositGenerator;
 import art.arcane.iris.engine.object.IrisDepositHeightDistribution;
@@ -183,6 +184,11 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                 int columnSurface = getDepositTerrainSurface(cx, cz, nx, nz, he, context);
                 if (!placementSurfaceAllows(
                         k.getPlacementScope(), ny, columnSurface, k.getSurfaceClearance())) {
+                    continue;
+                }
+
+                DimensionStackLayout stackLayout = context.getDimensionStackLayout(nx, nz);
+                if (stackLayout != null && stackLayout.isHostFeatureProtectedY(ny)) {
                     continue;
                 }
 

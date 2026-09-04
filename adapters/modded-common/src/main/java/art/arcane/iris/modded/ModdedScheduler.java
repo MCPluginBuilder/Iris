@@ -108,12 +108,17 @@ public final class ModdedScheduler implements PlatformScheduler {
         scheduler.drain();
     }
 
+    public static boolean isMainThread() {
+        Thread running = mainThread;
+        return running != null && Thread.currentThread() == running;
+    }
+
     @Override
     public void global(Runnable task) {
         if (task == null) {
             return;
         }
-        if (onMainThread()) {
+        if (isMainThread()) {
             runGuarded(task);
             return;
         }
@@ -248,11 +253,6 @@ public final class ModdedScheduler implements PlatformScheduler {
             }
             mainQueue.add(delayed.task());
         }
-    }
-
-    private boolean onMainThread() {
-        Thread main = mainThread;
-        return main != null && Thread.currentThread() == main;
     }
 
     private void runGuarded(Runnable task) {

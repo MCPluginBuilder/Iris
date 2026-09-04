@@ -28,6 +28,9 @@ import art.arcane.iris.core.nms.container.BlockPos;
 import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.UpperDimensionContext;
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionStackLayout;
+import art.arcane.iris.engine.DimensionTerrainContext;
 import art.arcane.iris.engine.data.chunk.TerrainChunk;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -87,6 +90,10 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
     IrisComplex getComplex();
 
     default @Nullable UpperDimensionContext getUpperContext() {
+        return null;
+    }
+
+    default @Nullable DimensionStackContext getDimensionStackContext() {
         return null;
     }
 
@@ -255,6 +262,25 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default IrisRegion getRegion(int x, int z) {
+        DimensionStackContext dimensionStackContext = getDimensionStackContext();
+        if (dimensionStackContext != null) {
+            DimensionStackLayout.Layer layer = dimensionStackContext.getLayout(x, z).surfaceLayer();
+            if (layer != null && layer.region() != null) {
+                return layer.region();
+            }
+        }
+        return getComplex().getRegionStream().get(x, z);
+    }
+
+    @BlockCoordinates
+    default IrisRegion getRegion(int x, int y, int z) {
+        DimensionStackContext dimensionStackContext = getDimensionStackContext();
+        if (dimensionStackContext != null) {
+            DimensionStackLayout.Layer layer = dimensionStackContext.getLayout(x, z).layerAt(y);
+            if (layer != null && layer.region() != null) {
+                return layer.region();
+            }
+        }
         return getComplex().getRegionStream().get(x, z);
     }
 
@@ -301,7 +327,45 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default IrisBiome getCaveBiome(int x, int y, int z, IrisDimensionCarvingResolver.State state) {
-        IrisBiome surfaceBiome = getSurfaceBiome(x, z);
+        IrisBiome configuredBiome = resolveConfiguredCaveBiome(x, y, z, state);
+        if (configuredBiome != null) {
+            return configuredBiome;
+        }
+        boolean naturalFallback = answersFromNaturalTerrain(x, z);
+        DimensionStackContext dimensionStackContext = getDimensionStackContext();
+        IrisBiome surfaceBiome = naturalFallback || dimensionStackContext == null
+                ? naturalFallback
+                        ? getComplex().naturalSurfaceBiome(x, z)
+                        : getSurfaceBiome(x, z)
+                : getComplex().getTrueBiomeStream().get(x, z);
+        int surfaceY = naturalFallback
+                ? getComplex().naturalTrueHeight(x, z)
+                : getComplex().getHeightStream().get(x, z).intValue();
+        return resolveDepthCaveBiome(x, y, z, surfaceBiome, surfaceY);
+    }
+
+    @BlockCoordinates
+    default IrisBiome getCaveBiome(
+            int x,
+            int y,
+            int z,
+            IrisDimensionCarvingResolver.State state,
+            IrisBiome surfaceBiome,
+            int surfaceY
+    ) {
+        IrisBiome configuredBiome = resolveConfiguredCaveBiome(x, y, z, state);
+        if (configuredBiome != null) {
+            return configuredBiome;
+        }
+        return resolveDepthCaveBiome(x, y, z, surfaceBiome, surfaceY);
+    }
+
+    private IrisBiome resolveConfiguredCaveBiome(
+            int x,
+            int y,
+            int z,
+            IrisDimensionCarvingResolver.State state
+    ) {
         int worldY = y + getWorld().minHeight();
         IrisDimensionCarvingEntry rootCarvingEntry = IrisDimensionCarvingResolver.resolveRootEntry(this, worldY, state);
         if (rootCarvingEntry != null) {
@@ -311,13 +375,21 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
                 return resolvedCarvingBiome;
             }
         }
+        return null;
+    }
 
+    private IrisBiome resolveDepthCaveBiome(
+            int x,
+            int y,
+            int z,
+            IrisBiome surfaceBiome,
+            int surfaceY
+    ) {
         IrisBiome caveBiome = getCaveBiome(x, z);
         if (caveBiome == null) {
             return surfaceBiome;
         }
 
-        int surfaceY = getComplex().getHeightStream().get(x, z).intValue();
         int depthBelowSurface = surfaceY - y;
         if (depthBelowSurface <= 0) {
             return surfaceBiome;
@@ -333,6 +405,18 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default IrisBiome getSurfaceBiome(int x, int z) {
+        DimensionStackContext dimensionStackContext = getDimensionStackContext();
+        if (dimensionStackContext != null) {
+            DimensionStackLayout.Layer layer = dimensionStackContext.getLayout(x, z).surfaceLayer();
+            if (layer != null && layer.biome() != null) {
+                return layer.biome();
+            }
+        }
+        return getHostSurfaceBiome(x, z);
+    }
+
+    @BlockCoordinates
+    default IrisBiome getHostSurfaceBiome(int x, int z) {
         if (answersFromNaturalTerrain(x, z)) {
             return getComplex().naturalSurfaceBiome(x, z);
         }
@@ -364,11 +448,35 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default int getHeight(int x, int z, boolean ignoreFluid) {
+        DimensionStackContext dimensionStackContext = getDimensionStackContext();
+        if (dimensionStackContext != null) {
+            return ignoreFluid
+                    ? dimensionStackContext.getStackTerrainHeight(x, z)
+                    : dimensionStackContext.getStackTopHeight(x, z);
+        }
         if (answersFromNaturalTerrain(x, z)) {
             int natural = getComplex().naturalTrueHeight(x, z);
             return ignoreFluid ? natural : Math.max(natural, getMantle().getFluidHeight());
         }
         return getMantle().getHighest(x, z, getData(), ignoreFluid);
+    }
+
+    @BlockCoordinates
+    static int hostHeight(Engine engine, int x, int z, boolean ignoreFluid) {
+        EngineMantle mantle = engine.getMantle();
+        if (mantle == null) {
+            return engine.getHeight(x, z, ignoreFluid);
+        }
+        if (engine.answersFromNaturalTerrain(x, z)) {
+            int naturalHeight = engine.getComplex().naturalTrueHeight(x, z);
+            return ignoreFluid
+                    ? naturalHeight
+                    : Math.max(naturalHeight, mantle.getFluidHeight());
+        }
+        int terrainHeight = mantle.trueHeight(x, z);
+        return ignoreFluid
+                ? terrainHeight
+                : Math.max(terrainHeight, mantle.getFluidHeight(x, z));
     }
 
     @BlockCoordinates
@@ -410,6 +518,15 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
         IrisDimension dim = getDimension();
         dim.getReachableBiomes(this).forEach((i) -> v.put(i.getLoadKey(), i));
+        DimensionStackContext dimensionStackContext = getDimensionStackContext();
+        if (dimensionStackContext != null) {
+            for (DimensionTerrainContext terrainContext : dimensionStackContext.getLayersBottomToTop()) {
+                if (!terrainContext.isSelfReferencing()) {
+                    terrainContext.getDimension().getReachableBiomes(terrainContext)
+                            .forEach((i) -> v.put(i.getLoadKey(), i));
+                }
+            }
+        }
 
         return v.v();
     }
@@ -454,6 +571,22 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
     boolean isStudio();
 
     default IrisBiome getBiome(int x, int y, int z) {
+        DimensionStackContext dimensionStackContext = getDimensionStackContext();
+        if (dimensionStackContext != null) {
+            DimensionStackLayout layout = dimensionStackContext.getLayout(x, z);
+            IrisBiome stackedBiome = dimensionStackBiome(layout, y);
+            if (stackedBiome != null) {
+                return stackedBiome;
+            }
+            DimensionStackLayout.Layer bottomLayer = layout.layersBottomToTop().get(0);
+            if (y > bottomLayer.renderMaxY()) {
+                return bottomLayer.biome();
+            }
+            if (y <= bottomLayer.clippedSurfaceY() - 2) {
+                return getCaveBiome(x, y, z);
+            }
+            return bottomLayer.biome();
+        }
         if (y <= getHeight(x, z) - 2) {
             return getCaveBiome(x, y, z);
         }
@@ -462,11 +595,33 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
     }
 
     default IrisBiome getBiomeOrMantle(int x, int y, int z) {
+        DimensionStackContext dimensionStackContext = getDimensionStackContext();
+        if (dimensionStackContext != null) {
+            DimensionStackLayout layout = dimensionStackContext.getLayout(x, z);
+            IrisBiome stackedBiome = dimensionStackBiome(layout, y);
+            if (stackedBiome != null) {
+                return stackedBiome;
+            }
+            DimensionStackLayout.Layer bottomLayer = layout.layersBottomToTop().get(0);
+            if (y > bottomLayer.renderMaxY()) {
+                return bottomLayer.biome();
+            }
+            if (y <= bottomLayer.clippedSurfaceY() - 2) {
+                return getCaveOrMantleBiome(x, y, z);
+            }
+            return bottomLayer.biome();
+        }
         if (y <= getHeight(x, z) - 2) {
             return getCaveOrMantleBiome(x, y, z);
         }
 
         return getSurfaceBiome(x, z);
+    }
+
+    private static IrisBiome dimensionStackBiome(DimensionStackLayout layout, int y) {
+        DimensionStackLayout.Layer bottom = layout.layersBottomToTop().get(0);
+        DimensionStackLayout.Layer owner = layout.layerAt(y);
+        return owner == bottom ? null : owner.biome();
     }
 
     default String getObjectPlacementKey(int x, int y, int z) {
@@ -524,7 +679,7 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
         }
 
 
-        IrisRegion region = getRegion(x, z);
+        IrisRegion region = getComplex().getRegionStream().get(x, z);
 
         for (IrisObjectPlacement i : region.getObjects()) {
             if (i.compatPlace(getData()).contains(object)) {
@@ -532,7 +687,7 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
             }
         }
 
-        IrisBiome biome = getSurfaceBiome(x, z);
+        IrisBiome biome = getComplex().getTrueBiomeStream().get(x, z);
 
         for (IrisObjectPlacement i : biome.getObjects()) {
             if (i.compatPlace(getData()).contains(object)) {

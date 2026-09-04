@@ -216,7 +216,8 @@ public final class ModdedWhatCommands {
         int centerX = (pos.getX() & ~15) + 8;
         int centerZ = (pos.getZ() & ~15) + 8;
         try {
-            IrisRegion region = engine.getRegion(centerX, centerZ);
+            IrisRegion region = engine.getRegion(
+                    centerX, pos.getY() - engine.getMinHeight(), centerZ);
             IrisModdedCommands.ok(source, IrisLanguage.plain(
                     RuntimeUiMessages.WHAT_IRIS_REGION,
                     MessageArgument.untrusted("region", region.getLoadKey()),

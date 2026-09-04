@@ -73,6 +73,8 @@ import org.zeroturnaround.zip.ZipUtil;
 import java.awt.Desktop;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -85,6 +87,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.ModdedCommandMessages;
@@ -891,21 +894,30 @@ public final class ModdedStudioCommands {
         LinkedHashSet<String> objectKeys = new LinkedHashSet<>();
         LinkedHashSet<String> markerKeys = new LinkedHashSet<>();
         LinkedHashSet<String> structureKeys = new LinkedHashSet<>();
+        List<IrisDimension> dimensions = new ArrayList<>();
 
-        dimension.getAllRegions(() -> dm).forEach((IrisRegion region) -> {
-            if (region != null && region.getLoadKey() != null) {
-                regionKeys.add(region.getLoadKey());
+        for (String dimensionKey : PackExportClosure.collectDimensionKeys(dimension).stream().sorted().toList()) {
+            IrisDimension exportedDimension = dm.getDimensionLoader().load(dimensionKey);
+            if (exportedDimension != null) {
+                dimensions.add(exportedDimension);
             }
-        });
-        dimension.getReachableBiomes(() -> dm).forEach((IrisBiome biome) -> {
-            if (biome != null && biome.getLoadKey() != null) {
-                biomeKeys.add(biome.getLoadKey());
-            }
-        });
-        lootKeys.addAll(dimension.getLoot().getTables());
-        spawnerKeys.addAll(dimension.getEntitySpawners());
-        collectStructureKeys(structureKeys, dimension.getStructures());
-        objectKeys.addAll(PackExportClosure.collectStaticObjectKeys(dimension.getStaticObjects()));
+        }
+        for (IrisDimension exportedDimension : dimensions) {
+            exportedDimension.getAllRegions(() -> dm).forEach((IrisRegion region) -> {
+                if (region != null && region.getLoadKey() != null) {
+                    regionKeys.add(region.getLoadKey());
+                }
+            });
+            exportedDimension.getReachableBiomes(() -> dm).forEach((IrisBiome biome) -> {
+                if (biome != null && biome.getLoadKey() != null) {
+                    biomeKeys.add(biome.getLoadKey());
+                }
+            });
+            lootKeys.addAll(exportedDimension.getLoot().getTables());
+            spawnerKeys.addAll(exportedDimension.getEntitySpawners());
+            collectStructureKeys(structureKeys, exportedDimension.getStructures());
+            objectKeys.addAll(PackExportClosure.collectStaticObjectKeys(exportedDimension.getStaticObjects()));
+        }
 
         for (String regionKey : regionKeys) {
             IrisRegion region = dm.getRegionLoader().load(regionKey);
@@ -975,10 +987,17 @@ public final class ModdedStudioCommands {
             }
         }
 
-        hashes.append(copyJson(folder, "dimensions", dimension.getLoadKey(), dm.getDimensionLoader().findFile(dimension.getLoadKey())));
+        for (IrisDimension exportedDimension : dimensions) {
+            String key = exportedDimension.getLoadKey();
+            hashes.append(copyJson(folder, "dimensions", key, dm.getDimensionLoader().findFile(key)));
+        }
         for (String key : generatorKeys) {
             hashes.append(copyJson(folder, "generators", key, dm.getGeneratorLoader().findFile(key)));
         }
+        for (String key : Stream.of(dm.getExpressionLoader().getPossibleKeys()).sorted().toList()) {
+            hashes.append(copyJson(folder, "expressions", key, dm.getExpressionLoader().findFile(key)));
+        }
+        hashes.append(copyStyleSnippets(packFolder, folder));
         for (String key : regionKeys) {
             hashes.append(copyJson(folder, "regions", key, dm.getRegionLoader().findFile(key)));
         }
@@ -1039,6 +1058,25 @@ public final class ModdedStudioCommands {
             ModdedIrisLog.error("Iris package failed to write {}/{}", category, key, e);
             return "";
         }
+    }
+
+    private static String copyStyleSnippets(File packFolder, File folder) throws IOException {
+        Path sourceRoot = new File(packFolder, "snippet/style").toPath();
+        if (!Files.isDirectory(sourceRoot)) {
+            return "";
+        }
+        StringBuilder hashes = new StringBuilder();
+        try (Stream<Path> files = Files.walk(sourceRoot)) {
+            for (Path source : files.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .sorted()
+                    .toList()) {
+                String relative = sourceRoot.relativize(source).toString().replace(File.separatorChar, '/');
+                String key = relative.substring(0, relative.length() - ".json".length());
+                hashes.append(copyJson(folder, "snippet/style", key, source.toFile()));
+            }
+        }
+        return hashes.toString();
     }
 
     private static int regions(CommandSourceStack source, int radius) {

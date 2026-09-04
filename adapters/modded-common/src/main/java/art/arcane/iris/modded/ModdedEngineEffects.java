@@ -226,7 +226,7 @@ public final class ModdedEngineEffects extends EngineAssignedComponent implement
         int blockY = floor(player.getY()) - getEngine().getWorld().minHeight();
         int blockZ = floor(player.getZ());
         state.biome(getEngine().getBiome(blockX, blockY, blockZ));
-        state.region(getEngine().getRegion(blockX, blockZ));
+        state.region(getEngine().getRegion(blockX, blockY, blockZ));
     }
 
     private void applyEffects(ServerLevel level, ServerPlayer player, Iterable<IrisEffect> effects) {

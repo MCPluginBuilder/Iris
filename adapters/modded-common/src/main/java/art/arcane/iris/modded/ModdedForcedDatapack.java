@@ -52,7 +52,6 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -514,18 +513,13 @@ public final class ModdedForcedDatapack {
         if (!dimensionsDirectory.isDirectory()) {
             return false;
         }
-        File[] dimensionFiles = dimensionsDirectory.listFiles(
-                (File file) -> file.isFile() && file.getName().endsWith(".json"));
-        if (dimensionFiles == null) {
-            throw new IOException("Iris could not read dimensions for pack '" + packName + "'");
-        }
-        if (dimensionFiles.length == 0) {
+        IrisData data = IrisData.get(packFolder);
+        String[] dimensionKeys = data.getDimensionLoader().getPossibleKeys();
+        if (dimensionKeys == null || dimensionKeys.length == 0) {
             return false;
         }
-        Arrays.sort(dimensionFiles, Comparator.comparing(File::getName));
-        IrisData data = IrisData.get(packFolder);
-        for (File dimensionFile : dimensionFiles) {
-            String dimensionKey = dimensionFile.getName().substring(0, dimensionFile.getName().length() - ".json".length());
+        List<String> sortedDimensionKeys = Stream.of(dimensionKeys).sorted().toList();
+        for (String dimensionKey : sortedDimensionKeys) {
             IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
             if (dimension == null) {
                 throw new IllegalStateException("Iris pack '" + packName + "' dimension '"

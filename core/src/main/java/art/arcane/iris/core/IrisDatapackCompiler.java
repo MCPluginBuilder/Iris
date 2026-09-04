@@ -222,7 +222,43 @@ public final class IrisDatapackCompiler {
                 new LinkedHashSet<>(),
                 requiredDimension,
                 requiredFixer);
+        collectDimensionStackRegistryRequirements(
+                requirements,
+                requiredDimension,
+                requiredFixer);
         return Map.copyOf(requirements);
+    }
+
+    private static void collectDimensionStackRegistryRequirements(
+            Map<String, String> requirements,
+            IrisDimension hostDimension,
+            IDataFixer fixer
+    ) throws IOException {
+        if (!hostDimension.hasDimensionStack()) {
+            return;
+        }
+        IrisData data = hostDimension.getLoader();
+        if (data == null) {
+            throw new IOException("Dimension stack host '" + hostDimension.getLoadKey()
+                    + "' has no pack loader");
+        }
+        LinkedHashSet<String> visited = new LinkedHashSet<>();
+        visited.add(hostDimension.getLoadKey());
+        for (String dimensionKey : hostDimension.getDimensionStack().getDimensions()) {
+            if (dimensionKey == null || dimensionKey.isBlank() || !visited.add(dimensionKey)) {
+                continue;
+            }
+            IrisDimension sourceDimension = data.getDimensionLoader().load(dimensionKey);
+            if (sourceDimension == null) {
+                throw new IOException("Dimension stack host '" + hostDimension.getLoadKey()
+                        + "' references missing dimension '" + dimensionKey + "'");
+            }
+            collectRegistryRequirements(
+                    requirements,
+                    new LinkedHashSet<>(),
+                    sourceDimension,
+                    fixer);
+        }
     }
 
     private static void collectRegistryRequirements(
@@ -235,7 +271,6 @@ public final class IrisDatapackCompiler {
                 "dimension_type/iris:" + dimension.getDimensionTypeKey(),
                 fingerprintContent(dimension.getDimensionType().toJson(fixer)));
 
-        String namespace = dimension.getLoadKey().toLowerCase(Locale.ROOT);
         ContentGate contentGate = dimension.getLoader() == null ? null : dimension.getLoader().getContentGate();
         for (IrisBiome biome : dimension.getAllBiomes(dimension::getLoader)) {
             if (biome == null || !biome.isCustom()) {
@@ -246,7 +281,7 @@ public final class IrisDatapackCompiler {
                 if (customBiome == null) {
                     continue;
                 }
-                String biomeKey = namespace + ":" + customBiome.getId();
+                String biomeKey = dimension.getCustomBiomeKey(customBiome.getId());
                 if (!installedBiomeKeys.add(biomeKey)) {
                     continue;
                 }
@@ -533,7 +568,7 @@ public final class IrisDatapackCompiler {
                 || !Files.isDirectory(dimensions, LinkOption.NOFOLLOW_LINKS)) {
             return false;
         }
-        try (Stream<Path> stream = Files.list(dimensions)) {
+        try (Stream<Path> stream = Files.walk(dimensions)) {
             return stream.anyMatch(path -> !Files.isSymbolicLink(path)
                     && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
                     && path.getFileName().toString().endsWith(".json"));

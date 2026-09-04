@@ -222,6 +222,8 @@ public class IrisDimension extends IrisRegistrant {
     private boolean upperDimensionObjects = false;
     @Desc("When true, upper-dimension objects force-place regardless of placement restrictions (slope, underwater, clamp, collisions, carving). Normal dimension objects always place first; upper objects place second and may clip or occlude lower-dimension placements when this is enabled.")
     private boolean upperObjectsForcePlace = false;
+    @Desc("Stack dimension terrain upright in declared top-to-bottom order. The final dimension key must reference this dimension.")
+    private IrisDimensionStack dimensionStack = null;
     @RegistryListResource(IrisBiome.class)
     @Desc("Keep this either undefined or empty. Setting any biome name into this will force iris to only generate the specified biome. Great for testing.")
     private String focus = "";
@@ -528,6 +530,12 @@ public class IrisDimension extends IrisRegistrant {
                 }
             }
         }
+        if (hasFocusRegion()) {
+            IrisRegion focus = data.getRegionLoader().load(getFocusRegion());
+            if (focus != null && !focus.isCompatExcluded()) {
+                regions.put(getFocusRegion(), focus);
+            }
+        }
         return regions.v();
     }
 
@@ -564,6 +572,7 @@ public class IrisDimension extends IrisRegistrant {
         }
 
         Deque<String> pending = new ArrayDeque<>();
+        addReachableBiomeKey(pending, getFocus());
         IrisHydrology configuredHydrology = getHydrology();
         IrisRiverHydrology configuredRivers = configuredHydrology == null ? null : configuredHydrology.getRivers();
         boolean hydrologyPoliciesActive = configuredRivers != null && configuredRivers.isEnabled();
@@ -721,8 +730,14 @@ public class IrisDimension extends IrisRegistrant {
     }
 
     public void installBiomes(IDataFixer fixer, DataProvider data, KList<File> datapackRoots, KSet<String> biomes) throws IOException {
-        String namespace = getLoadKey().toLowerCase(Locale.ROOT);
-        installBiomes(fixer, data, datapackRoots, namespace, "", biomes);
+        String keyPrefix = getCustomBiomeKeyPrefix();
+        int separator = keyPrefix.indexOf(':');
+        String namespace = keyPrefix.substring(0, separator);
+        String pathPrefix = keyPrefix.substring(separator + 1);
+        if (pathPrefix.endsWith("/")) {
+            pathPrefix = pathPrefix.substring(0, pathPrefix.length() - 1);
+        }
+        installBiomes(fixer, data, datapackRoots, namespace, pathPrefix, biomes);
     }
 
     public void installBiomes(IDataFixer fixer, DataProvider data, KList<File> datapackRoots,
@@ -747,18 +762,19 @@ public class IrisDimension extends IrisRegistrant {
 
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
                 String customBiomeId = customBiome.getId();
+                String customBiomePath = sanitizeRegistryPath(customBiomeId, "biome");
                 String json = customBiome.generateJson(fixer, contentGate);
 
                 synchronized (biomes) {
-                    if (!biomes.add(customBiomeId)) {
+                    if (!biomes.add(customBiomePath)) {
                         IrisLogging.debug("Duplicate Data Pack Biome: " + getLoadKey() + "/" + customBiomeId);
                         continue;
                     }
                 }
 
                 String biomePath = pathPrefix.isBlank()
-                        ? customBiomeId
-                        : pathPrefix + "/" + customBiomeId;
+                        ? customBiomePath
+                        : pathPrefix + "/" + customBiomePath;
                 for (File datapackRoot : datapackRoots) {
                     File output = new File(datapackRoot, "data/" + namespace + "/worldgen/biome/" + biomePath + ".json");
 
@@ -900,6 +916,28 @@ public class IrisDimension extends IrisRegistrant {
         return sanitizeDimensionTypeKeyValue(getLoadKey());
     }
 
+    public String getCustomBiomeKey(String customBiomeId) {
+        return customBiomeKey(getLoadKey(), customBiomeId);
+    }
+
+    public String getCustomBiomeKeyPrefix() {
+        return customBiomeKeyPrefix(getLoadKey());
+    }
+
+    public static String customBiomeKey(String dimensionLoadKey, String customBiomeId) {
+        return customBiomeKeyPrefix(dimensionLoadKey) + sanitizeRegistryPath(customBiomeId, "biome");
+    }
+
+    private static String customBiomeKeyPrefix(String dimensionLoadKey) {
+        String dimensionPath = sanitizeRegistryPath(dimensionLoadKey, "dimension");
+        int separator = dimensionPath.indexOf('/');
+        if (separator < 0) {
+            return sanitizeRegistryNamespace(dimensionPath) + ":";
+        }
+        String namespace = sanitizeRegistryNamespace(dimensionPath.substring(0, separator));
+        return namespace + ":" + dimensionPath.substring(separator + 1) + "/";
+    }
+
     public static String sanitizeDimensionTypeKeyValue(String value) {
         if (value == null || value.isBlank()) {
             return "dimension";
@@ -918,6 +956,26 @@ public class IrisDimension extends IrisRegistrant {
         return sanitized.isBlank() ? "dimension" : sanitized;
     }
 
+    private static String sanitizeRegistryNamespace(String value) {
+        String sanitized = value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_.-]", "_");
+        return sanitized.isBlank() ? "dimension" : sanitized;
+    }
+
+    private static String sanitizeRegistryPath(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String sanitized = value.trim().toLowerCase(Locale.ROOT).replace("\\", "/");
+        sanitized = sanitized.replaceAll("[^a-z0-9/._-]", "_");
+        sanitized = sanitized.replaceAll("/+", "/");
+        sanitized = sanitized.replaceAll("^/+", "");
+        sanitized = sanitized.replaceAll("/+$", "");
+        while (sanitized.contains("..")) {
+            sanitized = sanitized.replace("..", "_");
+        }
+        return sanitized.isBlank() ? fallback : sanitized;
+    }
+
     public IrisDimensionType getDimensionType() {
         IrisDimensionTypeOptions options = getDimensionOptions();
         if (fullbright) {
@@ -928,6 +986,10 @@ public class IrisDimension extends IrisRegistrant {
 
     public boolean hasUpperDimension() {
         return upperDimension != null && !upperDimension.isEmpty() && !upperDimension.equalsIgnoreCase("none");
+    }
+
+    public boolean hasDimensionStack() {
+        return dimensionStack != null;
     }
 
     public void installDimensionType(IDataFixer fixer, KList<File> datapackRoots) throws IOException {

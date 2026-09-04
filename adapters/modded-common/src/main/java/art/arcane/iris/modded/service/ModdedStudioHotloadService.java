@@ -32,6 +32,7 @@ import art.arcane.iris.engine.object.IrisWorldBoundary;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedDimensionManager;
 import art.arcane.iris.modded.ModdedForcedDatapack;
+import art.arcane.iris.modded.ModdedScheduler;
 import art.arcane.iris.modded.ModdedWorkspaceGenerator;
 import art.arcane.iris.nativegen.NativeStructureVolumeIndex;
 import art.arcane.iris.modded.command.ModdedPregenJob;
@@ -101,6 +102,11 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
     }
 
     @Override
+    public boolean isMainThread() {
+        return ModdedScheduler.isMainThread();
+    }
+
+    @Override
     public void refreshDatapackWorkspace(Engine engine) {
         IrisData data = engine.getData();
         KList<IrisDimension> dimensions = data.getDimensionLoader().loadAll(data.getDimensionLoader().getPossibleKeys());
@@ -121,6 +127,20 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
                 engine.getDimension(),
                 replacement,
                 "irisworldgen");
+        IrisModdedChunkGenerator.requireStructureBiomeUniverseCompatible(
+                engine.getDimension(), replacement);
+    }
+
+    @Override
+    public void prepareRuntimeHotload(Engine engine) {
+        IrisWorld world = engine.getWorld();
+        if (world == null || !world.hasPlatformWorld()
+                || !(world.platformWorld().nativeHandle() instanceof ServerLevel level)
+                || !(level.getChunkSource().getGenerator() instanceof IrisModdedChunkGenerator generator)) {
+            NativeStructureVolumeIndex.invalidate(engine);
+            return;
+        }
+        generator.prepareRuntimeHotload(level, engine);
     }
 
     @Override
@@ -285,7 +305,6 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
         long start = System.currentTimeMillis();
         try {
             engine.hotloadSilently();
-            generator.onHotload();
             ModdedIrisLog.info("Iris studio hotload {} pack={} {}ms", dimensionId, engine.getDimension().getLoadKey(), System.currentTimeMillis() - start);
         } catch (Throwable e) {
             ModdedIrisLog.error("Iris studio hotload failed for {}", dimensionId, e);

@@ -87,7 +87,7 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
             if (shouldBypassMantleStages()) {
                 return;
             }
-            getMantle().insertMatter(x >> 4, z >> 4, K, m);
+            getMantle().insertMatter(x >> 4, z >> 4, K, m, c);
         };
         EngineStage sFloatingTerrainSolid = (x, z, k, p, m, c) -> floatingChildBiomes.modify(x, z, k, m, c);
         EngineStage sFloatingDecorate = (x, z, k, p, m, c) -> floatingChildBiomes.decorateColumns(x, z, k, m, c);
@@ -118,7 +118,9 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
         registerStage(sDecorant);
         registerStage(sFloatingDecorate);
         registerStage(sPerfection);
-        registerStage(sCustom);
+        if (getEngine().getDimensionStackContext() == null) {
+            registerStage(sCustom);
+        }
     }
 
     private boolean shouldBypassMantleStages() {

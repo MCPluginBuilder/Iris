@@ -18,10 +18,15 @@
 
 package art.arcane.iris.core.pack;
 
+import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisDimensionStack;
 import art.arcane.iris.engine.object.IrisObjectMarker;
 import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisStaticObject;
 import art.arcane.volmlib.util.collection.KSet;
+
+import java.util.ArrayDeque;
+import java.util.function.Function;
 
 /**
  * Shared key collection for the pack packagers. Both the Bukkit re-serializing compiler and the
@@ -31,6 +36,48 @@ import art.arcane.volmlib.util.collection.KSet;
  */
 public final class PackExportClosure {
     private PackExportClosure() {
+    }
+
+    public static KSet<String> collectDimensionKeys(IrisDimension dimension) {
+        return collectDimensionKeys(dimension, key -> dimension == null || dimension.getLoader() == null
+                ? null
+                : dimension.getLoader().getDimensionLoader().load(key));
+    }
+
+    static KSet<String> collectDimensionKeys(
+            IrisDimension dimension,
+            Function<String, IrisDimension> resolver
+    ) {
+        KSet<String> dimensionKeys = new KSet<>();
+        if (dimension == null || dimension.getLoadKey() == null || dimension.getLoadKey().isBlank()) {
+            return dimensionKeys;
+        }
+
+        ArrayDeque<IrisDimension> pending = new ArrayDeque<>();
+        pending.add(dimension);
+        while (!pending.isEmpty()) {
+            IrisDimension current = pending.removeFirst();
+            String currentKey = current.getLoadKey();
+            if (currentKey == null || currentKey.isBlank() || !dimensionKeys.add(currentKey)) {
+                continue;
+            }
+            IrisDimensionStack stack = current.getDimensionStack();
+            if (stack == null || stack.getDimensions() == null) {
+                continue;
+            }
+            for (String key : stack.getDimensions()) {
+                if (key == null || key.isBlank() || dimensionKeys.contains(key)) {
+                    continue;
+                }
+                IrisDimension referenced = resolver.apply(key);
+                if (referenced == null) {
+                    dimensionKeys.add(key);
+                } else {
+                    pending.addLast(referenced);
+                }
+            }
+        }
+        return dimensionKeys;
     }
 
     public static KSet<String> collectMarkerKeys(Iterable<IrisObjectPlacement> placements) {

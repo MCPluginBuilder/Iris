@@ -18,10 +18,14 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionTerrainContext;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.util.project.context.IrisContext;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
@@ -31,32 +35,24 @@ import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.MobSpawnSettings;
 
-import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Vanilla-derivative spawn table state for {@link IrisModdedChunkGenerator}. Every mutator locks the
- * generator monitor because the repoint/bind/reset paths already hold it while resetting this state.
- */
 final class ModdedSpawnTableMerger {
     private final IrisModdedChunkGenerator generator;
-    private final ConcurrentHashMap<Biome, Holder<Biome>> vanillaSpawnBiomes = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<SpawnTableKey, WeightedList<MobSpawnSettings.SpawnerData>> mergedSpawnTables = new ConcurrentHashMap<>();
-    private volatile boolean vanillaSpawnBiomesInitialized;
+    private volatile SpawnTableState state = new SpawnTableState();
 
     ModdedSpawnTableMerger(IrisModdedChunkGenerator generator) {
         this.generator = generator;
     }
 
     void initializeVanillaSpawnBiomes(Registry<Biome> registry) {
-        // Volatile fast path BEFORE the monitor: this runs per mob category per spawn attempt
-        // on the server thread, and the generator monitor is contended by binds/hotloads.
-        if (vanillaSpawnBiomesInitialized) {
+        SpawnTableState active = state;
+        if (active.initialized) {
             return;
         }
-        synchronized (generator) {
-            if (vanillaSpawnBiomesInitialized) {
+        synchronized (active) {
+            if (active != state || active.initialized) {
                 return;
             }
             Engine current = generator.engineOrNull();
@@ -66,29 +62,70 @@ final class ModdedSpawnTableMerger {
 
             try (GenerationSessionLease lease = generator.requireGenerationLease(current, "modded_spawn_biomes");
                  IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
-                String namespace = current.getDimension().getLoadKey().toLowerCase(Locale.ROOT);
-                for (IrisBiome irisBiome : current.getDimension().getReachableBiomes(current)) {
-                    if (irisBiome == null || !irisBiome.isCustom()) {
-                        continue;
-                    }
-                    Holder<Biome> vanillaHolder = resolveBiomeHolder(registry, irisBiome.getVanillaDerivativeKey());
-                    if (vanillaHolder == null) {
-                        continue;
-                    }
-                    for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
-                        Holder<Biome> customHolder = resolveBiomeHolder(registry, namespace + ":" + customBiome.getId());
-                        if (customHolder != null) {
-                            vanillaSpawnBiomes.putIfAbsent(customHolder.value(), vanillaHolder);
+                IrisDimension hostDimension = current.getDimension();
+                addVanillaSpawnBiomes(
+                        registry,
+                        hostDimension,
+                        current.getData(),
+                        hostDimension.getReachableBiomes(current),
+                        active
+                );
+                DimensionStackContext stackContext = current.getDimensionStackContext();
+                if (stackContext != null) {
+                    for (DimensionTerrainContext terrainContext : stackContext.getLayersBottomToTop()) {
+                        if (terrainContext.isSelfReferencing()) {
+                            continue;
                         }
+                        IrisDimension dimension = terrainContext.getDimension();
+                        addVanillaSpawnBiomes(
+                                registry,
+                                dimension,
+                                terrainContext.getData(),
+                                dimension.getReachableBiomes(terrainContext),
+                                active
+                        );
                     }
                 }
-                vanillaSpawnBiomesInitialized = true;
+                active.initialized = true;
+            }
+        }
+    }
+
+    private void addVanillaSpawnBiomes(
+            Registry<Biome> registry,
+            IrisDimension dimension,
+            IrisData data,
+            Iterable<IrisBiome> biomes,
+            SpawnTableState state
+    ) {
+        for (IrisBiome irisBiome : biomes) {
+            if (irisBiome == null || !irisBiome.isCustom()) {
+                continue;
+            }
+            Holder<Biome> vanillaHolder = resolveBiomeHolder(
+                    registry, irisBiome.getVanillaDerivativeKey());
+            if (vanillaHolder == null) {
+                continue;
+            }
+            for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
+                Holder<Biome> customHolder = resolveBiomeHolder(
+                        registry,
+                        ModdedWorldgenIds.biomeRef(
+                                data.getDataFolder().getName(),
+                                dimension.getLoadKey(),
+                                customBiome.getId()
+                        )
+                );
+                if (customHolder == null) {
+                    continue;
+                }
+                state.vanillaSpawnBiomes.putIfAbsent(customHolder.value(), vanillaHolder);
             }
         }
     }
 
     Holder<Biome> vanillaSpawnBiome(Biome biome) {
-        return vanillaSpawnBiomes.get(biome);
+        return state.vanillaSpawnBiomes.get(biome);
     }
 
     WeightedList<MobSpawnSettings.SpawnerData> mergedSpawnTable(
@@ -96,7 +133,8 @@ final class ModdedSpawnTableMerger {
             WeightedList<MobSpawnSettings.SpawnerData> vanillaSpawns,
             WeightedList<MobSpawnSettings.SpawnerData> explicitSpawns) {
         SpawnTableKey key = new SpawnTableKey(biome, category);
-        return mergedSpawnTables.computeIfAbsent(key, ignored -> NativeSpawnTableMerger.merge(vanillaSpawns, explicitSpawns));
+        return state.mergedSpawnTables.computeIfAbsent(
+                key, ignored -> NativeSpawnTableMerger.merge(vanillaSpawns, explicitSpawns));
     }
 
     private Holder<Biome> resolveBiomeHolder(Registry<Biome> registry, String key) {
@@ -112,13 +150,16 @@ final class ModdedSpawnTableMerger {
     }
 
     void resetVanillaSpawnBiomes() {
-        synchronized (generator) {
-            vanillaSpawnBiomes.clear();
-            mergedSpawnTables.clear();
-            vanillaSpawnBiomesInitialized = false;
-        }
+        state = new SpawnTableState();
     }
 
     private record SpawnTableKey(Biome biome, MobCategory category) {
+    }
+
+    private static final class SpawnTableState {
+        private final ConcurrentHashMap<Biome, Holder<Biome>> vanillaSpawnBiomes = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<SpawnTableKey, WeightedList<MobSpawnSettings.SpawnerData>> mergedSpawnTables =
+                new ConcurrentHashMap<>();
+        private volatile boolean initialized;
     }
 }

@@ -111,11 +111,13 @@ public final class PackValidator {
             return new PackValidationResult(packName, blockingErrors, warnings, validatedAt);
         }
 
-        File[] dimensionFiles = dimensionsFolder.listFiles(f -> f.isFile() && f.getName().endsWith(".json"));
-        if (dimensionFiles == null || dimensionFiles.length == 0) {
+        List<File> discoveredDimensions = PackValidationIo.listJsonRecursive(dimensionsFolder);
+        if (discoveredDimensions.isEmpty()) {
             blockingErrors.add("No dimension JSON files under dimensions/.");
             return new PackValidationResult(packName, blockingErrors, warnings, validatedAt);
         }
+        discoveredDimensions.sort((first, second) -> first.getPath().compareTo(second.getPath()));
+        File[] dimensionFiles = discoveredDimensions.toArray(File[]::new);
 
         PackDimensionValidator.validateDimensions(packFolder, dimensionFiles, blockingErrors, warnings);
         PackImageMapValidator.Validation imageMaps = PackImageMapValidator.validate(
@@ -195,7 +197,7 @@ public final class PackValidator {
             if (!data.getContentGate().ready()) {
                 return List.of();
             }
-            boolean dimensionExcluded = loadEverything(data, dimensionFiles);
+            boolean dimensionExcluded = loadEverything(packFolder, data, dimensionFiles);
             List<CompatFinding> findings = data.getCompatReport().findings();
             applyCompatFindings(minecraftVersion, dimensionExcluded, findings, blockingErrors, warnings);
             return findings;
@@ -219,11 +221,12 @@ public final class PackValidator {
      *
      * @return true when any dimension in the pack cannot generate on this server
      */
-    private static boolean loadEverything(IrisData data, File[] dimensionFiles) {
+    private static boolean loadEverything(File packFolder, IrisData data, File[] dimensionFiles) {
         boolean dimensionExcluded = false;
+        File dimensionsFolder = new File(packFolder, DIMENSIONS_FOLDER);
         for (File dimensionFile : dimensionFiles) {
             IrisDimension dimension = data.getDimensionLoader().load(
-                    PackValidationIo.stripExtension(dimensionFile.getName()), false);
+                    PackValidationIo.deriveKey(dimensionsFolder, dimensionFile), false);
             if (dimension == null) {
                 continue;
             }

@@ -80,12 +80,13 @@ final class PackHydrologyValidator {
 
         List<File> sortedDimensions = new ArrayList<>(List.of(dimensionFiles));
         sortedDimensions.sort(Comparator.comparing(File::getPath));
+        File dimensionsFolder = new File(packFolder, PackValidator.DIMENSIONS_FOLDER);
         for (File dimensionFile : sortedDimensions) {
             JSONObject dimension = PackValidationIo.readJson(dimensionFile);
             if (dimension == null) {
                 continue;
             }
-            String dimensionKey = PackValidationIo.stripExtension(dimensionFile.getName());
+            String dimensionKey = PackValidationIo.deriveKey(dimensionsFolder, dimensionFile);
             String dimensionPath = "Dimension '" + dimensionKey + "'";
             JSONObject dimensionPolicy = validatePolicy(
                     dimensionPath,

@@ -84,7 +84,8 @@ final class ModdedEditCommands {
             }
             BlockPos pos = player.blockPosition();
             try {
-                region = engine.getRegion(pos.getX(), pos.getZ());
+                region = engine.getRegion(
+                        pos.getX(), pos.getY() - engine.getMinHeight(), pos.getZ());
             } catch (Throwable e) {
                 IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_REGION_LOOKUP_FAILED, MessageArgument.untrusted("value", e.getClass().getSimpleName())));
                 return 0;

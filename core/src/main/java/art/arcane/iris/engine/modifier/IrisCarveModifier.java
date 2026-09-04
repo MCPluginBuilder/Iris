@@ -19,6 +19,8 @@
 package art.arcane.iris.engine.modifier;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.actuator.IrisDecorantActuator;
 import art.arcane.iris.engine.framework.Engine;
@@ -91,6 +93,8 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
         UpperDimensionContext upperCtx = getEngine().getUpperContext();
         boolean protectUpper = upperCtx != null && !getEngine().getDimension().isUpperDimensionCarving();
         int[] upperSurfaceHeights = protectUpper ? scratch.getOrCreateUpperSurfaceHeights() : null;
+        DimensionStackContext stackContext = getEngine().getDimensionStackContext();
+        DimensionStackLayout[] stackLayouts = stackContext == null ? null : new DimensionStackLayout[256];
         int chunkBlockX = PowerOfTwoCoordinates.chunkToBlock(x);
         int chunkBlockZ = PowerOfTwoCoordinates.chunkToBlock(z);
         for (int columnIndex = 0; columnIndex < 256; columnIndex++) {
@@ -103,6 +107,9 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                 int rawUpper = upperCtx.getUpperSurfaceY(worldX, worldZ);
                 int gap = getEngine().getDimension().getUpperDimensionGap();
                 upperSurfaceHeights[columnIndex] = Math.max(rawUpper, surfaceHeights[columnIndex] + gap);
+            }
+            if (stackLayouts != null) {
+                stackLayouts[columnIndex] = context.getDimensionStackLayout(localX, localZ);
             }
         }
 
@@ -117,6 +124,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                     scratch,
                     columnMasks,
                     upperSurfaceHeights,
+                    stackLayouts,
                     worldHeightSpan,
                     caveLavaHeight,
                     chunkBlockX,
@@ -348,6 +356,10 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             if (context.upperSurfaceHeights() != null && y >= context.upperSurfaceHeights()[columnIndex]) {
                 return;
             }
+            if (context.stackLayouts() != null
+                    && context.stackLayouts()[columnIndex].isHostFeatureProtectedY(y)) {
+                return;
+            }
 
             PlatformBlockState current = context.output().getRaw(localX, y, localZ);
             if (hydrology != null && hydrology.action() == HydrologyCaveAction.SEAL_GUARD) {
@@ -405,6 +417,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             IrisCarveScratch scratch,
             CarveColumnMask[] columnMasks,
             int[] upperSurfaceHeights,
+            DimensionStackLayout[] stackLayouts,
             int worldHeightSpan,
             int caveLavaHeight,
             int chunkBlockX,

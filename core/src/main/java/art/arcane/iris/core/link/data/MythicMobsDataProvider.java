@@ -134,7 +134,8 @@ public class MythicMobsDataProvider extends ExternalDataProvider implements List
             if (access == null) return false;
             Engine engine = access.getEngine();
             if (engine == null) return false;
-            IrisRegion region = engine.getRegion(target.getBlockX(), target.getBlockZ());
+            IrisRegion region = engine.getRegion(
+                    target.getBlockX(), target.getBlockY() - engine.getMinHeight(), target.getBlockZ());
             return regions.contains(region.getLoadKey());
         }
     }

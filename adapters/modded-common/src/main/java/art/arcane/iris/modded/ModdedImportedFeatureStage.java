@@ -18,6 +18,8 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.NativeFeatureGenerationPolicy;
@@ -57,7 +59,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.IntBinaryOperator;
+import java.util.function.Predicate;
 
 /**
  * Native placed-feature passthrough for one Iris dimension, gated on {@code importedFeatures.enabled}.
@@ -219,7 +224,14 @@ final class ModdedImportedFeatureStage {
     private FeatureTable buildTable(Engine engine, IrisImportedFeatureControl control, long generation) {
         // Registry-ordered biome list. FeatureSorter's cycle detection walks it, so an unordered list makes
         // detection depend on JVM hash order and turns a real cycle into an intermittent one.
-        List<Holder<Biome>> biomes = biomeSource.orderedPossibleBiomes();
+        Set<String> hostBiomeKeys = hostBiomeKeys(engine);
+        List<Holder<Biome>> biomes = new ArrayList<>();
+        for (Holder<Biome> biome : biomeSource.orderedPossibleBiomes()) {
+            String key = holderKey(biome);
+            if (key != null && hostBiomeKeys.contains(key)) {
+                biomes.add(biome);
+            }
+        }
         if (biomes.isEmpty()) {
             ModdedIrisLog.error("Iris importedFeatures is on but {} exposes no biomes; features off",
                     dimensionKey(engine));
@@ -262,7 +274,7 @@ final class ModdedImportedFeatureStage {
      */
     private Map<String, Holder<Biome>> customBiomeDerivatives(Engine engine, Map<String, Holder<Biome>> byKey) {
         Map<String, Holder<Biome>> derivatives = new HashMap<>();
-        for (IrisBiome irisBiome : engine.getAllBiomes()) {
+        for (IrisBiome irisBiome : engine.getDimension().getReachableBiomes(engine)) {
             if (!irisBiome.isCustom()) {
                 continue;
             }
@@ -322,14 +334,24 @@ final class ModdedImportedFeatureStage {
         List<FeatureSorter.StepFeatureData> steps = table.steps();
         WorldgenRandom random = new WorldgenRandom(new XoroshiroRandomSource(RandomSupport.generateUniqueSeed()));
         long decorationSeed = random.setDecorationSeed(level.getSeed(), origin.getX(), origin.getZ());
-        Set<Holder<Biome>> chunkBiomes = chunkBiomes(level, sectionPos, table);
         IrisStaticObjectLayer staticObjects = engine.getDimension().getStaticObjectLayer(engine.getData());
         int staticMinY = engine.getMinHeight();
-        WorldGenLevel placementLevel = staticObjects.isEmpty() ? level : ModdedNativeStructureWorldgenAccess.create(
+        DimensionStackContext stackContext = engine.getDimensionStackContext();
+        Set<Holder<Biome>> chunkBiomes = chunkBiomes(level, sectionPos, table, stackContext);
+        IntBinaryOperator surfaceFirstFreeY = stackContext == null
+                ? (x, z) -> level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z)
+                : (x, z) -> Engine.hostHeight(engine, x, z, false) + staticMinY + 1;
+        IntBinaryOperator floorFirstFreeY = stackContext == null
+                ? (x, z) -> level.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z)
+                : (x, z) -> Engine.hostHeight(engine, x, z, true) + staticMinY + 1;
+        WorldGenLevel placementLevel = staticObjects.isEmpty() && stackContext == null
+                ? level
+                : ModdedNativeStructureWorldgenAccess.create(
                 level, centerPos,
-                (x, z) -> level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z),
-                (x, z) -> level.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z),
-                position -> staticObjects.contains(position.getX(), position.getY() - staticMinY, position.getZ()));
+                surfaceFirstFreeY,
+                floorFirstFreeY,
+                stackContext != null,
+                importedFeatureProtection(staticObjects, stackContext, staticMinY));
 
         try {
             for (int stepIndex = 0; stepIndex < steps.size(); stepIndex++) {
@@ -347,6 +369,58 @@ final class ModdedImportedFeatureStage {
             level.setCurrentlyGenerating(null);
         }
         WorldCheckFeaturePlacement.recordPlacementPass();
+    }
+
+    private static Set<String> hostBiomeKeys(Engine engine) {
+        Set<String> keys = new LinkedHashSet<>();
+        for (IrisBiome irisBiome : engine.getDimension().getReachableBiomes(engine)) {
+            addKey(keys, irisBiome.getStructureDerivativeKey());
+            addKey(keys, irisBiome.getDerivativeKey());
+            for (String scatter : irisBiome.getBiomeScatter()) {
+                addKey(keys, scatter);
+            }
+            for (String scatter : irisBiome.getBiomeSkyScatter()) {
+                addKey(keys, scatter);
+            }
+            if (!irisBiome.isCustom()) {
+                continue;
+            }
+            for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
+                addKey(keys, ModdedWorldgenIds.biomeRef(engine, customBiome.getId()));
+            }
+        }
+        return keys;
+    }
+
+    private static void addKey(Set<String> keys, String key) {
+        String normalized = normalizeKey(key);
+        if (normalized != null) {
+            keys.add(normalized);
+        }
+    }
+
+    private static Predicate<BlockPos> importedFeatureProtection(
+            IrisStaticObjectLayer staticObjects,
+            DimensionStackContext stackContext,
+            int minimumY
+    ) {
+        Map<Long, DimensionStackLayout> layouts = new ConcurrentHashMap<>();
+        return position -> {
+            if (!staticObjects.isEmpty() && staticObjects.contains(
+                    position.getX(), position.getY() - minimumY, position.getZ())) {
+                return true;
+            }
+            if (stackContext == null) {
+                return false;
+            }
+            long columnKey = ((long) position.getX() << 32)
+                    ^ (position.getZ() & 0xFFFFFFFFL);
+            DimensionStackLayout layout = layouts.computeIfAbsent(
+                    columnKey,
+                    ignored -> stackContext.sample(position.getX(), position.getZ())
+            );
+            return layout.isHostFeatureProtectedY(position.getY() - minimumY);
+        };
     }
 
     private void placeStep(WorldGenLevel level, FeatureTable table, FeatureSorter.StepFeatureData stepData,
@@ -394,12 +468,37 @@ final class ModdedImportedFeatureStage {
      * shape as vanilla, which drops any section biome its biome source does not claim. Holders are canonicalised
      * back onto the table's own holders so the index mapping cannot be handed a holder it never saw.
      */
-    private Set<Holder<Biome>> chunkBiomes(WorldGenLevel level, SectionPos sectionPos, FeatureTable table) {
+    private Set<Holder<Biome>> chunkBiomes(
+            WorldGenLevel level,
+            SectionPos sectionPos,
+            FeatureTable table,
+            DimensionStackContext stackContext
+    ) {
         List<Holder<Biome>> collected = new ArrayList<>();
         ChunkPos.rangeClosed(sectionPos.chunk(), 1).forEach((ChunkPos chunkPos) -> {
             ChunkAccess neighbour = level.getChunk(chunkPos.x(), chunkPos.z());
-            for (LevelChunkSection section : neighbour.getSections()) {
-                section.getBiomes().getAll(collected::add);
+            LevelChunkSection[] sections = neighbour.getSections();
+            for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+                LevelChunkSection section = sections[sectionIndex];
+                if (stackContext == null) {
+                    section.getBiomes().getAll(collected::add);
+                    continue;
+                }
+                int sectionMinimumY = neighbour.getSectionYFromSectionIndex(sectionIndex) << 4;
+                for (int quartY = 0; quartY < 4; quartY++) {
+                    int internalY = sectionMinimumY + (quartY << 2) - level.getMinY();
+                    for (int quartX = 0; quartX < 4; quartX++) {
+                        int blockX = chunkPos.getMinBlockX() + (quartX << 2);
+                        for (int quartZ = 0; quartZ < 4; quartZ++) {
+                            int blockZ = chunkPos.getMinBlockZ() + (quartZ << 2);
+                            DimensionStackLayout.Layer layer = stackContext.getLayerAt(
+                                    blockX, internalY, blockZ);
+                            if (layer.terrainContext().isSelfReferencing()) {
+                                collected.add(section.getBiomes().get(quartX, quartY, quartZ));
+                            }
+                        }
+                    }
+                }
             }
         });
         Set<Holder<Biome>> present = new LinkedHashSet<>();

@@ -33,6 +33,7 @@ import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.mantle.components.MantleHydrologyCaveVoxelView;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.matter.MatterUpdate;
@@ -3763,7 +3764,7 @@ public final class HydrologyPackProbe {
         if (custom == null || custom.getId() == null || custom.getId().isBlank()) {
             throw new IllegalStateException("Generated custom surface Iris biome resolved no custom biome id.");
         }
-        return dimensionKey + ":" + custom.getId();
+        return IrisDimension.customBiomeKey(dimensionKey, custom.getId());
     }
 
     private static void verifyCaveWitness(

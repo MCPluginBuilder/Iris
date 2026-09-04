@@ -2,6 +2,8 @@ package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.ResourceLoader;
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionTerrainContext;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -22,6 +24,7 @@ import org.junit.Test;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
@@ -302,6 +305,20 @@ public class HintedLocatorTest {
     }
 
     @Test
+    public void biomePlanIsUnprunedForStackLayerBiome() {
+        DimensionStackContext stackContext = mock(DimensionStackContext.class);
+        IrisBiome stacked = biome("stacked");
+        when(engine.getDimensionStackContext()).thenReturn(stackContext);
+        when(engine.getAllBiomes()).thenReturn(new KList<>(stacked));
+
+        HintedLocator.SearchPlan plan = HintedLocator.biomePlan(engine, "stacked");
+
+        assertTrue(plan.isPossible());
+        assertNull(plan.getCoarse());
+        assertEquals(1, plan.getStrideChunks());
+    }
+
+    @Test
     public void regionPlanMatchesOnlyTargetRegionCells() {
         IrisRegion regionA = region("reg_a");
         IrisRegion regionB = region("reg_b");
@@ -324,6 +341,24 @@ public class HintedLocatorTest {
         HintedLocator.SearchPlan plan = HintedLocator.regionPlan(engine, "reg_missing");
 
         assertFalse(plan.isPossible());
+    }
+
+    @Test
+    public void regionPlanIsUnprunedForStackLayerRegion() {
+        DimensionStackContext stackContext = mock(DimensionStackContext.class);
+        DimensionTerrainContext terrainContext = mock(DimensionTerrainContext.class);
+        IrisDimension stackedDimension = mock(IrisDimension.class);
+        IrisRegion stackedRegion = region("stacked_region");
+        when(engine.getDimensionStackContext()).thenReturn(stackContext);
+        when(stackContext.getLayersTopToBottom()).thenReturn(List.of(terrainContext));
+        when(terrainContext.getDimension()).thenReturn(stackedDimension);
+        when(stackedDimension.getAllRegions(terrainContext)).thenReturn(new KList<>(stackedRegion));
+
+        HintedLocator.SearchPlan plan = HintedLocator.regionPlan(engine, "stacked_region");
+
+        assertTrue(plan.isPossible());
+        assertNull(plan.getCoarse());
+        assertEquals(1, plan.getStrideChunks());
     }
 
     @Test

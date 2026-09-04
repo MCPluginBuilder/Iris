@@ -26,6 +26,7 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.project.noise.CNG;
+import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
 
@@ -42,8 +43,16 @@ final class IrisBiomeLayerGenerator {
     }
 
     static KList<PlatformBlockState> generateLayers(IrisBiome biome, IrisDimension dim, double wx, double wz, RNG random, int maxDepth, int height, IrisData rdata, IrisComplex complex) {
+        return generateLayers(biome, dim, wx, wz, random, maxDepth, height, rdata, complex, null);
+    }
+
+    static KList<PlatformBlockState> generateLayers(IrisBiome biome, IrisDimension dim, double wx, double wz, RNG random, int maxDepth, int height, IrisData rdata, ProceduralStream<Double> slopeStream) {
+        return generateLayers(biome, dim, wx, wz, random, maxDepth, height, rdata, null, slopeStream);
+    }
+
+    private static KList<PlatformBlockState> generateLayers(IrisBiome biome, IrisDimension dim, double wx, double wz, RNG random, int maxDepth, int height, IrisData rdata, IrisComplex complex, ProceduralStream<Double> slopeStream) {
         if (biome.isLockLayers()) {
-            return generateLockedLayers(biome, wx, wz, random, maxDepth, height, rdata, complex);
+            return generateLockedLayers(biome, wx, wz, random, maxDepth, height, rdata, complex, slopeStream);
         }
 
         KList<PlatformBlockState> data = new KList<>();
@@ -70,7 +79,7 @@ final class IrisBiomeLayerGenerator {
             IrisSlopeClip sc = layer.getSlopeCondition();
 
             if (!sc.isDefault()) {
-                if (!sc.isValid(complex.getSlopeStream().get(wx, wz))) {
+                if (!sc.isValid(resolveSlopeStream(complex, slopeStream).getDouble(wx, wz))) {
                     d = 0;
                 }
             }
@@ -168,6 +177,10 @@ final class IrisBiomeLayerGenerator {
     }
 
     static KList<PlatformBlockState> generateLockedLayers(IrisBiome biome, double wx, double wz, RNG random, int maxDepthf, int height, IrisData rdata, IrisComplex complex) {
+        return generateLockedLayers(biome, wx, wz, random, maxDepthf, height, rdata, complex, null);
+    }
+
+    private static KList<PlatformBlockState> generateLockedLayers(IrisBiome biome, double wx, double wz, RNG random, int maxDepthf, int height, IrisData rdata, IrisComplex complex, ProceduralStream<Double> slopeStream) {
         KList<PlatformBlockState> data = new KList<>();
         KList<PlatformBlockState> real = new KList<>();
         int maxDepth = Math.min(maxDepthf, biome.getLockLayersMax());
@@ -190,7 +203,7 @@ final class IrisBiomeLayerGenerator {
                 IrisSlopeClip sc = layer.getSlopeCondition();
 
                 if (!sc.isDefault()) {
-                    if (!sc.isValid(complex.getSlopeStream().get(wx, wz))) {
+                    if (!sc.isValid(resolveSlopeStream(complex, slopeStream).getDouble(wx, wz))) {
                         d = 0;
                     }
                 }
@@ -220,6 +233,13 @@ final class IrisBiomeLayerGenerator {
         }
 
         return real;
+    }
+
+    private static ProceduralStream<Double> resolveSlopeStream(
+            IrisComplex complex,
+            ProceduralStream<Double> slopeStream
+    ) {
+        return slopeStream == null ? complex.getSlopeStream() : slopeStream;
     }
 
     static KList<PlatformBlockState> generateSeaLayers(IrisBiome biome, double wx, double wz, RNG random, int maxDepth, IrisData rdata) {

@@ -27,8 +27,8 @@ import art.arcane.iris.engine.framework.IrisEngineMode;
 public class ModeEnclosure extends IrisEngineMode implements EngineMode {
     public ModeEnclosure(Engine engine) {
         super(engine);
-        var terrain = new IrisTerrainNormalActuator(getEngine());
-        var biome = new IrisBiomeActuator(getEngine());
+        IrisTerrainNormalActuator terrain = new IrisTerrainNormalActuator(getEngine());
+        IrisBiomeActuator biome = new IrisBiomeActuator(getEngine());
 
         registerStage(burst(
                 (x, z, k, p, m, c) -> terrain.actuate(x, z, k, m, c),

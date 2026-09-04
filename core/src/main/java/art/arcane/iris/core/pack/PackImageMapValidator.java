@@ -7,6 +7,7 @@ import art.arcane.iris.engine.image.IrisImageMapValidationException;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeGeneratorLink;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisDimensionStack;
 import art.arcane.iris.engine.object.IrisExpression;
 import art.arcane.iris.engine.object.IrisGenerator;
 import art.arcane.iris.engine.object.IrisImage;
@@ -217,11 +218,12 @@ final class PackImageMapValidator {
             Set<String> warnings
     ) {
         File[] sortedFiles = Arrays.copyOf(dimensionFiles, dimensionFiles.length);
-        Arrays.sort(sortedFiles, (File first, File second) -> first.getName().compareTo(second.getName()));
+        Arrays.sort(sortedFiles, (File first, File second) -> first.getPath().compareTo(second.getPath()));
         Map<String, IrisDimension> dimensions = new LinkedHashMap<>();
         Set<String> bindingReadyDimensions = new LinkedHashSet<>();
+        File dimensionsFolder = new File(packFolder, PackValidator.DIMENSIONS_FOLDER);
         for (File dimensionFile : sortedFiles) {
-            String dimensionKey = PackValidationIo.stripExtension(dimensionFile.getName());
+            String dimensionKey = PackValidationIo.deriveKey(dimensionsFolder, dimensionFile);
             JSONObject raw = PackValidationIo.readJson(dimensionFile);
             if (raw == null) {
                 continue;
@@ -247,19 +249,35 @@ final class PackImageMapValidator {
             validateGeneratorStyleReferences(dimensionKey, dimension, data, resources, blockingErrors);
         }
         Map<String, List<Map.Entry<String, IrisDimension>>> upperParents = new TreeMap<>();
+        Map<String, List<Map.Entry<String, IrisDimension>>> stackParents = new TreeMap<>();
         for (Map.Entry<String, IrisDimension> entry : dimensions.entrySet()) {
             String upperKey = normalized(entry.getValue().getUpperDimension());
-            if (upperKey == null || upperKey.equalsIgnoreCase("none")) {
+            if (upperKey != null && !upperKey.equalsIgnoreCase("none")) {
+                upperParents.computeIfAbsent(upperKey, ignored -> new ArrayList<>()).add(entry);
+            }
+            IrisDimensionStack stack = entry.getValue().getDimensionStack();
+            if (stack == null || stack.getDimensions() == null) {
                 continue;
             }
-            upperParents.computeIfAbsent(upperKey, ignored -> new ArrayList<>()).add(entry);
+            Set<String> stackKeys = new LinkedHashSet<>();
+            for (String stackKey : stack.getDimensions()) {
+                String normalizedKey = normalized(stackKey);
+                if (normalizedKey == null || normalizedKey.equals(entry.getKey())
+                        || !stackKeys.add(normalizedKey)) {
+                    continue;
+                }
+                stackParents.computeIfAbsent(normalizedKey, ignored -> new ArrayList<>()).add(entry);
+            }
         }
         for (Map.Entry<String, IrisDimension> entry : dimensions.entrySet()) {
             if (!bindingReadyDimensions.contains(entry.getKey())) {
                 continue;
             }
             List<Map.Entry<String, IrisDimension>> parents = upperParents.get(entry.getKey());
-            if (parents == null || parents.isEmpty()) {
+            List<Map.Entry<String, IrisDimension>> stackHosts = stackParents.get(entry.getKey());
+            boolean hasUpperParents = parents != null && !parents.isEmpty();
+            boolean hasStackHosts = stackHosts != null && !stackHosts.isEmpty();
+            if (!hasUpperParents && !hasStackHosts) {
                 validateBindings(packFolder, "Dimension '" + entry.getKey() + "'", entry.getValue(),
                         entry.getValue().getWorldBoundary(), data, resources, registries, blockingErrors, warnings);
                 continue;
@@ -268,12 +286,23 @@ final class PackImageMapValidator {
                 validateBindings(packFolder, "Dimension '" + entry.getKey() + "'", entry.getValue(),
                         entry.getValue().getWorldBoundary(), data, resources, registries, blockingErrors, warnings);
             }
-            parents.sort(Map.Entry.comparingByKey());
-            for (Map.Entry<String, IrisDimension> parent : parents) {
-                validateBindings(packFolder,
-                        "Dimension '" + parent.getKey() + "' upper dimension '" + entry.getKey() + "'",
-                        entry.getValue(), parent.getValue().getWorldBoundary(), data, resources, registries,
-                        blockingErrors, warnings);
+            if (hasUpperParents) {
+                parents.sort(Map.Entry.comparingByKey());
+                for (Map.Entry<String, IrisDimension> parent : parents) {
+                    validateBindings(packFolder,
+                            "Dimension '" + parent.getKey() + "' upper dimension '" + entry.getKey() + "'",
+                            entry.getValue(), parent.getValue().getWorldBoundary(), data, resources, registries,
+                            blockingErrors, warnings);
+                }
+            }
+            if (hasStackHosts) {
+                stackHosts.sort(Map.Entry.comparingByKey());
+                for (Map.Entry<String, IrisDimension> host : stackHosts) {
+                    validateBindings(packFolder,
+                            "Dimension '" + host.getKey() + "' dimension stack layer '" + entry.getKey() + "'",
+                            entry.getValue(), host.getValue().getWorldBoundary(), data, resources, registries,
+                            blockingErrors, warnings);
+                }
             }
         }
     }

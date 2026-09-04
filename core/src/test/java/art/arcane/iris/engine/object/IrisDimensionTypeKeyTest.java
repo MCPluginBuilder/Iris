@@ -20,4 +20,20 @@ public class IrisDimensionTypeKeyTest {
 
         assertEquals("worlds_my_pack", dimension.getDimensionTypeKey());
     }
+
+    @Test
+    public void customBiomeKeyPreservesFlatDimensionNamespace() {
+        IrisDimension dimension = new IrisDimension();
+        dimension.setLoadKey("Overworld");
+
+        assertEquals("overworld:aurora", dimension.getCustomBiomeKey("Aurora"));
+    }
+
+    @Test
+    public void customBiomeKeyMapsRecursiveDimensionPath() {
+        IrisDimension dimension = new IrisDimension();
+        dimension.setLoadKey("Layers/Sky");
+
+        assertEquals("layers:sky/aurora", dimension.getCustomBiomeKey("Aurora"));
+    }
 }

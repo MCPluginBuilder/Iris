@@ -18,10 +18,13 @@
 
 package art.arcane.iris.engine.actuator;
 
+import art.arcane.iris.engine.DimensionStackContext;
+import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedActuator;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
+import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.iris.util.project.context.ChunkedDataCache;
 import art.arcane.volmlib.util.collection.KMap;
@@ -37,6 +40,8 @@ import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBiome;
+
+import java.util.List;
 
 public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
     private final RNG rng;
@@ -60,31 +65,165 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
         Engine engine = getEngine();
         Mantle<Matter> mantle = engine.getMantle().getMantle();
         ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
+        DimensionStackContext dimensionStackContext = engine.getDimensionStackContext();
 
         for (int xf = 0; xf < width; xf++) {
-            IrisBiome ib;
             for (int zf = 0; zf < depth; zf++) {
-                ib = biomeCache.get(xf, zf);
-                String key;
+                int worldX = x + xf;
+                int worldZ = z + zf;
+                IrisBiome biome = biomeCache.get(xf, zf);
+                ResolvedBiome resolved = resolve(biomeKey(
+                        biome,
+                        getDimension(),
+                        engine,
+                        worldX,
+                        0,
+                        worldZ
+                ));
+                PlatformBiome platformBiome = resolved.biome();
 
-                if (ib.isCustom()) {
-                    IrisBiomeCustom custom = ib.getCustomBiome(rng, engine, x + xf, 0, z + zf);
-                    key = getDimension().getLoadKey() + ":" + custom.getId();
-                } else {
-                    key = ib.getSkyBiomeKey(rng, engine, x + xf, 0, z + zf);
+                if (platformBiome != null) {
+                    h.set(xf, 0, zf, xf, height - 1, zf, platformBiome);
                 }
 
-                ResolvedBiome resolved = resolve(key);
-                PlatformBiome biome = resolved.biome();
-
-                if (biome != null) {
-                    h.set(xf, 0, zf, xf, height - 1, zf, biome);
+                mantle.set(worldX, 0, worldZ, resolved.matter());
+                if (dimensionStackContext != null) {
+                    PlatformBiome bottomBiome = platformBiome == null
+                            ? h.getRaw(xf, 0, zf)
+                            : platformBiome;
+                    applyDimensionStackBiomes(
+                            xf,
+                            zf,
+                            worldX,
+                            worldZ,
+                            h,
+                            mantle,
+                            engine,
+                            new ResolvedBiome(bottomBiome, resolved.matter()),
+                            context.getDimensionStackLayout(xf, zf)
+                    );
                 }
-
-                mantle.set(x + xf, 0, z + zf, resolved.matter());
             }
         }
         engine.getMetrics().getBiome().put(p.getMilliseconds());
+    }
+
+    private void applyDimensionStackBiomes(
+            int localX,
+            int localZ,
+            int worldX,
+            int worldZ,
+            Hunk<PlatformBiome> output,
+            Mantle<Matter> mantle,
+            Engine engine,
+            ResolvedBiome bottom,
+            DimensionStackLayout layout
+    ) {
+        List<DimensionStackLayout.Layer> layers = layout.layersBottomToTop();
+        for (int layerIndex = 1; layerIndex < layers.size(); layerIndex++) {
+            DimensionStackLayout.Layer lower = layers.get(layerIndex - 1);
+            DimensionStackLayout.Layer layer = layers.get(layerIndex);
+            int gapMinY = (int) Math.max(0L, (long) lower.contentTopY() + 1L);
+            int gapMaxY = (int) Math.min(
+                    (long) output.getHeight() - 1L,
+                    (long) layer.localBaseY() - 1L
+            );
+            applyBiomeRange(
+                    localX,
+                    localZ,
+                    worldX,
+                    worldZ,
+                    gapMinY,
+                    gapMaxY,
+                    output,
+                    mantle,
+                    bottom
+            );
+            if (!layer.visible()) {
+                continue;
+            }
+            ResolvedBiome resolved = bottom;
+            if (layer.biome() != null) {
+                IrisDimension dimension = layer.terrainContext().getDimension();
+                resolved = resolve(biomeKey(
+                        layer.biome(),
+                        dimension,
+                        engine,
+                        worldX,
+                        layer.clippedSurfaceY(),
+                        worldZ
+                ));
+            }
+            applyBiomeRange(
+                    localX,
+                    localZ,
+                    worldX,
+                    worldZ,
+                    layer.renderMinY(),
+                    layer.renderMaxY(),
+                    output,
+                    mantle,
+                    resolved
+            );
+        }
+    }
+
+    private void applyBiomeRange(
+            int localX,
+            int localZ,
+            int worldX,
+            int worldZ,
+            int minimumY,
+            int maximumY,
+            Hunk<PlatformBiome> output,
+            Mantle<Matter> mantle,
+            ResolvedBiome resolved
+    ) {
+        if (minimumY > maximumY) {
+            return;
+        }
+        clearBiomeMatterRange(mantle, worldX, worldZ, minimumY, maximumY);
+        if (resolved.biome() != null) {
+            output.set(
+                    localX,
+                    minimumY,
+                    localZ,
+                    localX,
+                    maximumY,
+                    localZ,
+                    resolved.biome()
+            );
+        }
+        if (resolved.matter() != null) {
+            mantle.set(worldX, minimumY, worldZ, resolved.matter());
+        }
+    }
+
+    static void clearBiomeMatterRange(
+            Mantle<Matter> mantle,
+            int worldX,
+            int worldZ,
+            int minimumY,
+            int maximumY
+    ) {
+        for (int y = minimumY; y <= maximumY; y++) {
+            mantle.remove(worldX, y, worldZ, MatterBiomeInject.class);
+        }
+    }
+
+    private String biomeKey(
+            IrisBiome biome,
+            IrisDimension dimension,
+            Engine engine,
+            int x,
+            int y,
+            int z
+    ) {
+        if (biome.isCustom()) {
+            IrisBiomeCustom custom = biome.getCustomBiome(rng, engine, x, y, z);
+            return dimension.getCustomBiomeKey(custom.getId());
+        }
+        return biome.getSkyBiomeKey(rng, engine, x, y, z);
     }
 
     /**
