@@ -18,16 +18,17 @@
 
 package art.arcane.iris.core.pregenerator;
 
-import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.MeteredCache;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
-import art.arcane.iris.util.project.stream.ProceduralStream;
-import art.arcane.iris.util.project.stream.utility.CachedStream2D;
+import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.parallel.MultiBurst;
+import art.arcane.iris.util.project.stream.ProceduralStream;
+import art.arcane.iris.util.project.stream.utility.CachedDoubleStream2D;
+import art.arcane.iris.util.project.stream.utility.CachedStream2D;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -68,7 +69,7 @@ public final class PregenPerformanceProfile {
 
     public static void apply(Engine engine) {
         apply();
-        if (requiresNoiseCacheRefresh(engine)) {
+        if (!prepareNoiseCacheInPlace(engine)) {
             engine.hotloadComplex();
             logApplied();
         }
@@ -77,35 +78,44 @@ public final class PregenPerformanceProfile {
     public static void applyToGenerator(PlatformChunkGenerator generator) {
         apply();
         Engine engine = generator == null ? null : generator.getEngine();
-        if (requiresNoiseCacheRefresh(engine)) {
+        if (!prepareNoiseCacheInPlace(engine)) {
             generator.hotloadComplexAsync(HOTLOAD_ACQUISITION_TIMEOUT_SECONDS, TimeUnit.SECONDS).join();
             logApplied();
         }
     }
 
-    /** Two workers per core: enough to keep cores busy while a share of the pool sits in waits. */
     static int pregenBurstParallelism(int availableProcessors) {
         return Math.max(4, availableProcessors * 2);
     }
 
-    private static boolean requiresNoiseCacheRefresh(Engine engine) {
+    private static boolean prepareNoiseCacheInPlace(Engine engine) {
         if (engine == null) {
-            return false;
+            return true;
         }
         IrisComplex complex = engine.getComplex();
         if (complex == null) {
-            return true;
-        }
-        ProceduralStream<Double> heightStream = complex.getHeightStream();
-        if (!(heightStream instanceof MeteredCache cache)) {
-            return true;
+            return false;
         }
         ProceduralStream<IrisBiome> caveBiomeStream = complex.getCaveBiomeStream();
         if (!(caveBiomeStream instanceof CachedStream2D<?> cachedStream) || !cachedStream.usesFastCache()) {
+            return false;
+        }
+        int configuredChunks = IrisSettings.get().getPerformance().getNoiseCacheSize();
+        if (!resizeNoiseCache(complex.getNaturalHeightStream(), configuredChunks)) {
+            return false;
+        }
+        return resizeNoiseCache(complex.getHeightStream(), configuredChunks);
+    }
+
+    private static boolean resizeNoiseCache(ProceduralStream<Double> stream, int configuredChunks) {
+        if (stream instanceof CachedDoubleStream2D cachedStream) {
+            cachedStream.setMaximumChunks(configuredChunks);
             return true;
         }
-        long configuredMaxSize = (long) IrisSettings.get().getPerformance().getNoiseCacheSize() * 256L;
-        return cache.getMaxSize() != configuredMaxSize;
+        if (!(stream instanceof MeteredCache cache)) {
+            return false;
+        }
+        return cache.getMaxSize() == (long) configuredChunks * 256L;
     }
 
     private static void logApplied() {

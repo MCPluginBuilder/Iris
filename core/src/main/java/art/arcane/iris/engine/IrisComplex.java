@@ -78,6 +78,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.nio.file.Path;
 import java.util.function.BiFunction;
 
 @Data
@@ -87,6 +88,7 @@ public class IrisComplex implements DataProvider {
     private static final NoiseBounds ZERO_NOISE_BOUNDS = new NoiseBounds(0D, 0D);
     private static final AtomicLong lastBoundsFailureLog = new AtomicLong(0L);
     private static final int GRID_BOUNDS_CACHE_SIZE = 8192;
+    private static final int STUDIO_NOISE_CACHE_SIZE = 32_768;
     /** One million corners: about 16 MB, roughly a 4000 by 4000 block area at the 4-block grid. */
     private static final int SHARED_CORNER_BOUNDS_CAPACITY = 1 << 20;
     private static final int HEIGHT_BOUNDS_GRID = 4;
@@ -170,7 +172,7 @@ public class IrisComplex implements DataProvider {
     }
 
     public IrisComplex(Engine engine, boolean simple) {
-        int cacheSize = IrisSettings.get().getPerformance().getNoiseCacheSize();
+        int cacheSize = noiseCacheSize(engine, IrisSettings.get().getPerformance().getNoiseCacheSize());
         IrisBiome emptyBiome = new IrisBiome().setInferredType(InferredType.CAVE);
         UUID focusUUID = UUID.nameUUIDFromBytes("focus".getBytes());
         this.rng = new RNG(engine.getSeedManager().getComplex());
@@ -320,6 +322,7 @@ public class IrisComplex implements DataProvider {
                     footprint -> new MantleHydrologyCaveVoxelView(engine, this, footprint),
                     () -> engine.getPlatformHooks().isMainThread()
             ));
+            hydrologyRuntime.setNeighbourPrefetchEnabled(!engine.isStudio());
         }
         heightStream = ProceduralStream.ofDouble((x, z) -> resolveHydrologyTerrainHeight(x, z))
                 .cache2DDouble("heightStream", engine, cacheSize);
@@ -371,6 +374,16 @@ public class IrisComplex implements DataProvider {
                 })
                 .cache2D("", engine, cacheSize);
         //@done
+    }
+
+    static int noiseCacheSize(Engine engine, int configuredSize) {
+        return engine.isStudio() ? Math.max(configuredSize, STUDIO_NOISE_CACHE_SIZE) : configuredSize;
+    }
+
+    void enableStudioHydrologyCache(String runtimeIdentity, Path persistentRoot) {
+        if (hydrologyRuntime != null) {
+            hydrologyRuntime.enableSharedCache(runtimeIdentity, persistentRoot);
+        }
     }
 
     static InferredType resolveNaturalInferredType(
@@ -958,7 +971,7 @@ public class IrisComplex implements DataProvider {
         // catches the same corner reached by another thread or by hydrology planning earlier.
         SharedCornerBounds shared = sharedCornerBounds();
         long sharedKey = SharedCornerBounds.key(gx, gz, interpolatorIndex);
-        long packed = shared.contains(sharedKey) ? shared.get(sharedKey) : Long.MIN_VALUE;
+        long packed = shared.get(sharedKey);
         if (packed == Long.MIN_VALUE) {
             packed = computePackedBounds(cache, engine, interpolator, generators, gx, gz);
             if (!Double.isFinite(boundsLow(packed)) || !Double.isFinite(boundsHigh(packed))) {

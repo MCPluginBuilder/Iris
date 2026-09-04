@@ -112,6 +112,30 @@ public class IrisHydrologyRoutingTerrainSamplerTest {
     }
 
     @Test
+    public void slopeFreePointBasisAvoidsNeighbourHeightSamples() {
+        AtomicInteger heightCalls = new AtomicInteger();
+        IrisHydrologyRoutingTerrainSampler sampler = new IrisHydrologyRoutingTerrainSampler(
+                new IrisHydrologyRoutingTerrainSampler.Sources(
+                        (int x, int z, double naturalHeight) -> basis(x, z, naturalHeight),
+                        (int x, int z) -> {
+                            heightCalls.incrementAndGet();
+                            return height(x, z);
+                        },
+                        (int x, int z) -> false
+                ),
+                IrisHydrologyRoutingTerrainSampler.SamplingOptions.serial(64)
+        );
+
+        HydrologyTerrainSample slopeFree = sampler.sampleBasisWithoutSlope(4, 8);
+        assertEquals(1, heightCalls.get());
+
+        HydrologyTerrainSample sloped = sampler.sampleBasis(4, 8);
+        assertEquals(3, heightCalls.get());
+        assertTrue(sloped.slope() > 0D);
+        assertEquals(sloped, slopeFree.withSlope(sloped.slope()));
+    }
+
+    @Test
     public void adjacentGridsShareBasesAndProduceIdenticalOverlap() {
         AtomicInteger calls = new AtomicInteger();
         IrisHydrologyRoutingTerrainSampler sampler = new IrisHydrologyRoutingTerrainSampler(

@@ -43,6 +43,7 @@ import art.arcane.iris.util.common.scheduling.J;
 import java.awt.Color;
 import java.awt.EventQueue;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -69,6 +70,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     private final MemoryMonitor monitor;
     private final PregenTask task;
     private final AtomicBoolean saving;
+    private final AtomicBoolean stopRequested;
     private final List<Consumer<Double>> onProgress = new CopyOnWriteArrayList<>();
     private final List<Runnable> whenDone = new CopyOnWriteArrayList<>();
     private final IrisPregenerator pregenerator;
@@ -91,10 +93,14 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     private volatile long lastElapsed = 0L;
     private volatile String lastMethod = IrisLanguage.plain(DesktopUiMessages.PREGEN_METHOD_PENDING);
 
-    public PregeneratorJob(PregenTask task, PregeneratorMethod method, Engine engine) {
+    public PregeneratorJob(Configuration configuration) {
+        PregenTask task = configuration.task();
+        PregeneratorMethod method = configuration.method();
+        Engine engine = configuration.engine();
         this.engine = engine;
         monitor = new MemoryMonitor(50);
         saving = new AtomicBoolean(false);
+        stopRequested = new AtomicBoolean(false);
         info = new String[]{IrisLanguage.plain(DesktopUiMessages.PREGEN_INITIALIZING)};
         this.task = task;
         this.pregenerator = new IrisPregenerator(task, method, this);
@@ -122,11 +128,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
             }
         }
 
-        worker = new Thread(() -> {
-            J.sleep(1000);
-            computeBounds();
-            this.pregenerator.start();
-        }, "Iris Pregenerator");
+        worker = new Thread(() -> runWorker(configuration.preparation()), "Iris Pregenerator");
         worker.setPriority(Thread.MIN_PRIORITY);
         worker.setDaemon(true);
         worker.setUncaughtExceptionHandler((thread, ex) -> IrisLogging.reportError(ex));
@@ -155,6 +157,26 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
         }
     }
 
+    private void runWorker(Runnable preparation) {
+        try {
+            J.sleep(1000);
+            if (stopRequested.get()) {
+                onClose();
+                return;
+            }
+            preparation.run();
+            if (stopRequested.get()) {
+                onClose();
+                return;
+            }
+            computeBounds();
+            pregenerator.start();
+        } catch (Throwable failure) {
+            IrisLogging.reportError("Pregen startup failed.", failure);
+            onClose();
+        }
+    }
+
     private void computeBounds() {
         task.iterateAllChunks((xx, zz) -> {
             min.setX(Math.min(xx, min.getX()));
@@ -178,10 +200,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
             return false;
         }
 
-        J.a(() -> {
-            inst.pregenerator.close();
-            inst.worker.interrupt();
-        });
+        inst.requestStop();
         return true;
     }
 
@@ -204,8 +223,7 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     }
 
     private static boolean shutdownAndWait(PregeneratorJob inst, long timeoutMs) {
-        inst.pregenerator.close();
-        inst.worker.interrupt();
+        inst.requestStop();
         try {
             inst.worker.join(Math.max(1L, timeoutMs));
         } catch (InterruptedException e) {
@@ -357,12 +375,16 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     }
 
     public void stop() {
-        J.a(() -> {
-            pregenerator.close();
-            worker.interrupt();
-            close();
-            instance.compareAndSet(this, null);
-        });
+        requestStop();
+        close();
+    }
+
+    private void requestStop() {
+        if (!stopRequested.compareAndSet(false, true)) {
+            return;
+        }
+        pregenerator.close();
+        worker.interrupt();
     }
 
     public void close() {
@@ -582,5 +604,18 @@ public class PregeneratorJob implements PregenListener, PregenRenderSource {
     @Override
     public String[] progress() {
         return info;
+    }
+
+    public record Configuration(
+            PregenTask task,
+            PregeneratorMethod method,
+            Engine engine,
+            Runnable preparation
+    ) {
+        public Configuration {
+            Objects.requireNonNull(task, "Pregen task");
+            Objects.requireNonNull(method, "Pregen method");
+            Objects.requireNonNull(preparation, "Pregen preparation");
+        }
     }
 }

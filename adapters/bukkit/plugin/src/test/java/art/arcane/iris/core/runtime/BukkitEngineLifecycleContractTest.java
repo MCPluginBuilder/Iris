@@ -51,7 +51,7 @@ public class BukkitEngineLifecycleContractTest {
 
         String waitedShutdown = method(jobSource,
                 "private static boolean shutdownAndWait(PregeneratorJob inst, long timeoutMs)");
-        assertBefore(waitedShutdown, "inst.worker.interrupt()", "inst.worker.join(");
+        assertBefore(waitedShutdown, "inst.requestStop()", "inst.worker.join(");
         assertTrue(waitedShutdown.contains("inst.worker.isAlive()"));
 
         String hooksSource = Files.readString(Path.of(System.getProperty("iris.bukkitEnginePlatformHooksSource")));

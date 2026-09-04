@@ -219,7 +219,7 @@ public class PendingWorldReplacementThreadAffinityTest {
         String listenerSource = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/PaperWorldReplacementEntryListener.java")).replace("\r\n", "\n");
         String preparation = method(managerSource, "private void prepareOverworldEntry(World world)");
-        String persistence = method(managerSource, "private CompletableFuture<Location> persistOverworldSpawn(Location safeEntry)");
+        String persistence = method(managerSource, "public void onWorldSave(WorldSaveEvent event)");
         String retirement = method(
                 managerSource,
                 "private synchronized void retireOverworldEntryIfCompleteAsync(UUID transactionId)"
@@ -230,16 +230,25 @@ public class PendingWorldReplacementThreadAffinityTest {
         );
         String generatorSource = Files.readString(Path.of(System.getProperty("iris.bukkitChunkGeneratorSource")));
 
-        assertBefore(preparation, ".thenCompose(this::applyOverworldSpawn)",
-                ".thenCompose(this::persistOverworldSpawn)");
-        assertBefore(preparation, "targetFuture.complete(safeEntry.clone())",
-                "retireOverworldEntryIfComplete(guard.transactionId())");
-        assertTrue(persistence.contains("world.save()"));
+        assertBefore(preparation, "overworldSpawnPersistence = persistence",
+                "targetFuture.complete(safeEntry.clone())");
+        assertTrue(persistence.contains("event.getWorld() != replacementWorld"));
+        assertTrue(persistence.contains("persistence.complete(null)"));
         assertTrue(retirement.contains("!current.pendingPlayers().isEmpty()"));
-        assertTrue(retirement.contains("!safeEntry.isDone()"));
-        assertTrue(retirement.contains("safeEntry.isCompletedExceptionally()"));
+        assertTrue(retirement.contains("!persistence.isDone()"));
+        assertTrue(retirement.contains("persistence.isCompletedExceptionally()"));
         assertTrue(listener.contains("event.isNewPlayer()"));
         assertTrue(generatorSource.contains("world.getHighestBlockYAt(initialSpawn) + 1"));
+    }
+
+    @Test
+    public void loginCollisionInspectionDoesNotGenerateMissingReplacementChunks() throws Exception {
+        String managerSource = Files.readString(Path.of(
+                "src/main/java/art/arcane/iris/core/PendingWorldReplacementManager.java")).replace("\r\n", "\n");
+        String inspection = method(managerSource, "private CompletableFuture<Boolean> inspectLoginCollision(Location location)");
+
+        assertTrue(inspection.contains("requestChunkAsync(world, chunkX, chunkZ, false, true)"));
+        assertBefore(inspection, "chunk == null", "inspectLoadedLoginCollision(requiredLocation)");
     }
 
     private static PendingWorldReplacementManager.PublishedWorldRuntimeState runtimeState(

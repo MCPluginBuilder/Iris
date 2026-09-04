@@ -13,9 +13,16 @@ import org.mockito.MockedStatic;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 
@@ -119,6 +126,59 @@ public class PendingWorldReplacementManagerPolicyTest {
                     failure.getMessage()
             );
         }
+    }
+
+    @Test
+    public void savedLocationInspectionPreservesVerifiedSafeLocations() throws Exception {
+        PendingWorldReplacementManager.SavedLocationInspection inspection =
+                PendingWorldReplacementManager.awaitSavedLocationInspection(
+                        CompletableFuture.completedFuture(true),
+                        0L,
+                        TimeUnit.NANOSECONDS
+                );
+
+        assertTrue(inspection.safe());
+        assertNull(inspection.failure());
+    }
+
+    @Test
+    public void savedLocationInspectionRedirectsUnsafeLocations() throws Exception {
+        PendingWorldReplacementManager.SavedLocationInspection inspection =
+                PendingWorldReplacementManager.awaitSavedLocationInspection(
+                        CompletableFuture.completedFuture(false),
+                        0L,
+                        TimeUnit.NANOSECONDS
+                );
+
+        assertFalse(inspection.safe());
+        assertNull(inspection.failure());
+    }
+
+    @Test
+    public void savedLocationInspectionTimeoutFallsBackWithoutThrowing() throws Exception {
+        PendingWorldReplacementManager.SavedLocationInspection inspection =
+                PendingWorldReplacementManager.awaitSavedLocationInspection(
+                        new CompletableFuture<>(),
+                        0L,
+                        TimeUnit.NANOSECONDS
+                );
+
+        assertFalse(inspection.safe());
+        assertTrue(inspection.failure() instanceof TimeoutException);
+    }
+
+    @Test
+    public void savedLocationInspectionFailureRetainsItsCauseForReporting() throws Exception {
+        IOException failure = new IOException("chunk load failed");
+        PendingWorldReplacementManager.SavedLocationInspection inspection =
+                PendingWorldReplacementManager.awaitSavedLocationInspection(
+                        CompletableFuture.failedFuture(failure),
+                        0L,
+                        TimeUnit.NANOSECONDS
+                );
+
+        assertFalse(inspection.safe());
+        assertSame(failure, inspection.failure());
     }
 
     private record EnvironmentExpectation(SlotKind slotKind, IrisEnvironment environment) {

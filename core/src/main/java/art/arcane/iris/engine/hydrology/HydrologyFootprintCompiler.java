@@ -19,8 +19,8 @@ import java.util.Objects;
 
 final class HydrologyFootprintCompiler {
     private static final int FEATURE_ROLE_COUNT = 7;
-    private static final int COURSE_FOOTPRINT_CACHE_SIZE = 8;
-    private static final int VALIDATION_RASTER_CACHE_SIZE = 8;
+    private static final int COURSE_FOOTPRINT_CACHE_SIZE = 32;
+    private static final int VALIDATION_RASTER_CACHE_SIZE = 32;
     private static final int[][] HORIZONTAL_NEIGHBORS = {
             {1, 0}, {-1, 0}, {0, 1}, {0, -1}
     };

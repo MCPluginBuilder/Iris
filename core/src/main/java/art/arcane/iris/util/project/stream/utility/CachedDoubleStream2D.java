@@ -62,6 +62,10 @@ public class CachedDoubleStream2D extends BasicStream<Double> implements Procedu
         return cache.getMaxSize();
     }
 
+    public void setMaximumChunks(int maximumChunks) {
+        cache.setMaximumChunks(maximumChunks);
+    }
+
     @Override
     public boolean isClosed() {
         return engine.isClosed();

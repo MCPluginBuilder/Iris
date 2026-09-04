@@ -176,6 +176,11 @@ public class CachedPregenMethod implements PregeneratorMethod {
     }
 
     @Override
+    public void onPregenStart(int centerBlockX, int centerBlockZ) {
+        method.onPregenStart(centerBlockX, centerBlockZ);
+    }
+
+    @Override
     public void onRegionSubmitted(int regionX, int regionZ) {
         method.onRegionSubmitted(regionX, regionZ);
     }

@@ -40,6 +40,7 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisEngineData;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.core.compat.PackCompatReport;
+import art.arcane.iris.core.pack.PackValidationCache;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.spi.IrisLogging;
@@ -70,6 +71,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.io.File;
+import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Objects;
@@ -224,6 +226,7 @@ public class IrisEngine implements Engine {
             getData().registerEngine(this);
             _t0 = M.ms();
             long phaseStartedAt = System.nanoTime();
+            String studioCacheIdentity = currentStudioCacheIdentity();
             getData().loadPrefetch(this);
             IrisLogging.debug("[IrisEngine timing] loadPrefetch=" + (M.ms() - _t0) + "ms");
             logStudioInitializationPhase("load_prefetch", phaseStartedAt, false);
@@ -236,6 +239,7 @@ public class IrisEngine implements Engine {
             _t0 = M.ms();
             phaseStartedAt = System.nanoTime();
             EngineRuntime initialRuntime = runtimeBuilder.buildRuntime();
+            enableStableStudioCache(initialRuntime, studioCacheIdentity);
             runtimeBuilder.publishRuntime(initialRuntime, null);
             IrisLogging.debug("[IrisEngine timing] setupEngine total=" + (M.ms() - _t0) + "ms");
             logPackCompatSummary();
@@ -316,6 +320,47 @@ public class IrisEngine implements Engine {
                 phase,
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos),
                 Boolean.toString(skipped));
+    }
+
+    private String currentStudioCacheIdentity() {
+        if (initializationMode != InitializationMode.STUDIO || !IrisPlatforms.isBound()) {
+            return "";
+        }
+        try {
+            String contentFingerprint = PackValidationCache.contentFingerprint(
+                    IrisPlatforms.get().packsFolderNoCreate());
+            String contextFingerprint = PackValidationCache.contextFingerprint();
+            if (contentFingerprint.isBlank() || contextFingerprint.isBlank()) {
+                return "";
+            }
+            return contentFingerprint + contextFingerprint;
+        } catch (RuntimeException failure) {
+            IrisLogging.warn("Studio runtime cache fingerprint failed: " + failure.getMessage());
+            return "";
+        }
+    }
+
+    private void enableStableStudioCache(EngineRuntime runtime, String initialIdentity) {
+        if (initialIdentity.isBlank()) {
+            return;
+        }
+        String finalIdentity = currentStudioCacheIdentity();
+        if (!initialIdentity.equals(finalIdentity)) {
+            IrisLogging.warn("Studio packs changed during runtime compilation; shared generation caches are disabled.");
+            return;
+        }
+        runtime.complex().enableStudioHydrologyCache(initialIdentity, studioHydrologyCacheRoot());
+        IrisLogging.debug("Enabled shared Studio hydrology cache identity="
+                + initialIdentity.substring(0, Math.min(12, initialIdentity.length())));
+    }
+
+    private Path studioHydrologyCacheRoot() {
+        Path packsRoot = IrisPlatforms.get().packsFolderNoCreate().toPath().toAbsolutePath().normalize();
+        Path packRoot = packsRoot.resolve(getDimension().getLoadKey()).normalize();
+        if (!packRoot.startsWith(packsRoot)) {
+            throw new IllegalStateException("Studio dimension key resolves outside the Iris packs folder.");
+        }
+        return packRoot.resolve(".iris").resolve("studio-hydrology");
     }
 
     private void startGenerationCacheWarm(long phaseStartedAtNanos) {

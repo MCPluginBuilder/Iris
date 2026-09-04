@@ -61,7 +61,6 @@ public final class ModdedPregenJob {
                 .radiusX(radiusBlocks)
                 .radiusZ(radiusBlocks)
                 .build();
-        PregenPerformanceProfile.apply(engine);
         ModdedPregenMethod moddedMethod = new ModdedPregenMethod(level, engine, sync);
         PregeneratorMethod method = moddedMethod;
         if (cached) {
@@ -71,7 +70,11 @@ public final class ModdedPregenJob {
         ACTIVE.set(active);
         dimension = level.dimension().identifier().toString();
         try {
-            PregeneratorJob job = new PregeneratorJob(task, method, engine);
+            PregeneratorJob job = new PregeneratorJob(new PregeneratorJob.Configuration(
+                    task,
+                    method,
+                    engine,
+                    () -> PregenPerformanceProfile.apply(engine)));
             job.whenDone(() -> {
                 if (!moddedMethod.hasPendingFinalSave()) {
                     ACTIVE.compareAndSet(active, null);

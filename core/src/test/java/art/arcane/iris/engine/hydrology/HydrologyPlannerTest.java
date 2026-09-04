@@ -1860,6 +1860,33 @@ public class HydrologyPlannerTest {
         assertEquals(firstOne, secondOne);
     }
 
+    @Test
+    public void reusedFinalTilesPreserveAdjacentPlanOutput() {
+        HydrologyPlannerSettings settings = standardSettings(3D, 2D, true, false, List.of());
+        HydrologyTerrainSampler terrain = rollingCoast(112);
+        HydrologyPlanner baselinePlanner = new HydrologyPlanner(99122L, settings, terrain);
+        List<HydrologyTileKey> reusedKeys = List.of(
+                new HydrologyTileKey(-1, -1),
+                new HydrologyTileKey(0, -1),
+                new HydrologyTileKey(-1, 0),
+                new HydrologyTileKey(0, 0)
+        );
+        ArrayList<HydrologyTile> reusedTiles = new ArrayList<>(reusedKeys.size());
+        for (HydrologyTileKey key : reusedKeys) {
+            reusedTiles.add(baselinePlanner.plan(key));
+        }
+        HydrologyTileKey adjacentKey = new HydrologyTileKey(1, 0);
+        HydrologyTile baseline = baselinePlanner.plan(adjacentKey);
+        HydrologyPlanner reusedPlanner = new HydrologyPlanner(99122L, settings, terrain);
+        for (HydrologyTile tile : reusedTiles) {
+            reusedPlanner.reuseResolvedTile(tile);
+        }
+
+        HydrologyTile reused = reusedPlanner.plan(adjacentKey);
+
+        assertEquals(baseline, reused);
+    }
+
     private HydrologyPlanner planner(
             long seed,
             HydrologyPlannerSettings settings,

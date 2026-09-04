@@ -320,9 +320,33 @@ public final class HydrologyPlanner {
         resolvedOwners.invalidateAll();
     }
 
+    void reuseResolvedTile(HydrologyTile tile) {
+        Objects.requireNonNull(tile, "tile");
+        if (tile.worldSeed() != worldSeed
+                || tile.settingsFingerprint() != settings.fingerprint()
+                || tile.tileSize() != settings.routing().tileSize()) {
+            throw new IllegalArgumentException("Hydrology tile does not match this planner.");
+        }
+        HydrologyCaveCourseFilter.Result result = new HydrologyCaveCourseFilter.Result(
+                tile.nodes(),
+                tile.edges(),
+                tile.outlets(),
+                tile.courses(),
+                tile.cavePlans()
+        );
+        HydrologyOwnerDraft draft = new HydrologyOwnerDraft(
+                tile.key(),
+                result,
+                tile.diagnosticCandidates(),
+                null
+        );
+        resolvedOwners.put(tile.key(), new CrossTileResolvedOwner(draft, List.of()));
+    }
+
     private HydrologyOwnerDraft compileOwnerDraft(
             HydrologyTileKey key,
-            CrossTileDraftAdmission crossTileAdmission
+            CrossTileDraftAdmission crossTileAdmission,
+            boolean retainFootprintCompiler
     ) {
         PlanningSamples previous = planningSamples.get();
         if (previous == null) {
@@ -333,7 +357,11 @@ public final class HydrologyPlanner {
         draftProfiles.set(profile);
         long started = System.nanoTime();
         try {
-            HydrologyOwnerDraft draft = compileScopedOwnerDraft(key, crossTileAdmission);
+            HydrologyOwnerDraft draft = compileScopedOwnerDraft(
+                    key,
+                    crossTileAdmission,
+                    retainFootprintCompiler
+            );
             profile.log(key, ownerColorRank(key), System.nanoTime() - started);
             return draft;
         } finally {
@@ -350,7 +378,8 @@ public final class HydrologyPlanner {
 
     private HydrologyOwnerDraft compileScopedOwnerDraft(
             HydrologyTileKey key,
-            CrossTileDraftAdmission crossTileAdmission
+            CrossTileDraftAdmission crossTileAdmission,
+            boolean retainFootprintCompiler
     ) {
         Objects.requireNonNull(key, "key");
         ArrayList<HydrologyDiagnosticCandidate> diagnostics = new ArrayList<>();
@@ -560,7 +589,12 @@ public final class HydrologyPlanner {
         }
         HydrologyCaveCourseFilter.Result result = publication.result();
         List<HydrologyDiagnosticCandidate> uniqueDiagnostics = uniqueDiagnostics(diagnostics);
-        HydrologyOwnerDraft draft = new HydrologyOwnerDraft(key, result, uniqueDiagnostics);
+        HydrologyOwnerDraft draft = new HydrologyOwnerDraft(
+                key,
+                result,
+                uniqueDiagnostics,
+                retainFootprintCompiler ? footprintCompiler : null
+        );
         validateOwnerDraftReach(draft);
         return draft;
     }
@@ -576,14 +610,17 @@ public final class HydrologyPlanner {
                     rejection.winnerSourceId()
             ));
         }
-        HydrologyFootprintCompiler footprintCompiler = new HydrologyFootprintCompiler(
-                settings,
-                new HydrologyFootprintCompiler.Sampling(
-                        sampler,
-                        geometrySampler,
-                        naturalSampler
-                )
-        );
+        HydrologyFootprintCompiler footprintCompiler = resolution.draft().footprintCompiler();
+        if (footprintCompiler == null) {
+            footprintCompiler = new HydrologyFootprintCompiler(
+                    settings,
+                    new HydrologyFootprintCompiler.Sampling(
+                            sampler,
+                            geometrySampler,
+                            naturalSampler
+                    )
+            );
+        }
         MaterializedHydrology materialized = materializeFinalHydrology(
                 result,
                 diagnostics,
@@ -743,11 +780,14 @@ public final class HydrologyPlanner {
         try {
             int ownerRank = ownerColorRank(key);
             ColorRankedDraftAdmission admission = new ColorRankedDraftAdmission(key, ownerRank, context);
-            HydrologyOwnerDraft draft = compileOwnerDraft(key, admission);
-            validateOwnerDraftReach(draft);
+            HydrologyOwnerDraft draft = compileOwnerDraft(
+                    key,
+                    admission,
+                    key.equals(context.root())
+            );
             CrossTileResolvedOwner resolved = new CrossTileResolvedOwner(draft, admission.observedRejections());
             context.remember(key, resolved);
-            resolvedOwners.put(key, resolved);
+            resolvedOwners.put(key, resolved.withoutFootprintCompiler());
             owned.complete(resolved);
             return resolved;
         } catch (Throwable failure) {
@@ -3955,7 +3995,7 @@ public final class HydrologyPlanner {
         int lowest = center.naturalHeight();
         for (double distance = reach / 2D; distance <= reach; distance += reach / 2D) {
             for (double direction = -1D; direction <= 1D; direction += 2D) {
-                HydrologyTerrainSample side = sampleLandBasis(
+                HydrologyTerrainSample side = sampleLandBasisWithoutSlope(
                         (int) StrictMath.round(point.x() + normalX * distance * direction),
                         (int) StrictMath.round(point.z() + normalZ * distance * direction));
                 if (side != null) {
@@ -4597,8 +4637,8 @@ public final class HydrologyPlanner {
 
     private boolean traversableTerrainTransition(HydrologyPoint start, HydrologyPoint end) {
         List<HydrologyPoint> crossing = rasterLine(start, end);
-        HydrologyTerrainSample startTerrain = sampleLandBasis(start.x(), start.z());
-        HydrologyTerrainSample endTerrain = sampleLandBasis(end.x(), end.z());
+        HydrologyTerrainSample startTerrain = sampleLandBasisWithoutSlope(start.x(), start.z());
+        HydrologyTerrainSample endTerrain = sampleLandBasisWithoutSlope(end.x(), end.z());
         if (startTerrain == null || endTerrain == null) {
             return false;
         }
@@ -4606,7 +4646,7 @@ public final class HydrologyPlanner {
         int threshold = settings.hydraulics().waterfallMinimumDrop();
         for (int pointIndex = 1; pointIndex < crossing.size() - 1; pointIndex++) {
             HydrologyPoint point = crossing.get(pointIndex);
-            HydrologyTerrainSample terrain = sampleLandBasis(point.x(), point.z());
+            HydrologyTerrainSample terrain = sampleLandBasisWithoutSlope(point.x(), point.z());
             if (terrain == null
                     || !terrain.transitAllowed()
                     || boundaryHeight - terrain.naturalHeight() >= threshold) {
@@ -4679,7 +4719,7 @@ public final class HydrologyPlanner {
         List<HydrologyPoint> crossing = rasterLine(start, end);
         for (int pointIndex = 1; pointIndex < crossing.size() - 1; pointIndex++) {
             HydrologyPoint point = crossing.get(pointIndex);
-            HydrologyTerrainSample terrain = sampleLandBasis(point.x(), point.z());
+            HydrologyTerrainSample terrain = sampleLandBasisWithoutSlope(point.x(), point.z());
             if (terrain == null || terrain.ocean() || !terrain.transitAllowed()) {
                 return false;
             }
@@ -6531,7 +6571,7 @@ public final class HydrologyPlanner {
         HydrologyPoint bankPoint = surfaceBankPoint(point, tangent, signedDistance);
         int bankX = bankPoint.x();
         int bankZ = bankPoint.z();
-        return sampleLandBasis(bankX, bankZ);
+        return sampleLandBasisWithoutSlope(bankX, bankZ);
     }
 
     private HydrologyPoint surfaceBankPoint(HydrologyPoint point, Direction tangent, int signedDistance) {
@@ -7721,6 +7761,33 @@ public final class HydrologyPlanner {
         return terrain == null || terrain.ocean() ? null : terrain;
     }
 
+    private HydrologyTerrainSample sampleBasisWithoutSlope(int blockX, int blockZ) {
+        if (naturalSampler == null) {
+            return sampleBasis(blockX, blockZ);
+        }
+        PlanningSamples samples = planningSamples.get();
+        if (samples == null) {
+            return naturalSampler.sampleBasisWithoutSlope(blockX, blockZ);
+        }
+        long packed = RiverFootprint.pack(blockX, blockZ);
+        HydrologyTerrainSample fullSample = samples.basis.get(packed);
+        if (fullSample != null || samples.basis.containsKey(packed)) {
+            return fullSample;
+        }
+        HydrologyTerrainSample cached = samples.basisWithoutSlope.get(packed);
+        if (cached != null || samples.basisWithoutSlope.containsKey(packed)) {
+            return cached;
+        }
+        HydrologyTerrainSample sampled = naturalSampler.sampleBasisWithoutSlope(blockX, blockZ);
+        samples.basisWithoutSlope.put(packed, sampled);
+        return sampled;
+    }
+
+    private HydrologyTerrainSample sampleLandBasisWithoutSlope(int blockX, int blockZ) {
+        HydrologyTerrainSample terrain = sampleBasisWithoutSlope(blockX, blockZ);
+        return terrain == null || terrain.ocean() ? null : terrain;
+    }
+
     private HydrologyTerrainSample sampleDetailed(int blockX, int blockZ) {
         PlanningSamples samples = planningSamples.get();
         if (samples == null) {
@@ -7790,6 +7857,7 @@ public final class HydrologyPlanner {
 
     private static final class PlanningSamples {
         private final Long2ObjectOpenHashMap<HydrologyTerrainSample> basis;
+        private final Long2ObjectOpenHashMap<HydrologyTerrainSample> basisWithoutSlope;
         private final Long2ObjectOpenHashMap<HydrologyTerrainSample> detailed;
         private final Long2ObjectOpenHashMap<HydrologyRoutingTerrainSampler.NaturalClassification> classifications;
         private final HashMap<HydrologyGeometrySampler.Request, Integer> geometry;
@@ -7802,6 +7870,7 @@ public final class HydrologyPlanner {
 
         private PlanningSamples() {
             this.basis = new Long2ObjectOpenHashMap<>();
+            this.basisWithoutSlope = new Long2ObjectOpenHashMap<>();
             this.detailed = new Long2ObjectOpenHashMap<>();
             this.classifications = new Long2ObjectOpenHashMap<>();
             this.geometry = new HashMap<>();
@@ -8295,8 +8364,15 @@ public final class HydrologyPlanner {
     private record HydrologyOwnerDraft(
             HydrologyTileKey key,
             HydrologyCaveCourseFilter.Result result,
-            List<HydrologyDiagnosticCandidate> diagnostics
+            List<HydrologyDiagnosticCandidate> diagnostics,
+            HydrologyFootprintCompiler footprintCompiler
     ) {
+        private HydrologyOwnerDraft withoutFootprintCompiler() {
+            if (footprintCompiler == null) {
+                return this;
+            }
+            return new HydrologyOwnerDraft(key, result, diagnostics, null);
+        }
     }
 
     private record MaterializedHydrology(
@@ -8528,7 +8604,8 @@ public final class HydrologyPlanner {
                 throw new IllegalStateException("Cross-tile owner dependency exceeded its color-ranked geometry bound.");
             }
             CrossTileResolvedOwner existing = resolved.putIfAbsent(key, owner);
-            if (existing != null && !existing.equals(owner)) {
+            if (existing != null
+                    && !existing.withoutFootprintCompiler().equals(owner.withoutFootprintCompiler())) {
                 throw new IllegalStateException("Cross-tile owner resolution produced inconsistent cached results.");
             }
             if (resolved.size() > maximumOwners) {
@@ -8555,6 +8632,10 @@ public final class HydrologyPlanner {
         private int ownerCount() {
             return resolved.size();
         }
+
+        private HydrologyTileKey root() {
+            return root;
+        }
     }
 
     private record CrossTileResolvedOwner(
@@ -8564,6 +8645,13 @@ public final class HydrologyPlanner {
         private CrossTileResolvedOwner {
             Objects.requireNonNull(draft, "draft");
             observedRejections = List.copyOf(Objects.requireNonNull(observedRejections, "observedRejections"));
+        }
+
+        private CrossTileResolvedOwner withoutFootprintCompiler() {
+            HydrologyOwnerDraft uncachedDraft = draft.withoutFootprintCompiler();
+            return uncachedDraft == draft
+                    ? this
+                    : new CrossTileResolvedOwner(uncachedDraft, observedRejections);
         }
     }
 

@@ -20,6 +20,11 @@ import org.junit.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
@@ -108,6 +113,61 @@ public class NativeStructureVolumeIndexTest {
     }
 
     @Test
+    public void overlappingColdQueriesCoordinateBeforeResolvingOrigins() throws Exception {
+        BlockingResolver resolver = new BlockingResolver();
+        NativeStructureVolumeIndex index = NativeStructureVolumeIndex.forTesting(resolver);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<KList<NativeStructureVolume>> first = executor.submit(() -> index.resolve(null, 0, 0, 15, 15));
+            assertTrue(resolver.awaitFirstEntry());
+            Future<KList<NativeStructureVolume>> adjacent = executor.submit(() -> index.resolve(null, 16, 0, 31, 15));
+
+            assertFalse(resolver.awaitSecondEntry(250));
+            resolver.release();
+            assertTrue(first.get(5, TimeUnit.SECONDS).isEmpty());
+            assertTrue(adjacent.get(5, TimeUnit.SECONDS).isEmpty());
+            assertEquals(306, resolver.resolutions());
+        } finally {
+            resolver.release();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void distantColdQueriesCanResolveOriginsConcurrently() throws Exception {
+        BlockingResolver resolver = new BlockingResolver();
+        NativeStructureVolumeIndex index = NativeStructureVolumeIndex.forTesting(resolver);
+        int distantChunkX = findDisjointWindow(0, 0);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<KList<NativeStructureVolume>> first = executor.submit(() -> index.resolve(null, 0, 0, 15, 15));
+            assertTrue(resolver.awaitFirstEntry());
+            Future<KList<NativeStructureVolume>> distant = executor.submit(
+                    () -> index.resolve(null, distantChunkX << 4, 0, (distantChunkX << 4) + 15, 15));
+
+            assertTrue(resolver.awaitSecondEntry(5_000));
+            resolver.release();
+            assertTrue(first.get(5, TimeUnit.SECONDS).isEmpty());
+            assertTrue(distant.get(5, TimeUnit.SECONDS).isEmpty());
+        } finally {
+            resolver.release();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void coordinatedResolutionPreservesCanonicalOriginOrder() {
+        NativeStructureVolumeIndex index = NativeStructureVolumeIndex.forTesting(new OrderedResolver());
+
+        KList<NativeStructureVolume> volumes = index.resolve(null, 0, 0, 15, 15);
+
+        assertEquals(289, volumes.size());
+        assertEquals("-8:-8", volumes.getFirst().structure());
+        assertEquals("0:0", volumes.get(144).structure());
+        assertEquals("8:8", volumes.getLast().structure());
+    }
+
+    @Test
     public void volumeResolutionNeverReadsChunkOrOwnershipState() throws Exception {
         String source = Files.readString(Path.of(System.getProperty("iris.nativeStructureVolumeIndexSource")));
 
@@ -134,6 +194,16 @@ public class NativeStructureVolumeIndexTest {
         return new StructureStart(source, new ChunkPos(chunkX, chunkZ), 0, new PiecesContainer(List.of(piece)));
     }
 
+    private static int findDisjointWindow(int chunkX, int chunkZ) {
+        long sourceMask = NativeStructureVolumeIndex.originWindowStripeMask(chunkX, chunkZ);
+        for (int candidate = 64; candidate < 16_384; candidate += 17) {
+            if ((sourceMask & NativeStructureVolumeIndex.originWindowStripeMask(candidate, chunkZ)) == 0L) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Unable to find a disjoint native structure window stripe");
+    }
+
     private static final class CountingResolver implements NativeStructureVolumeIndex.OriginResolver {
         private final AtomicInteger resolutions = new AtomicInteger();
         private final int originChunkX;
@@ -155,6 +225,58 @@ public class NativeStructureVolumeIndexTest {
                 return NativeStructureVolume.NONE;
             }
             return NativeStructureVolumeIndex.appendPieces(null, STRUCTURE_KEY, swampHut(chunkX, chunkZ, 4, 6));
+        }
+    }
+
+    private static final class BlockingResolver implements NativeStructureVolumeIndex.OriginResolver {
+        private final AtomicInteger resolutions = new AtomicInteger();
+        private final CountDownLatch firstEntry = new CountDownLatch(1);
+        private final CountDownLatch secondEntry = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+
+        private int resolutions() {
+            return resolutions.get();
+        }
+
+        private boolean awaitFirstEntry() throws InterruptedException {
+            return firstEntry.await(5, TimeUnit.SECONDS);
+        }
+
+        private boolean awaitSecondEntry(long timeoutMillis) throws InterruptedException {
+            return secondEntry.await(timeoutMillis, TimeUnit.MILLISECONDS);
+        }
+
+        private void release() {
+            release.countDown();
+        }
+
+        @Override
+        public KList<NativeStructureVolume> volumesAt(Engine engine, int chunkX, int chunkZ) {
+            int resolution = resolutions.incrementAndGet();
+            if (resolution == 1) {
+                firstEntry.countDown();
+                try {
+                    if (!release.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("Timed out waiting to release native structure resolution");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while coordinating native structure resolution", e);
+                }
+            } else if (resolution == 2) {
+                secondEntry.countDown();
+            }
+            return NativeStructureVolume.NONE;
+        }
+    }
+
+    private static final class OrderedResolver implements NativeStructureVolumeIndex.OriginResolver {
+        @Override
+        public KList<NativeStructureVolume> volumesAt(Engine engine, int chunkX, int chunkZ) {
+            return new KList<>(new NativeStructureVolume(
+                    chunkX + ":" + chunkZ,
+                    0, 0, 0,
+                    15, 255, 15));
         }
     }
 }

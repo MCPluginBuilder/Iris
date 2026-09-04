@@ -8,8 +8,10 @@ import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.math.Position2;
 import org.junit.Before;
 import org.junit.Test;
+import org.bukkit.World;
 
 import java.io.File;
+import java.lang.reflect.Constructor;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -92,9 +94,31 @@ public class CachedPregenMethodCompletionTest {
         assertEquals(expected.size(), listener.generatedCached.get());
     }
 
+    @Test
+    public void pregenStartReachesTheSelectedMethodThroughEveryWrapper() throws Exception {
+        Constructor<AsyncOrMedievalPregenMethod> selectorConstructor = AsyncOrMedievalPregenMethod.class
+                .getDeclaredConstructor(PregeneratorMethod.class);
+        selectorConstructor.setAccessible(true);
+        AsyncOrMedievalPregenMethod selector = selectorConstructor.newInstance(underlying);
+        Constructor<HybridPregenMethod> hybridConstructor = HybridPregenMethod.class
+                .getDeclaredConstructor(World.class, PregeneratorMethod.class);
+        hybridConstructor.setAccessible(true);
+        HybridPregenMethod hybrid = hybridConstructor.newInstance(null, selector);
+        CachedPregenMethod wrapped = new CachedPregenMethod(hybrid, cache, task);
+
+        wrapped.onPregenStart(123, -456);
+
+        assertEquals(1, underlying.pregenStartCalls.get());
+        assertEquals(123, underlying.centerBlockX.get());
+        assertEquals(-456, underlying.centerBlockZ.get());
+    }
+
     private static final class CapturingMethod implements PregeneratorMethod {
         private final AtomicInteger generateChunkCalls = new AtomicInteger();
         private final AtomicInteger generateRegionCalls = new AtomicInteger();
+        private final AtomicInteger pregenStartCalls = new AtomicInteger();
+        private final AtomicInteger centerBlockX = new AtomicInteger();
+        private final AtomicInteger centerBlockZ = new AtomicInteger();
         private final AtomicReference<PregenListener> capturedListener = new AtomicReference<>();
 
         @Override
@@ -128,6 +152,13 @@ public class CachedPregenMethodCompletionTest {
         public void generateChunk(int x, int z, PregenListener listener) {
             generateChunkCalls.incrementAndGet();
             capturedListener.set(listener);
+        }
+
+        @Override
+        public void onPregenStart(int centerBlockX, int centerBlockZ) {
+            pregenStartCalls.incrementAndGet();
+            this.centerBlockX.set(centerBlockX);
+            this.centerBlockZ.set(centerBlockZ);
         }
 
         @Override

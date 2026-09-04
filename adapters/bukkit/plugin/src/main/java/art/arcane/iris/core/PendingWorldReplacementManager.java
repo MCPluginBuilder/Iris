@@ -37,6 +37,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.world.WorldLoadEvent;
+import org.bukkit.event.world.WorldSaveEvent;
 
 import java.io.File;
 import java.io.IOException;
@@ -61,7 +62,8 @@ import java.util.concurrent.TimeoutException;
 
 public final class PendingWorldReplacementManager implements Listener {
     private static final WorldSlotKey OVERWORLD_KEY = WorldSlotKey.minecraft("overworld");
-    private static final long SAFE_ENTRY_TIMEOUT_SECONDS = 30L;
+    private static final long SAVED_LOCATION_INSPECTION_TIMEOUT_SECONDS = 30L;
+    private static final long SAFE_ENTRY_TIMEOUT_SECONDS = 600L;
 
     private final Iris plugin;
     private final Set<UUID> cleanupInFlight = new HashSet<>();
@@ -70,6 +72,7 @@ public final class PendingWorldReplacementManager implements Listener {
     private volatile WorldReplacementEntryGuard.Entry overworldEntryGuard;
     private volatile Path overworldEntryWorldDirectory;
     private volatile CompletableFuture<Location> overworldSafeEntry;
+    private volatile CompletableFuture<Void> overworldSpawnPersistence;
     private volatile UUID overworldEntryAwaitingVerification;
     private volatile World overworldEntryWorld;
     private volatile boolean paperEntryListenerRegistered;
@@ -377,22 +380,23 @@ public final class PendingWorldReplacementManager implements Listener {
             int chunkX = anchor.getBlockX() >> 4;
             int chunkZ = anchor.getBlockZ() >> 4;
             WorldRuntimeControlService runtime = WorldRuntimeControlService.get();
-            CompletableFuture<Chunk> chunkFuture = runtime.requestChunkAsync(world, chunkX, chunkZ, true);
+            CompletableFuture<Chunk> chunkFuture = runtime.requestChunkAsync(world, chunkX, chunkZ, true, true);
             if (chunkFuture == null) {
                 throw new IOException("The replacement spawn chunk request was not accepted.");
             }
             chunkFuture
                     .thenCompose(chunk -> runtime.resolveSafeEntry(world, anchor))
                     .thenCompose(this::applyOverworldSpawn)
-                    .thenCompose(this::persistOverworldSpawn)
                     .whenComplete((safeEntry, failure) -> {
                         if (failure != null) {
                             targetFuture.completeExceptionally(failure);
                             Iris.reportError("Could not prepare a safe spawn for the replaced Overworld.", failure);
                             return;
                         }
+                        CompletableFuture<Void> persistence = new CompletableFuture<>();
+                        overworldSpawnPersistence = persistence;
+                        persistence.thenRun(() -> retireOverworldEntryIfComplete(guard.transactionId()));
                         targetFuture.complete(safeEntry.clone());
-                        retireOverworldEntryIfComplete(guard.transactionId());
                     });
         } catch (Throwable failure) {
             targetFuture.completeExceptionally(failure);
@@ -422,35 +426,19 @@ public final class PendingWorldReplacementManager implements Listener {
         return applied;
     }
 
-    private CompletableFuture<Location> persistOverworldSpawn(Location safeEntry) {
-        Location requiredSafeEntry = Objects.requireNonNull(safeEntry, "safeEntry").clone();
-        World world = Objects.requireNonNull(requiredSafeEntry.getWorld(), "safeEntry.world");
-        CompletableFuture<Location> persisted = new CompletableFuture<>();
-        boolean scheduled = J.runGlobal(() -> {
-            try {
-                world.save();
-                persisted.complete(requiredSafeEntry.clone());
-            } catch (Throwable failure) {
-                persisted.completeExceptionally(failure);
-            }
-        });
-        if (!scheduled) {
-            persisted.completeExceptionally(new IOException("Could not schedule replacement spawn persistence."));
-        }
-        return persisted;
-    }
-
     private CompletableFuture<Boolean> inspectLoginCollision(Location location) {
         Location requiredLocation = Objects.requireNonNull(location, "location").clone();
         World world = Objects.requireNonNull(requiredLocation.getWorld(), "location.world");
         int chunkX = requiredLocation.getBlockX() >> 4;
         int chunkZ = requiredLocation.getBlockZ() >> 4;
         WorldRuntimeControlService runtime = WorldRuntimeControlService.get();
-        CompletableFuture<Chunk> chunkFuture = runtime.requestChunkAsync(world, chunkX, chunkZ, true);
+        CompletableFuture<Chunk> chunkFuture = runtime.requestChunkAsync(world, chunkX, chunkZ, false, true);
         if (chunkFuture == null) {
             return CompletableFuture.failedFuture(new IOException("The saved login chunk request was not accepted."));
         }
-        return chunkFuture.thenCompose(chunk -> inspectLoadedLoginCollision(requiredLocation));
+        return chunkFuture.thenCompose(chunk -> chunk == null
+                ? CompletableFuture.completedFuture(false)
+                : inspectLoadedLoginCollision(requiredLocation));
     }
 
     private CompletableFuture<Boolean> inspectLoadedLoginCollision(Location location) {
@@ -528,14 +516,14 @@ public final class PendingWorldReplacementManager implements Listener {
     private synchronized void retireOverworldEntryIfCompleteAsync(UUID transactionId) {
         WorldReplacementEntryGuard.Entry current = overworldEntryGuard;
         Path worldDirectory = overworldEntryWorldDirectory;
-        CompletableFuture<Location> safeEntry = overworldSafeEntry;
+        CompletableFuture<Void> persistence = overworldSpawnPersistence;
         if (current == null
                 || worldDirectory == null
                 || !current.transactionId().equals(transactionId)
                 || !current.pendingPlayers().isEmpty()
-                || safeEntry == null
-                || !safeEntry.isDone()
-                || safeEntry.isCompletedExceptionally()) {
+                || persistence == null
+                || !persistence.isDone()
+                || persistence.isCompletedExceptionally()) {
             return;
         }
         try {
@@ -545,6 +533,7 @@ public final class PendingWorldReplacementManager implements Listener {
             overworldEntryGuard = null;
             overworldEntryWorldDirectory = null;
             overworldSafeEntry = null;
+            overworldSpawnPersistence = null;
             overworldEntryWorld = null;
             pendingEntryAcknowledgements.entrySet().removeIf(entry -> entry.getValue().equals(transactionId));
         } catch (Throwable failure) {
@@ -581,6 +570,22 @@ public final class PendingWorldReplacementManager implements Listener {
         J.a(() -> discoverLoadedWorldTransaction(worldKey));
     }
 
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onWorldSave(WorldSaveEvent event) {
+        World replacementWorld = overworldEntryWorld;
+        CompletableFuture<Location> safeEntry = overworldSafeEntry;
+        CompletableFuture<Void> persistence = overworldSpawnPersistence;
+        if (event.getWorld() != replacementWorld
+                || safeEntry == null
+                || !safeEntry.isDone()
+                || safeEntry.isCompletedExceptionally()
+                || persistence == null
+                || persistence.isDone()) {
+            return;
+        }
+        persistence.complete(null);
+    }
+
     ReplacementEntryRedirect prepareReplacementEntry(UUID playerId, Location savedLocation, boolean newPlayer)
             throws IOException, InterruptedException, ExecutionException, TimeoutException {
         WorldReplacementEntryGuard.Entry guard = overworldEntryGuard;
@@ -603,11 +608,21 @@ public final class PendingWorldReplacementManager implements Listener {
             return null;
         }
         if (!newPlayer) {
-            boolean collisionSafe = inspectLoginCollision(requiredSavedLocation)
-                    .get(SAFE_ENTRY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            if (collisionSafe) {
+            SavedLocationInspection inspection = awaitSavedLocationInspection(
+                    inspectLoginCollision(requiredSavedLocation),
+                    SAVED_LOCATION_INSPECTION_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS
+            );
+            if (inspection.safe()) {
                 completeOverworldEntry(playerId, guard.transactionId());
                 return null;
+            }
+            if (inspection.failure() instanceof TimeoutException) {
+                Iris.warn("Saved Overworld login location inspection timed out for " + playerId
+                        + "; using the prepared replacement spawn.");
+            } else if (inspection.failure() != null) {
+                Iris.reportError("Could not inspect the saved Overworld login location for " + playerId
+                        + "; using the prepared replacement spawn.", inspection.failure());
             }
         }
         CompletableFuture<Location> safeEntry = overworldSafeEntry;
@@ -618,6 +633,26 @@ public final class PendingWorldReplacementManager implements Listener {
         prepared.setYaw(requiredSavedLocation.getYaw());
         prepared.setPitch(requiredSavedLocation.getPitch());
         return new ReplacementEntryRedirect(guard.transactionId(), prepared, pendingPlayer);
+    }
+
+    static SavedLocationInspection awaitSavedLocationInspection(
+            CompletableFuture<Boolean> inspection,
+            long timeout,
+            TimeUnit timeUnit
+    ) throws InterruptedException {
+        CompletableFuture<Boolean> requiredInspection = Objects.requireNonNull(inspection, "inspection");
+        TimeUnit requiredTimeUnit = Objects.requireNonNull(timeUnit, "timeUnit");
+        try {
+            return new SavedLocationInspection(
+                    Boolean.TRUE.equals(requiredInspection.get(timeout, requiredTimeUnit)),
+                    null
+            );
+        } catch (TimeoutException failure) {
+            return new SavedLocationInspection(false, failure);
+        } catch (ExecutionException failure) {
+            Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+            return new SavedLocationInspection(false, cause);
+        }
     }
 
     void expectReplacementEntryAcknowledgement(UUID playerId, UUID transactionId) throws IOException {
@@ -999,6 +1034,7 @@ public final class PendingWorldReplacementManager implements Listener {
         overworldEntryGuard = loaded.orElse(null);
         overworldEntryWorldDirectory = loaded.isPresent() ? target.worldDirectory() : null;
         overworldSafeEntry = null;
+        overworldSpawnPersistence = null;
         overworldEntryAwaitingVerification = null;
     }
 
@@ -1006,6 +1042,7 @@ public final class PendingWorldReplacementManager implements Listener {
         overworldEntryGuard = null;
         overworldEntryWorldDirectory = null;
         overworldSafeEntry = null;
+        overworldSpawnPersistence = null;
         overworldEntryAwaitingVerification = null;
         overworldEntryWorld = null;
         pendingEntryAcknowledgements.clear();
@@ -1155,6 +1192,9 @@ public final class PendingWorldReplacementManager implements Listener {
         public Location location() {
             return location.clone();
         }
+    }
+
+    record SavedLocationInspection(boolean safe, Throwable failure) {
     }
 
     private static final class RestartBoundaryRequired extends IOException {

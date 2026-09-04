@@ -214,6 +214,7 @@ public class IrisPregenerator {
             checkRegions();
             int[] regionBounds = task.regionBounds();
             generator.onRegionBounds(regionBounds[0], regionBounds[1], regionBounds[2], regionBounds[3]);
+            generator.onPregenStart(task.getCenter().getX(), task.getCenter().getZ());
             task.iterateRegions((x, z) -> visitRegion(x, z, true));
             task.iterateRegions((x, z) -> visitRegion(x, z, false));
             completed = true;
@@ -288,10 +289,17 @@ public class IrisPregenerator {
     }
 
     private void shutdown() {
+        Thread.interrupted();
         shutdownStep("saving", listener::onSaving);
         shutdownStep("generator", generator::close);
+        Thread.interrupted();
         shutdownStep("ticker", ticker::interrupt);
-        shutdownStep("listener", listener::onClose);
+        shutdownStep("mantle", () -> {
+            Mantle mantle = getMantle();
+            if (mantle != null) {
+                reclaimTectonicPlates(mantle);
+            }
+        });
         shutdownStep("protocol", () -> {
             IrisProtocolServer protocolServer = IrisServices.getOrNull(IrisProtocolServer.class);
             if (protocolServer != null) {
@@ -299,12 +307,7 @@ public class IrisPregenerator {
                 protocolServer.pregenEnd(jobId, total > 0 && generated.get() >= total);
             }
         });
-        shutdownStep("mantle", () -> {
-            Mantle mantle = getMantle();
-            if (mantle != null) {
-                reclaimTectonicPlates(mantle);
-            }
-        });
+        shutdownStep("listener", listener::onClose);
     }
 
     private void shutdownStep(String step, Runnable action) {

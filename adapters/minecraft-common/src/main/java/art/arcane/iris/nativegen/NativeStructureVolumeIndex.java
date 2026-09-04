@@ -36,6 +36,7 @@ import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.IntBinaryOperator;
 import java.util.function.Supplier;
 
@@ -49,6 +50,8 @@ import java.util.function.Supplier;
  */
 public final class NativeStructureVolumeIndex {
     private static final int ORIGIN_REACH_CHUNKS = NativeStructureOwnershipRecord.MAX_REFERENCE_DISTANCE_CHUNKS;
+    private static final int ORIGIN_WINDOW_DIAMETER = ORIGIN_REACH_CHUNKS * 2 + 1;
+    private static final int ORIGIN_WINDOW_STRIPE_COUNT = Long.SIZE;
     private static final int MAX_CACHED_ORIGIN_CHUNKS = 16_384;
     private static final int MAX_CACHED_QUERY_CHUNKS = 4_096;
     private static final Map<Engine, NativeStructureVolumeIndex> INDEXES =
@@ -63,6 +66,7 @@ public final class NativeStructureVolumeIndex {
             new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<KList<NativeStructureVolume>>> queryBuilds =
             new ConcurrentHashMap<>();
+    private final ReentrantLock[] originWindowStripes = createOriginWindowStripes();
 
     private NativeStructureVolumeIndex(Context context) {
         this.context = Objects.requireNonNull(context, "Native structure volume context must not be null");
@@ -128,6 +132,16 @@ public final class NativeStructureVolumeIndex {
     }
 
     private KList<NativeStructureVolume> buildChunkVolumes(Engine engine, int chunkX, int chunkZ) {
+        long stripeMask = originWindowStripeMask(chunkX, chunkZ);
+        lockOriginWindow(stripeMask);
+        try {
+            return buildChunkVolumesCoordinated(engine, chunkX, chunkZ);
+        } finally {
+            unlockOriginWindow(stripeMask);
+        }
+    }
+
+    private KList<NativeStructureVolume> buildChunkVolumesCoordinated(Engine engine, int chunkX, int chunkZ) {
         int minX = chunkX << 4;
         int minZ = chunkZ << 4;
         int maxX = minX + 15;
@@ -147,6 +161,20 @@ public final class NativeStructureVolumeIndex {
             }
         }
         return volumes == null ? NativeStructureVolume.NONE : volumes;
+    }
+
+    static long originWindowStripeMask(int chunkX, int chunkZ) {
+        int minCellX = Math.floorDiv(chunkX - ORIGIN_REACH_CHUNKS, ORIGIN_WINDOW_DIAMETER);
+        int maxCellX = Math.floorDiv(chunkX + ORIGIN_REACH_CHUNKS, ORIGIN_WINDOW_DIAMETER);
+        int minCellZ = Math.floorDiv(chunkZ - ORIGIN_REACH_CHUNKS, ORIGIN_WINDOW_DIAMETER);
+        int maxCellZ = Math.floorDiv(chunkZ + ORIGIN_REACH_CHUNKS, ORIGIN_WINDOW_DIAMETER);
+        long mask = 0L;
+        for (int cellX = minCellX; cellX <= maxCellX; cellX++) {
+            for (int cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+                mask |= 1L << originWindowStripe(cellX, cellZ);
+            }
+        }
+        return mask;
     }
 
     KList<NativeStructureVolume> originVolumes(Engine engine, int chunkX, int chunkZ) {
@@ -367,6 +395,42 @@ public final class NativeStructureVolumeIndex {
 
     private static long chunkKey(int chunkX, int chunkZ) {
         return ((long) chunkX << 32) ^ (chunkZ & 0xffffffffL);
+    }
+
+    private static int originWindowStripe(int cellX, int cellZ) {
+        long mixed = chunkKey(cellX, cellZ);
+        mixed ^= mixed >>> 33;
+        mixed *= 0xff51afd7ed558ccdL;
+        mixed ^= mixed >>> 33;
+        mixed *= 0xc4ceb9fe1a85ec53L;
+        mixed ^= mixed >>> 33;
+        return (int) mixed & (ORIGIN_WINDOW_STRIPE_COUNT - 1);
+    }
+
+    private static ReentrantLock[] createOriginWindowStripes() {
+        ReentrantLock[] stripes = new ReentrantLock[ORIGIN_WINDOW_STRIPE_COUNT];
+        for (int i = 0; i < stripes.length; i++) {
+            stripes[i] = new ReentrantLock();
+        }
+        return stripes;
+    }
+
+    private void lockOriginWindow(long stripeMask) {
+        long pending = stripeMask;
+        while (pending != 0L) {
+            int stripe = Long.numberOfTrailingZeros(pending);
+            originWindowStripes[stripe].lock();
+            pending &= pending - 1L;
+        }
+    }
+
+    private void unlockOriginWindow(long stripeMask) {
+        long pending = stripeMask;
+        while (pending != 0L) {
+            int stripe = Long.SIZE - 1 - Long.numberOfLeadingZeros(pending);
+            originWindowStripes[stripe].unlock();
+            pending &= ~(1L << stripe);
+        }
     }
 
     private static Map<Long, KList<NativeStructureVolume>> lru(int capacity) {

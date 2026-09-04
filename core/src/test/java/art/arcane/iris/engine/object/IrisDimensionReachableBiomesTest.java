@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -128,6 +129,34 @@ public class IrisDimensionReachableBiomesTest {
         verify(biomeLoader, times(1)).load("b");
         verify(biomeLoader, times(1)).load("c");
         verify(biomeLoader, times(1)).load("d");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void excludesUnavailableCavePoolFromReachableClosure() {
+        IrisDimension dimension = new IrisDimension().setRegions(new KList<>("reachable"));
+        IrisRegion reachable = new IrisRegion()
+                .setLandBiomes(new KList<>("plains"))
+                .setCaveBiomes(new KList<>("carving/sulfur"));
+        IrisBiome plains = biome("plains");
+        IrisBiome sulfur = CompatFixtures.excludeBlock(biome("carving/sulfur"))
+                .setChildren(new KList<>("carving/sulfur-hollows"));
+
+        IrisData data = mock(IrisData.class);
+        ResourceLoader<IrisRegion> regionLoader = mock(ResourceLoader.class);
+        ResourceLoader<IrisBiome> biomeLoader = mock(ResourceLoader.class);
+        when(data.getRegionLoader()).thenReturn(regionLoader);
+        when(data.getBiomeLoader()).thenReturn(biomeLoader);
+        when(regionLoader.load("reachable")).thenReturn(reachable);
+        when(biomeLoader.load("plains")).thenReturn(plains);
+        when(biomeLoader.load("carving/sulfur")).thenReturn(sulfur);
+
+        Set<String> keys = dimension.getReachableBiomes(() -> data).stream()
+                .map(IrisBiome::getLoadKey)
+                .collect(Collectors.toSet());
+
+        assertEquals(Set.of("plains"), keys);
+        verify(biomeLoader, never()).load("carving/sulfur-hollows");
     }
 
     @Test

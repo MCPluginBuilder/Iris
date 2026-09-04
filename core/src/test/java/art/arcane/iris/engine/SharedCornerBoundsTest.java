@@ -86,4 +86,5 @@ public class SharedCornerBoundsTest {
         }
         assertFalse(torn.get());
     }
+
 }

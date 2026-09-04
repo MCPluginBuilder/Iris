@@ -311,13 +311,19 @@ public class IrisToolbelt {
         if (PregeneratorJob.getInstance() != null) {
             throw new IllegalStateException("An Iris pregeneration job is already running; stop it first with /iris pregen stop.");
         }
-        applyPregenPerformanceProfile(engine);
         boolean useCachedWrapper = false;
         if (cached && engine != null) {
             IrisRuntimeSchedulerMode runtimeSchedulerMode = IrisRuntimeSchedulerMode.resolve(IrisSettings.get().getPregen());
             useCachedWrapper = runtimeSchedulerMode != IrisRuntimeSchedulerMode.FOLIA;
         }
-        return new PregeneratorJob(task, useCachedWrapper ? new CachedPregenMethod(method, resolvePregenCache(engine.getWorld()), task) : method, engine);
+        PregeneratorMethod activeMethod = useCachedWrapper
+                ? new CachedPregenMethod(method, resolvePregenCache(engine.getWorld()), task)
+                : method;
+        return new PregeneratorJob(new PregeneratorJob.Configuration(
+                task,
+                activeMethod,
+                engine,
+                () -> applyPregenPerformanceProfile(engine)));
     }
 
     private static PregenCache resolvePregenCache(IrisWorld world) {

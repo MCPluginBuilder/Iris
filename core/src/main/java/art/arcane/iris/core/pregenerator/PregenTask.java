@@ -128,6 +128,10 @@ public class PregenTask {
     private static int[] computeOrder(long key) {
         int pullX = (int) (key >> 32);
         int pullZ = (int) key;
+        if (pullX >= 0 && pullX <= 31 && pullZ >= 0 && pullZ <= 31) {
+            return packOrder(contiguousOrder(pullX, pullZ));
+        }
+
         Position2 pull = new Position2(pullX, pullZ);
         KList<Position2> p = new KList<>();
         new Spiraler(33, 33, (x, z) -> {
@@ -140,7 +144,10 @@ public class PregenTask {
             p.add(new Position2(xx, zz));
         }).drain();
         p.sort(Comparator.comparing((i) -> i.distance(pull)));
-        KList<Position2> ordered = latticeOrder(p);
+        return packOrder(latticeOrder(p));
+    }
+
+    private static int[] packOrder(KList<Position2> ordered) {
         int[] packed = new int[ordered.size()];
         for (int index = 0; index < ordered.size(); index++) {
             Position2 position = ordered.get(index);
@@ -148,6 +155,16 @@ public class PregenTask {
         }
 
         return packed;
+    }
+
+    private static KList<Position2> contiguousOrder(int pullX, int pullZ) {
+        KList<Position2> ordered = new KList<>();
+        new Spiraler(65, 65, (x, z) -> {
+            if (x >= 0 && x <= 31 && z >= 0 && z <= 31) {
+                ordered.add(new Position2(x, z));
+            }
+        }).setOffset(pullX, pullZ).drain();
+        return ordered;
     }
 
     /**
@@ -186,9 +203,11 @@ public class PregenTask {
 
     public void iterateChunks(int rX, int rZ, Spiraled s) {
         Bound bound = bounds.chunk();
+        int pullX = PowerOfTwoCoordinates.blockToChunkFloor(center.getX()) - PowerOfTwoCoordinates.regionToChunk(rX);
+        int pullZ = PowerOfTwoCoordinates.blockToChunkFloor(center.getZ()) - PowerOfTwoCoordinates.regionToChunk(rZ);
         iterateRegion(rX, rZ, ((x, z) -> {
             if (bound.check(x, z)) s.on(x, z);
-        }));
+        }), pullX, pullZ);
     }
 
     public int[] regionBounds() {

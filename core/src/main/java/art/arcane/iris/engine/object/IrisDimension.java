@@ -620,6 +620,9 @@ public class IrisDimension extends IrisRegistrant {
             if (biome == null) {
                 continue;
             }
+            if (biome.isCompatExcluded()) {
+                continue;
+            }
 
             String loadKey = biome.getLoadKey();
             if (loadKey == null || loadKey.isBlank() || biomes.containsKey(loadKey)) {

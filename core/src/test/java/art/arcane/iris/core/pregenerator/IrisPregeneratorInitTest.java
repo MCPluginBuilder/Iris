@@ -9,6 +9,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -36,6 +39,32 @@ public class IrisPregeneratorInitTest {
 
             assertEquals(1, method.initCalls.get());
             assertEquals(0, method.saveCalls.get());
+        } finally {
+            IrisSettings.settings = previousSettings;
+        }
+    }
+
+    @Test
+    public void pregenPreparationRunsBeforeTheFirstChunkSubmission() {
+        IrisSettings previousSettings = IrisSettings.settings;
+        IrisSettings.settings = new IrisSettings();
+        TrackingPregeneratorMethod method = new TrackingPregeneratorMethod();
+        PregenTask task = PregenTask.builder()
+                .center(new Position2(128, 128))
+                .radiusX(1)
+                .radiusZ(1)
+                .build();
+        try {
+            IrisPregenerator pregenerator = new IrisPregenerator(task, method, new NoOpPregenListener());
+
+            pregenerator.start();
+
+            int boundsIndex = method.lifecycle.indexOf("bounds");
+            int startIndex = method.lifecycle.indexOf("start:128,128");
+            int chunkIndex = method.lifecycle.indexOf("chunk");
+            assertTrue(boundsIndex >= 0);
+            assertTrue(startIndex > boundsIndex);
+            assertTrue(chunkIndex > startIndex);
         } finally {
             IrisSettings.settings = previousSettings;
         }
@@ -84,6 +113,33 @@ public class IrisPregeneratorInitTest {
         }
     }
 
+    @Test
+    public void shutdownConsumesCancellationInterruptBetweenCleanupSteps() {
+        IrisSettings previousSettings = IrisSettings.settings;
+        IrisSettings.settings = new IrisSettings();
+        AtomicBoolean listenerObservedInterrupt = new AtomicBoolean();
+        TrackingPregeneratorMethod method = new TrackingPregeneratorMethod(true);
+        PregenTask task = PregenTask.builder()
+                .center(new Position2(0, 0))
+                .radiusX(1)
+                .radiusZ(1)
+                .build();
+        try {
+            IrisPregenerator pregenerator = new IrisPregenerator(
+                    task,
+                    method,
+                    new NoOpPregenListener(listenerObservedInterrupt));
+
+            pregenerator.start();
+
+            assertFalse(listenerObservedInterrupt.get());
+            assertFalse(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+            IrisSettings.settings = previousSettings;
+        }
+    }
+
     private String runCompletionOnClose(boolean failLast) {
         IrisSettings previousSettings = IrisSettings.settings;
         PrintStream previousOut = System.out;
@@ -111,6 +167,16 @@ public class IrisPregeneratorInitTest {
     private static final class TrackingPregeneratorMethod implements PregeneratorMethod {
         private final AtomicInteger initCalls = new AtomicInteger();
         private final AtomicInteger saveCalls = new AtomicInteger();
+        private final List<String> lifecycle = new ArrayList<>();
+        private final boolean interruptOnClose;
+
+        private TrackingPregeneratorMethod() {
+            this(false);
+        }
+
+        private TrackingPregeneratorMethod(boolean interruptOnClose) {
+            this.interruptOnClose = interruptOnClose;
+        }
 
         @Override
         public void init() {
@@ -119,6 +185,9 @@ public class IrisPregeneratorInitTest {
 
         @Override
         public void close() {
+            if (interruptOnClose) {
+                Thread.currentThread().interrupt();
+            }
         }
 
         @Override
@@ -142,6 +211,17 @@ public class IrisPregeneratorInitTest {
 
         @Override
         public void generateChunk(int x, int z, PregenListener listener) {
+            lifecycle.add("chunk");
+        }
+
+        @Override
+        public void onRegionBounds(int minRegionX, int minRegionZ, int maxRegionX, int maxRegionZ) {
+            lifecycle.add("bounds");
+        }
+
+        @Override
+        public void onPregenStart(int centerBlockX, int centerBlockZ) {
+            lifecycle.add("start:" + centerBlockX + "," + centerBlockZ);
         }
 
         @Override
@@ -254,6 +334,16 @@ public class IrisPregeneratorInitTest {
     }
 
     private static final class NoOpPregenListener implements PregenListener {
+        private final AtomicBoolean closeInterrupted;
+
+        private NoOpPregenListener() {
+            this(null);
+        }
+
+        private NoOpPregenListener(AtomicBoolean closeInterrupted) {
+            this.closeInterrupted = closeInterrupted;
+        }
+
         @Override
         public void onTick(double chunksPerSecond, double chunksPerMinute, double regionsPerMinute, double percent, long generated, long totalChunks, long chunksRemaining, long eta, long elapsed, String method, boolean cached) {
         }
@@ -304,6 +394,9 @@ public class IrisPregeneratorInitTest {
 
         @Override
         public void onClose() {
+            if (closeInterrupted != null) {
+                closeInterrupted.set(Thread.currentThread().isInterrupted());
+            }
         }
 
         @Override

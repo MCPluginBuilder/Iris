@@ -447,6 +447,7 @@ public class IrisCaveCarver3D {
         int[] activeColumnIndices = scratch.activeColumnIndices;
         int[] activeColumnTopY = scratch.activeColumnTopY;
         int activeColumnCount = 0;
+        int activeMaxY = Integer.MIN_VALUE;
 
         for (int index = 0; index < 256; index++) {
             double columnWeight = clampedWeights[index];
@@ -458,6 +459,7 @@ public class IrisCaveCarver3D {
             passThreshold[index] = columnThreshold[index] + thresholdBoost - ((1D - columnWeight) * thresholdPenalty);
             activeColumnIndices[activeColumnCount] = index;
             activeColumnTopY[activeColumnCount] = columnMaxY[index];
+            activeMaxY = Math.max(activeMaxY, columnMaxY[index]);
             activeColumnCount++;
         }
 
@@ -469,11 +471,12 @@ public class IrisCaveCarver3D {
         double[] planeThresholdLimit = scratch.planeThresholdLimit;
         boolean[] planeCarve = scratch.planeCarve;
         int minSection = PowerOfTwoCoordinates.floorDivPow2(minY, 4);
-        int maxSection = PowerOfTwoCoordinates.floorDivPow2(maxY, 4);
+        int passMaxY = Math.min(maxY, activeMaxY);
+        int maxSection = PowerOfTwoCoordinates.floorDivPow2(passMaxY, 4);
 
         for (int sectionIndex = minSection; sectionIndex <= maxSection; sectionIndex++) {
             int sectionMinY = Math.max(minY, PowerOfTwoCoordinates.chunkToBlock(sectionIndex));
-            int sectionMaxY = Math.min(maxY, PowerOfTwoCoordinates.chunkToBlock(sectionIndex) + 15);
+            int sectionMaxY = Math.min(passMaxY, PowerOfTwoCoordinates.chunkToBlock(sectionIndex) + 15);
             MatterSlice<MatterCavern> cavernSlice = resolveCavernSlice(scratch, chunk, sectionIndex);
 
             for (int y = sectionMinY; y <= sectionMaxY; y++) {
@@ -579,6 +582,7 @@ public class IrisCaveCarver3D {
         int[] activeColumnIndices = scratch.activeColumnIndices;
         int[] activeColumnTopY = scratch.activeColumnTopY;
         int activeColumnCount = 0;
+        int activeMaxY = Integer.MIN_VALUE;
 
         for (int index = 0; index < 256; index++) {
             double columnWeight = clampedWeights[index];
@@ -590,6 +594,7 @@ public class IrisCaveCarver3D {
             passThreshold[index] = columnThreshold[index] + thresholdBoost - ((1D - columnWeight) * thresholdPenalty);
             activeColumnIndices[activeColumnCount] = index;
             activeColumnTopY[activeColumnCount] = columnMaxY[index];
+            activeMaxY = Math.max(activeMaxY, columnMaxY[index]);
             activeColumnCount++;
         }
 
@@ -601,7 +606,8 @@ public class IrisCaveCarver3D {
         double[] planeThresholdLimit = scratch.planeThresholdLimit;
         boolean[] planeCarve = scratch.planeCarve;
         int minSection = PowerOfTwoCoordinates.floorDivPow2(minY, 4);
-        int maxSection = PowerOfTwoCoordinates.floorDivPow2(maxY, 4);
+        int passMaxY = Math.min(maxY, activeMaxY);
+        int maxSection = PowerOfTwoCoordinates.floorDivPow2(passMaxY, 4);
         int effectiveAdaptiveSampleStep = Math.max(adaptiveSampleStep, ADAPTIVE_DEEP_SAMPLE_STEP);
         double effectiveAdaptiveThresholdMargin = resolveAdaptivePlaneThresholdMargin(
                 adaptiveThresholdMargin,
@@ -611,7 +617,7 @@ public class IrisCaveCarver3D {
 
         for (int sectionIndex = minSection; sectionIndex <= maxSection; sectionIndex++) {
             int sectionMinY = Math.max(minY, PowerOfTwoCoordinates.chunkToBlock(sectionIndex));
-            int sectionMaxY = Math.min(maxY, PowerOfTwoCoordinates.chunkToBlock(sectionIndex) + 15);
+            int sectionMaxY = Math.min(passMaxY, PowerOfTwoCoordinates.chunkToBlock(sectionIndex) + 15);
             MatterSlice<MatterCavern> cavernSlice = resolveCavernSlice(scratch, chunk, sectionIndex);
 
             for (int y = sectionMinY; y <= sectionMaxY; y++) {
@@ -1459,6 +1465,41 @@ public class IrisCaveCarver3D {
         }
     }
 
+    private void classifyDeepAdaptivePlaneFromSamples(
+            CaveCarveScratch scratch,
+            int[] planeColumnIndices,
+            double[] planeThresholdLimit,
+            int planeCount,
+            boolean[] planeCarve,
+            int adaptiveSampleStep,
+            double[] adaptivePlaneDensity,
+            int axisCells,
+            int axisSamples
+    ) {
+        prepareAdaptiveGeometry(scratch, adaptiveSampleStep, axisCells, axisSamples);
+        int[] adaptiveCellZ = scratch.adaptiveCellZ;
+        int[] adaptiveRow0 = scratch.adaptiveRow0;
+        int[] adaptiveRow1 = scratch.adaptiveRow1;
+        double[] adaptiveTx = scratch.adaptiveTx;
+        double[] adaptiveTz = scratch.adaptiveTz;
+        for (int planeIndex = 0; planeIndex < planeCount; planeIndex++) {
+            int columnIndex = planeColumnIndices[planeIndex];
+            int cellZ = adaptiveCellZ[columnIndex];
+            int row0 = adaptiveRow0[columnIndex];
+            int row1 = adaptiveRow1[columnIndex];
+            double tx = adaptiveTx[columnIndex];
+            double tz = adaptiveTz[columnIndex];
+            double d00 = adaptivePlaneDensity[row0 + cellZ];
+            double d01 = adaptivePlaneDensity[row0 + cellZ + 1];
+            double d10 = adaptivePlaneDensity[row1 + cellZ];
+            double d11 = adaptivePlaneDensity[row1 + cellZ + 1];
+            double dx0 = d00 + ((d10 - d00) * tx);
+            double dx1 = d01 + ((d11 - d01) * tx);
+            double predictedDensity = dx0 + ((dx1 - dx0) * tz);
+            planeCarve[planeIndex] = predictedDensity <= planeThresholdLimit[planeIndex] * inverseNormalization;
+        }
+    }
+
     private void classifyAdaptivePlaneColumnsWarpOnly(
             CaveCarveScratch scratch,
             int x0,
@@ -1615,6 +1656,21 @@ public class IrisCaveCarver3D {
             double[] remainingMin,
             double[] remainingMax
     ) {
+        if (adaptiveSampleStep >= ADAPTIVE_DEEP_SAMPLE_STEP) {
+            classifyDeepAdaptivePlaneFromSamples(
+                    scratch,
+                    planeColumnIndices,
+                    planeThresholdLimit,
+                    planeCount,
+                    planeCarve,
+                    adaptiveSampleStep,
+                    adaptivePlaneDensity,
+                    axisCells,
+                    axisSamples
+            );
+            return;
+        }
+
         double[] adaptivePlanePrediction = scratch.adaptivePlanePrediction;
         double[] adaptivePlaneAmbiguity = scratch.adaptivePlaneAmbiguity;
         prepareAdaptivePlaneColumns(
@@ -2235,17 +2291,29 @@ public class IrisCaveCarver3D {
         }
 
         int support = 0;
+        int misses = 0;
         if (isDensitySolid(scratch, x + 1, y, z, threshold)) {
             support++;
+        } else {
+            misses++;
         }
         if (isDensitySolid(scratch, x - 1, y, z, threshold)) {
             support++;
+        } else if (++misses >= 2) {
+            return false;
         }
         if (isDensitySolid(scratch, x, y, z + 1, threshold)) {
             support++;
+        } else if (++misses >= 2) {
+            return false;
         }
         if (isDensitySolid(scratch, x, y, z - 1, threshold)) {
             support++;
+            if (support >= 4) {
+                return true;
+            }
+        } else if (++misses >= 2) {
+            return false;
         }
         if (isDensitySolid(scratch, x, aboveY, z, threshold)) {
             support++;

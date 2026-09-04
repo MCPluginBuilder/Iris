@@ -13,8 +13,8 @@ import static org.junit.Assert.assertTrue;
 public class PregenTaskLatticeOrderTest {
     @Test
     public void regionOrderVisitsEveryChunkOnceInStrideSpacedLattices() {
-        KList<Position2> order = new KList<>();
-        PregenTask.iterateRegion(0, 0, (x, z) -> order.add(new Position2(x, z)));
+        KList<Position2> pulled = regionChunks();
+        KList<Position2> order = PregenTask.latticeOrder(pulled);
 
         assertEquals(1024, order.size());
         Set<Long> unique = new HashSet<>();
@@ -46,5 +46,41 @@ public class PregenTaskLatticeOrderTest {
             int distance = Math.max(Math.abs(previous.getX() - current.getX()), Math.abs(previous.getZ() - current.getZ()));
             assertTrue("consecutive chunks " + previous + " and " + current, distance >= PregenTask.CHUNK_LATTICE_STRIDE);
         }
+    }
+
+    @Test
+    public void centerRegionStartsAtThePullAndVisitsEveryChunk() {
+        KList<Position2> order = new KList<>();
+        PregenTask.iterateRegion(0, 0, (x, z) -> order.add(new Position2(x, z)));
+
+        assertEquals(1024, order.size());
+        assertEquals(new Position2(0, 0), order.get(0));
+        Set<Long> unique = new HashSet<>();
+        for (Position2 position : order) {
+            assertTrue(unique.add(((long) position.getX() << 32) ^ (position.getZ() & 0xffffffffL)));
+        }
+    }
+
+    @Test
+    public void taskCenterDeterminesTheContiguousRegionPull() {
+        PregenTask task = PregenTask.builder()
+                .center(new Position2(1_616, 80))
+                .radiusX(64)
+                .radiusZ(64)
+                .build();
+        KList<Position2> order = new KList<>();
+        task.iterateChunks(3, 0, (x, z) -> order.add(new Position2(x, z)));
+
+        assertEquals(new Position2(101, 5), order.get(0));
+    }
+
+    private KList<Position2> regionChunks() {
+        KList<Position2> chunks = new KList<>();
+        for (int x = 0; x < 32; x++) {
+            for (int z = 0; z < 32; z++) {
+                chunks.add(new Position2(x, z));
+            }
+        }
+        return chunks;
     }
 }

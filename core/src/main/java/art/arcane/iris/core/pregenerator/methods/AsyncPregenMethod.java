@@ -88,6 +88,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
     private final boolean urgent;
     private final ConcurrentHashMap<Long, AtomicInteger> regionPending;
     private final ConcurrentHashMap<Long, Queue<Chunk>> regionChunks;
+    private final Queue<CompletableFuture<Void>> pendingEvictions;
     private final KSet<Long> drainedRegions;
     private final KSet<Long> evictedRegions;
     private volatile int evictionWindowRegions;
@@ -166,6 +167,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         this.urgent = false;
         this.regionPending = new ConcurrentHashMap<>();
         this.regionChunks = new ConcurrentHashMap<>();
+        this.pendingEvictions = new ConcurrentLinkedQueue<>();
         this.drainedRegions = new KSet<>();
         this.evictedRegions = new KSet<>();
         this.evictionWindowRegions = -1;
@@ -173,7 +175,9 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         this.boundsMinRegionZ = Integer.MIN_VALUE;
         this.boundsMaxRegionX = Integer.MAX_VALUE;
         this.boundsMaxRegionZ = Integer.MAX_VALUE;
-        this.adaptiveInFlightLimit = new AtomicInteger(this.threads);
+        this.adaptiveInFlightLimit = new AtomicInteger(computeInitialInFlightLimit(
+                this.threads,
+                this.effectiveWorkerThreads));
         this.adaptiveMinInFlightLimit = Math.max(4, Math.min(16, Math.max(1, this.threads / 4)));
         int pregenWorldHeight = world.getMaxHeight() - world.getMinHeight();
         this.backpressure = new PregenMantleBackpressure(
@@ -280,30 +284,15 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         boundsMinRegionZ = minRegionZ;
         boundsMaxRegionX = maxRegionX;
         boundsMaxRegionZ = maxRegionZ;
-        prefetchHydrology(minRegionX, minRegionZ, maxRegionX, maxRegionZ);
     }
 
-    /**
-     * Plans the hydrology tiles of the whole area up front, nearest the centre first, so the spiral
-     * finds its tiles ready instead of stalling on each cold plan.
-     */
-    private void prefetchHydrology(int minRegionX, int minRegionZ, int maxRegionX, int maxRegionZ) {
+    @Override
+    public void onPregenStart(int centerBlockX, int centerBlockZ) {
         Engine engine = resolveMetricsEngine();
         if (engine == null || engine.getComplex() == null || engine.getComplex().getHydrologyRuntime() == null) {
             return;
         }
-        int minimumBlockX = minRegionX << 9;
-        int minimumBlockZ = minRegionZ << 9;
-        int maximumBlockX = ((maxRegionX + 1) << 9) - 1;
-        int maximumBlockZ = ((maxRegionZ + 1) << 9) - 1;
-        engine.getComplex().getHydrologyRuntime().prefetchArea(
-                minimumBlockX,
-                minimumBlockZ,
-                maximumBlockX,
-                maximumBlockZ,
-                (minimumBlockX + maximumBlockX) / 2,
-                (minimumBlockZ + maximumBlockZ) / 2
-        );
+        engine.getComplex().getHydrologyRuntime().preparePregeneration(centerBlockX, centerBlockZ);
     }
 
     private boolean inBounds(int rx, int rz) {
@@ -367,47 +356,22 @@ public class AsyncPregenMethod implements PregeneratorMethod {
         return true;
     }
 
-    private void evictRegion(long c) {
+    private CompletableFuture<Void> evictRegion(long c) {
         if (!evictedRegions.add(c)) {
-            return;
+            return CompletableFuture.completedFuture(null);
         }
 
         regionPending.remove(c);
         Queue<Chunk> chunks = regionChunks.remove(c);
         if (chunks == null || chunks.isEmpty()) {
-            return;
+            return CompletableFuture.completedFuture(null);
         }
 
-        try {
-            if (foliaRuntime) {
-                Chunk anchor = null;
-                for (Chunk chunk : chunks) {
-                    if (chunk == null) {
-                        continue;
-                    }
-
-                    if (anchor == null) {
-                        anchor = chunk;
-                    }
-
-                    int cx = chunk.getX();
-                    int cz = chunk.getZ();
-                    if (!J.runRegion(world, cx, cz, () -> unloadChunkSafely(cx, cz))) {
-                        unloadChunkSafely(cx, cz);
-                    }
-                }
-
-                if (anchor != null) {
-                    int ax = anchor.getX();
-                    int az = anchor.getZ();
-                    if (!J.runRegion(world, ax, az, () -> INMS.get().flushChunkIO(world))) {
-                        INMS.get().flushChunkIO(world);
-                    }
-                }
-                return;
-            }
-
-            J.s(() -> {
+        CompletableFuture<Void> eviction;
+        if (foliaRuntime) {
+            eviction = evictFoliaRegion(chunks);
+        } else {
+            eviction = J.sfut(() -> {
                 for (Chunk chunk : chunks) {
                     if (chunk != null) {
                         unloadChunkSafely(chunk.getX(), chunk.getZ());
@@ -416,9 +380,49 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
                 INMS.get().flushChunkIO(world);
             });
-        } catch (Throwable e) {
-            IrisLogging.reportError(e);
         }
+        return trackEviction(eviction);
+    }
+
+    private CompletableFuture<Void> evictFoliaRegion(Queue<Chunk> chunks) {
+        List<CompletableFuture<Void>> unloads = new ArrayList<>(chunks.size());
+        Chunk anchor = null;
+        for (Chunk chunk : chunks) {
+            if (chunk == null) {
+                continue;
+            }
+            if (anchor == null) {
+                anchor = chunk;
+            }
+
+            int chunkX = chunk.getX();
+            int chunkZ = chunk.getZ();
+            unloads.add(J.runRegionFuture(world, chunkX, chunkZ, () -> unloadChunkSafely(chunkX, chunkZ)));
+        }
+
+        CompletableFuture<Void> unloaded = CompletableFuture.allOf(unloads.toArray(CompletableFuture[]::new));
+        if (anchor == null) {
+            return unloaded;
+        }
+
+        int anchorX = anchor.getX();
+        int anchorZ = anchor.getZ();
+        return unloaded.thenCompose(ignored -> J.runRegionFuture(
+                world,
+                anchorX,
+                anchorZ,
+                () -> INMS.get().flushChunkIO(world)));
+    }
+
+    private CompletableFuture<Void> trackEviction(CompletableFuture<Void> eviction) {
+        pendingEvictions.add(eviction);
+        eviction.whenComplete((ignored, failure) -> {
+            pendingEvictions.remove(eviction);
+            if (failure != null) {
+                IrisLogging.reportError(failure);
+            }
+        });
+        return eviction;
     }
 
     private void unloadChunkSafely(int cx, int cz) {
@@ -438,36 +442,18 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
     private void flushAllRemainingChunks() {
         List<Long> keys = new ArrayList<>(regionChunks.keySet());
-
-        if (foliaRuntime) {
-            for (Long rk : keys) {
-                evictRegion(rk);
-            }
-            return;
+        List<CompletableFuture<Void>> evictions = new ArrayList<>(keys.size() + pendingEvictions.size());
+        for (Long regionKey : keys) {
+            evictions.add(evictRegion(regionKey));
         }
+        evictions.addAll(pendingEvictions);
 
-        CompletableFuture<Void> flush = J.sfut(() -> {
-            for (Long rk : keys) {
-                if (!evictedRegions.add(rk)) {
-                    continue;
-                }
-
-                regionPending.remove(rk);
-                Queue<Chunk> chunks = regionChunks.remove(rk);
-                if (chunks == null) {
-                    continue;
-                }
-
-                for (Chunk chunk : chunks) {
-                    if (chunk != null) {
-                        unloadChunkSafely(chunk.getX(), chunk.getZ());
-                    }
-                }
-            }
-
-            world.save();
-            INMS.get().flushChunkIO(world);
-        });
+        CompletableFuture<Void> evictionsComplete = CompletableFuture.allOf(
+                evictions.toArray(CompletableFuture[]::new));
+        CompletableFuture<Void> settledEvictions = evictionsComplete.handle((ignored, failure) -> null);
+        CompletableFuture<Void> flush = foliaRuntime
+                ? settledEvictions
+                : settledEvictions.thenCompose(ignored -> J.sfut(() -> INMS.get().flushChunkIO(world)));
 
         try {
             flush.get(FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -585,9 +571,7 @@ public class AsyncPregenMethod implements PregeneratorMethod {
                 return;
             }
 
-            int deficit = threads - current;
-            int step = deficit > (threads / 2) ? Math.max(2, threads / 8) : 1;
-            int next = Math.min(threads, current + step);
+            int next = nextAdaptiveInFlightLimit(current, threads);
             if (adaptiveInFlightLimit.compareAndSet(current, next)) {
                 logAdaptiveLimit("increase", next);
                 notifyPermitWaiters();
@@ -626,6 +610,15 @@ public class AsyncPregenMethod implements PregeneratorMethod {
 
     static int selectConcurrencyCap(int recommendedCap, boolean strictSerial) {
         return strictSerial ? 1 : Math.max(1, recommendedCap);
+    }
+
+    static int computeInitialInFlightLimit(int concurrencyCap, int workerThreads) {
+        int initial = Math.max(4, Math.max(1, workerThreads));
+        return Math.min(Math.max(1, concurrencyCap), initial);
+    }
+
+    static int nextAdaptiveInFlightLimit(int current, int concurrencyCap) {
+        return Math.min(Math.max(1, concurrencyCap), Math.max(1, current) + 1);
     }
 
     static int resolvePaperLikeConcurrencyWorkerThreads(int detectedWorkerPoolThreads, int detectedCpuThreads, int configuredWorldGenThreads) {

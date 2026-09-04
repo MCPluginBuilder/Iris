@@ -69,6 +69,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.nio.file.Path;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntConsumer;
 
@@ -168,9 +169,26 @@ public final class IrisHydrologyRuntime implements AutoCloseable {
         return cache.columnAt(blockX, blockZ);
     }
 
-    /** Plans every tile touching the block area ahead of time, nearest the centre first. */
+    /** Plans a bounded window of tiles touching the block area ahead of time, nearest the centre first. */
     public void prefetchArea(int minimumBlockX, int minimumBlockZ, int maximumBlockX, int maximumBlockZ, int centreBlockX, int centreBlockZ) {
         cache.prefetchArea(minimumBlockX, minimumBlockZ, maximumBlockX, maximumBlockZ, centreBlockX, centreBlockZ);
+    }
+
+    public void preparePregeneration(int centerBlockX, int centerBlockZ) {
+        cache.preparePregeneration(centerBlockX, centerBlockZ);
+    }
+
+    public void setNeighbourPrefetchEnabled(boolean enabled) {
+        cache.setNeighbourPrefetchEnabled(enabled);
+    }
+
+    public void enableSharedCache(String runtimeIdentity, Path persistentRoot) {
+        cache.enableSharedCache(new HydrologyTileCache.SharedCacheScope(
+                runtimeIdentity,
+                context.seed(),
+                context.worldHeight(),
+                context.dimension().getLoadKey(),
+                settings.fingerprint()), persistentRoot);
     }
 
     public void prepareChunkColumns(int blockX, int blockZ) {

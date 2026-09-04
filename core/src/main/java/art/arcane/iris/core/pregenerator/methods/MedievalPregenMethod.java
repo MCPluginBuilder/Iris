@@ -19,6 +19,7 @@
 package art.arcane.iris.core.pregenerator.methods;
 
 import art.arcane.iris.core.IrisSettings;
+import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.pregenerator.PregenListener;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
 import art.arcane.iris.core.tools.IrisToolbelt;
@@ -123,7 +124,7 @@ public class MedievalPregenMethod implements PregeneratorMethod {
         futures.clear();
     }
 
-    private void unloadAndSaveAllChunks(boolean saveWorld) {
+    private void unloadAndSaveAllChunks(boolean flushChunkIo) {
         if (J.isFolia()) {
             lastUse.clear();
             return;
@@ -138,12 +139,12 @@ public class MedievalPregenMethod implements PregeneratorMethod {
             for (Chunk i : new ArrayList<>(lastUse.keySet())) {
                 Long lastUseTime = lastUse.get(i);
                 if (lastUseTime != null && M.ms() - lastUseTime >= 10) {
-                    i.unload();
+                    i.unload(true);
                     lastUse.remove(i);
                 }
             }
-            if (saveWorld) {
-                world.save();
+            if (flushChunkIo) {
+                INMS.get().flushChunkIO(world);
             }
         });
 

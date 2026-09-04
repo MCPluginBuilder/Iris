@@ -83,6 +83,9 @@ public interface PregeneratorMethod {
     default void onRegionBounds(int minRegionX, int minRegionZ, int maxRegionX, int maxRegionZ) {
     }
 
+    default void onPregenStart(int centerBlockX, int centerBlockZ) {
+    }
+
     default void onRegionSubmitted(int regionX, int regionZ) {
     }
 

@@ -111,6 +111,11 @@ final class IrisHydrologyRoutingTerrainSampler implements HydrologyNaturalTerrai
         return basis.terrain().withSlope(localSlope(blockX, blockZ, basis.naturalHeight()));
     }
 
+    @Override
+    public HydrologyTerrainSample sampleBasisWithoutSlope(int blockX, int blockZ) {
+        return basis(blockX, blockZ).terrain();
+    }
+
     TerrainBasis basis(int blockX, int blockZ) {
         long packed = pack(blockX, blockZ);
         synchronized (lock) {

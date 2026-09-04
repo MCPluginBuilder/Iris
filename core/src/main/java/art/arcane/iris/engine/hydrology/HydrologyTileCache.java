@@ -1,49 +1,70 @@
 package art.arcane.iris.engine.hydrology;
 
 import art.arcane.iris.spi.IrisLogging;
+import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.volmlib.util.cache.CacheKey;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 public final class HydrologyTileCache implements AutoCloseable {
     private static final int DEFAULT_MAXIMUM_ENTRIES = 64;
+    private static final int MAXIMUM_SHARED_ENTRIES = 8;
     private static final int MAXIMUM_COMPOSED_CHUNKS = 256;
     private static final int CHUNK_SIZE = 16;
     private static final int CHUNK_COLUMN_COUNT = CHUNK_SIZE * CHUNK_SIZE;
+    private static final Cache<SharedTileKey, HydrologyTile> SHARED_TILES = Caffeine.newBuilder()
+            .maximumSize(MAXIMUM_SHARED_ENTRIES)
+            .expireAfterAccess(10, TimeUnit.MINUTES)
+            .build();
 
     private final HydrologyPlanner planner;
     private final int maximumEntries;
     private final Cache<HydrologyTileKey, HydrologyTile> tiles;
     private final Cache<Long, ChunkColumns> composedChunks;
     private final AtomicLong cacheEpoch;
+    private final AtomicBoolean closed;
     private final ThreadLocal<LocalChunkColumns> localChunkColumns;
     private final Executor prefetchExecutor;
+    private final ConcurrentLinkedQueue<HydrologyTileKey> prefetchQueue;
+    private final Set<HydrologyTileKey> queuedPrefetches;
+    private final AtomicBoolean prefetchActive;
     private final ConcurrentHashMap<HydrologyTileKey, CompletableFuture<HydrologyTile>> planning;
     private final BooleanSupplier waitingForbidden;
+    private volatile SharedCacheScope sharedCacheScope;
+    private volatile StudioHydrologyTileStore persistentStore;
+    private volatile boolean neighbourPrefetchEnabled;
 
     public HydrologyTileCache(HydrologyPlanner planner) {
-        this(planner, DEFAULT_MAXIMUM_ENTRIES);
+        this(planner, DEFAULT_MAXIMUM_ENTRIES, null, null, null);
     }
 
     public HydrologyTileCache(HydrologyPlanner planner, int maximumEntries) {
-        this(planner, maximumEntries, null);
+        this(planner, maximumEntries, null, null, null);
     }
 
     public HydrologyTileCache(HydrologyPlanner planner, int maximumEntries, Executor prefetchExecutor) {
-        this(planner, maximumEntries, prefetchExecutor, null);
+        this(planner, maximumEntries, prefetchExecutor, null, null);
     }
 
     /**
@@ -59,14 +80,29 @@ public final class HydrologyTileCache implements AutoCloseable {
             Executor prefetchExecutor,
             BooleanSupplier waitingForbidden
     ) {
+        this(planner, maximumEntries, prefetchExecutor, waitingForbidden, null);
+    }
+
+    public HydrologyTileCache(
+            HydrologyPlanner planner,
+            int maximumEntries,
+            Executor prefetchExecutor,
+            BooleanSupplier waitingForbidden,
+            SharedCacheScope sharedCacheScope
+    ) {
         this.planner = Objects.requireNonNull(planner, "planner");
         this.prefetchExecutor = prefetchExecutor;
         this.waitingForbidden = waitingForbidden;
+        this.sharedCacheScope = sharedCacheScope;
+        this.persistentStore = null;
         this.planning = new ConcurrentHashMap<>();
         if (maximumEntries < 1) {
             throw new IllegalArgumentException("maximumEntries must be positive.");
         }
         this.maximumEntries = maximumEntries;
+        this.prefetchQueue = new ConcurrentLinkedQueue<>();
+        this.queuedPrefetches = ConcurrentHashMap.newKeySet();
+        this.prefetchActive = new AtomicBoolean();
         this.tiles = Caffeine.newBuilder()
                 .maximumSize(maximumEntries)
                 .build();
@@ -74,7 +110,9 @@ public final class HydrologyTileCache implements AutoCloseable {
                 .maximumSize(MAXIMUM_COMPOSED_CHUNKS)
                 .build();
         this.cacheEpoch = new AtomicLong();
+        this.closed = new AtomicBoolean();
         this.localChunkColumns = new ThreadLocal<>();
+        this.neighbourPrefetchEnabled = true;
     }
 
     /**
@@ -87,17 +125,16 @@ public final class HydrologyTileCache implements AutoCloseable {
         if (prefetchExecutor == null || plansInline()) {
             return planInline(key);
         }
-        return awaitTile(planAsync(key));
+        return awaitTile(planDemandAsync(key));
     }
 
-    /**
-     * A pool worker plans on its own thread. Parking the workers of one pool on tasks of another is how
-     * two saturated pools deadlock each other (generation workers waiting for planning that waits for
-     * generation workers), and a ForkJoin worker keeps the planner's nested fan-out alive by helping
-     * with its own forks instead of waiting for them.
-     */
-    private static boolean plansInline() {
-        return Thread.currentThread() instanceof ForkJoinWorkerThread;
+    private boolean plansInline() {
+        if (prefetchExecutor instanceof MultiBurst burst) {
+            return burst.ownsCurrentThread();
+        }
+        return prefetchExecutor instanceof ForkJoinPool pool
+                && Thread.currentThread() instanceof ForkJoinWorkerThread worker
+                && worker.getPool() == pool;
     }
 
     private HydrologyTile planInline(HydrologyTileKey key) {
@@ -116,8 +153,45 @@ public final class HydrologyTileCache implements AutoCloseable {
      * cached so the next request plans it again.
      */
     private HydrologyTile planOrEmpty(HydrologyTileKey key) {
+        long planningEpoch = cacheEpoch.get();
+        SharedTileKey sharedKey = sharedCacheScope == null ? null : new SharedTileKey(sharedCacheScope, key);
+        HydrologyTile shared = sharedKey == null ? null : SHARED_TILES.getIfPresent(sharedKey);
+        if (shared != null && validSharedTile(shared, sharedKey)) {
+            planner.reuseResolvedTile(shared);
+            IrisLogging.debug("Reused shared Studio hydrology tile %d,%d", key.tileX(), key.tileZ());
+            return shared;
+        }
+        if (shared != null) {
+            SHARED_TILES.invalidate(sharedKey);
+        }
+        StudioHydrologyTileStore store = persistentStore;
+        if (store != null && persistentStudioKey(key)) {
+            HydrologyTile persisted = store.load(key).orElse(null);
+            if (persisted != null) {
+                SHARED_TILES.put(sharedKey, persisted);
+                planner.reuseResolvedTile(persisted);
+                IrisLogging.debug("Loaded persisted Studio hydrology tile %d,%d", key.tileX(), key.tileZ());
+                return persisted;
+            }
+        }
         try {
-            return planner.plan(key);
+            HydrologyTile planned = planner.plan(key);
+            if (sharedKey != null && !closed.get() && planningEpoch == cacheEpoch.get()) {
+                HydrologyTile existing = SHARED_TILES.asMap().putIfAbsent(sharedKey, planned);
+                if (existing == null) {
+                    IrisLogging.debug("Published shared Studio hydrology tile %d,%d", key.tileX(), key.tileZ());
+                }
+            }
+            if (store != null && persistentStudioKey(key) && !closed.get() && planningEpoch == cacheEpoch.get()) {
+                try {
+                    store.save(planned);
+                    IrisLogging.debug("Persisted Studio hydrology tile %d,%d", key.tileX(), key.tileZ());
+                } catch (IOException failure) {
+                    IrisLogging.reportError("Failed to persist Studio hydrology tile "
+                            + key.tileX() + "," + key.tileZ() + ".", failure);
+                }
+            }
+            return planned;
         } catch (RuntimeException failure) {
             if (interrupted(failure)) {
                 throw failure;
@@ -205,6 +279,10 @@ public final class HydrologyTileCache implements AutoCloseable {
     public void clear() {
         cacheEpoch.incrementAndGet();
         planner.clearOwnerDrafts();
+        synchronized (prefetchQueue) {
+            prefetchQueue.clear();
+            queuedPrefetches.clear();
+        }
         tiles.invalidateAll();
         composedChunks.invalidateAll();
         localChunkColumns.remove();
@@ -219,9 +297,54 @@ public final class HydrologyTileCache implements AutoCloseable {
         return maximumEntries;
     }
 
+    public void setNeighbourPrefetchEnabled(boolean enabled) {
+        neighbourPrefetchEnabled = enabled;
+    }
+
+    public void preparePregeneration(int centerBlockX, int centerBlockZ) {
+        neighbourPrefetchEnabled = true;
+        int tileSize = planner.settings().routing().tileSize();
+        prefetchArea(
+                Math.subtractExact(centerBlockX, tileSize),
+                Math.subtractExact(centerBlockZ, tileSize),
+                Math.addExact(centerBlockX, tileSize),
+                Math.addExact(centerBlockZ, tileSize),
+                centerBlockX,
+                centerBlockZ
+        );
+    }
+
+    public void enableSharedCache(SharedCacheScope scope, Path persistentRoot) {
+        if (closed.get()) {
+            throw new IllegalStateException("Hydrology tile cache is closed.");
+        }
+        sharedCacheScope = Objects.requireNonNull(scope, "scope");
+        persistentStore = persistentRoot == null
+                ? null
+                : new StudioHydrologyTileStore(persistentRoot, scope, planner.settings().routing().tileSize());
+    }
+
+    private boolean persistentStudioKey(HydrologyTileKey key) {
+        int tileSize = planner.settings().routing().tileSize();
+        int publicationRadius = planner.settings().publicationRadius();
+        int minimumTile = Math.subtractExact(tileCoordinate(-(long) publicationRadius, tileSize), 1);
+        int maximumTile = Math.addExact(tileCoordinate(CHUNK_SIZE - 1L + publicationRadius, tileSize), 1);
+        return key.tileX() >= minimumTile && key.tileX() <= maximumTile
+                && key.tileZ() >= minimumTile && key.tileZ() <= maximumTile;
+    }
+
     @Override
     public void close() {
+        closed.set(true);
         clear();
+    }
+
+    private boolean validSharedTile(HydrologyTile tile, SharedTileKey sharedKey) {
+        SharedCacheScope scope = sharedKey.scope();
+        return tile.key().equals(sharedKey.tileKey())
+                && tile.worldSeed() == scope.worldSeed()
+                && tile.settingsFingerprint() == scope.settingsFingerprint()
+                && tile.tileSize() == planner.settings().routing().tileSize();
     }
 
     private ChunkColumns chunkColumns(int blockX, int blockZ) {
@@ -306,7 +429,7 @@ public final class HydrologyTileCache implements AutoCloseable {
      * needs before its prefetch finishes simply joins that computation.
      */
     private void prefetchNeighbours(int minimumTileX, int maximumTileX, int minimumTileZ, int maximumTileZ) {
-        if (prefetchExecutor == null) {
+        if (prefetchExecutor == null || !neighbourPrefetchEnabled) {
             return;
         }
         for (int tileZ = minimumTileZ - 1; tileZ <= maximumTileZ + 1; tileZ++) {
@@ -319,11 +442,7 @@ public final class HydrologyTileCache implements AutoCloseable {
         }
     }
 
-    /**
-     * Plans every tile that touches the block area, nearest to the centre first, on the prefetch
-     * executor. A pregeneration calls this once up front so its spiral never waits on a cold plan
-     * once the first tiles are in; nothing happens without a prefetch executor.
-     */
+    /** Plans tiles that touch the block area in nearest-first order without flooding the planner. */
     public void prefetchArea(int minimumBlockX, int minimumBlockZ, int maximumBlockX, int maximumBlockZ, int centreBlockX, int centreBlockZ) {
         if (prefetchExecutor == null) {
             return;
@@ -342,16 +461,70 @@ public final class HydrologyTileCache implements AutoCloseable {
                 keys.add(new HydrologyTileKey(tileX, tileZ));
             }
         }
-        keys.sort(java.util.Comparator.comparingInt((HydrologyTileKey key) -> Math.max(Math.abs(key.tileX() - centreTileX), Math.abs(key.tileZ() - centreTileZ)))
+        keys.sort(Comparator.comparingInt((HydrologyTileKey key) -> Math.max(Math.abs(key.tileX() - centreTileX), Math.abs(key.tileZ() - centreTileZ)))
                 .thenComparingInt(HydrologyTileKey::tileZ)
                 .thenComparingInt(HydrologyTileKey::tileX));
         for (HydrologyTileKey key : keys) {
-            prefetch(key);
+            if (!prefetch(key) && speculativeEntryCount() >= maximumEntries) {
+                break;
+            }
         }
     }
 
-    private void prefetch(HydrologyTileKey key) {
-        planAsync(key);
+    private boolean prefetch(HydrologyTileKey key) {
+        synchronized (prefetchQueue) {
+            if (closed.get()
+                    || tiles.getIfPresent(key) != null
+                    || planning.containsKey(key)
+                    || queuedPrefetches.contains(key)
+                    || speculativeEntryCount() >= maximumEntries) {
+                return false;
+            }
+            queuedPrefetches.add(key);
+            prefetchQueue.add(key);
+        }
+        pumpPrefetch();
+        return true;
+    }
+
+    private int speculativeEntryCount() {
+        tiles.cleanUp();
+        return Math.toIntExact(Math.min(
+                maximumEntries,
+                tiles.estimatedSize() + planning.size() + queuedPrefetches.size()
+        ));
+    }
+
+    private void pumpPrefetch() {
+        if (prefetchExecutor == null || closed.get() || !prefetchActive.compareAndSet(false, true)) {
+            return;
+        }
+        scheduleNextPrefetch();
+    }
+
+    private void scheduleNextPrefetch() {
+        HydrologyTileKey key = pollPrefetch();
+        if (key == null || closed.get()) {
+            prefetchActive.set(false);
+            if (!prefetchQueue.isEmpty()) {
+                pumpPrefetch();
+            }
+            return;
+        }
+        planAsync(key).whenComplete((tile, failure) -> scheduleNextPrefetch());
+    }
+
+    private HydrologyTileKey pollPrefetch() {
+        HydrologyTileKey key;
+        while ((key = prefetchQueue.poll()) != null) {
+            if (!queuedPrefetches.remove(key)) {
+                continue;
+            }
+            if (tiles.getIfPresent(key) == null) {
+                return key;
+            }
+        }
+        return null;
     }
 
     /**
@@ -375,7 +548,7 @@ public final class HydrologyTileCache implements AutoCloseable {
             int end = Math.min(loaded.length, start + batch);
             futures.clear();
             for (int index = start; index < end; index++) {
-                futures.add(planAsync(keys.get(index)));
+                futures.add(planDemandAsync(keys.get(index)));
             }
             for (int index = start; index < end; index++) {
                 loaded[index] = awaitTile(futures.get(index - start));
@@ -414,6 +587,11 @@ public final class HydrologyTileCache implements AutoCloseable {
             future.completeExceptionally(rejected);
         }
         return future;
+    }
+
+    private CompletableFuture<HydrologyTile> planDemandAsync(HydrologyTileKey key) {
+        queuedPrefetches.remove(key);
+        return planAsync(key);
     }
 
     private static HydrologyTile awaitTile(CompletableFuture<HydrologyTile> future) {
@@ -517,5 +695,28 @@ public final class HydrologyTileCache implements AutoCloseable {
     }
 
     private record LocalChunkColumns(long epoch, ChunkColumns columns) {
+    }
+
+    public record SharedCacheScope(
+            String runtimeIdentity,
+            long worldSeed,
+            int worldHeight,
+            String dimensionKey,
+            long settingsFingerprint
+    ) {
+        public SharedCacheScope {
+            if (runtimeIdentity == null || runtimeIdentity.isBlank()) {
+                throw new IllegalArgumentException("Hydrology shared cache runtime identity is required.");
+            }
+            if (worldHeight < 3) {
+                throw new IllegalArgumentException("Hydrology shared cache world height must be at least three.");
+            }
+            if (dimensionKey == null || dimensionKey.isBlank()) {
+                throw new IllegalArgumentException("Hydrology shared cache dimension key is required.");
+            }
+        }
+    }
+
+    private record SharedTileKey(SharedCacheScope scope, HydrologyTileKey tileKey) {
     }
 }

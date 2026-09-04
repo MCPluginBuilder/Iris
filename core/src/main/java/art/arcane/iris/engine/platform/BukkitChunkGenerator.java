@@ -240,23 +240,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         return new Location(world, 0.5D, y, 0.5D);
     }
 
-    private int hydrologyTileSize() {
-        Engine activeEngine = engine;
-        if (activeEngine == null || activeEngine.getComplex() == null || activeEngine.getComplex().getHydrologyRuntime() == null) {
-            return 0;
-        }
-        return activeEngine.getComplex().getHydrologyRuntime().settings().routing().tileSize();
-    }
-
-    /**
-     * Starts planning the hydrology tiles around the initial spawn as soon as the generator is injected
-     * into a world whose spawn chunk does not exist yet. The first teleport there makes the chunk system
-     * generate chunks a few hundred blocks around the spawn, and each of those chunks' mantle windows
-     * reaches further still, so the area planned ahead is half a tile in every direction: every tile a
-     * cold entry can touch starts planning at once instead of one generation thread at a time finding
-     * it cold. A world that already generated its spawn (every existing world at boot, a hotloaded live
-     * world) skips it.
-     */
+    /** Starts nearest-first hydrology planning around a new world's initial spawn. */
     private void prefetchSpawnHydrology(Engine engine, World world) {
         if (engine.getComplex() == null || engine.getComplex().getHydrologyRuntime() == null) {
             return;
@@ -276,6 +260,14 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                 spawnX,
                 spawnZ
         );
+    }
+
+    private int hydrologyTileSize() {
+        Engine activeEngine = engine;
+        if (activeEngine == null || activeEngine.getComplex() == null || activeEngine.getComplex().getHydrologyRuntime() == null) {
+            return 0;
+        }
+        return activeEngine.getComplex().getHydrologyRuntime().settings().routing().tileSize();
     }
 
     private void updateSpawnLocation(World world) {

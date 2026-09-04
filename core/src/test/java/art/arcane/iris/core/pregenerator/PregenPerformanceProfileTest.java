@@ -5,19 +5,20 @@ import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.project.stream.utility.CachedDoubleStream2D;
 import art.arcane.iris.util.project.stream.utility.CachedStream2D;
 import org.junit.Test;
-import static org.junit.Assert.assertFalse;
-import art.arcane.iris.util.common.parallel.MultiBurst;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -84,15 +85,47 @@ public class PregenPerformanceProfileTest {
         }
     }
 
+    @Test
+    public void liveHeightCacheGrowsWithoutRebuildingTheEngine() {
+        IrisSettings previousSettings = IrisSettings.settings;
+        String previousFastCache = System.getProperty("iris.cache.fast");
+        IrisSettings.settings = new IrisSettings();
+        System.setProperty("iris.cache.fast", "true");
+        Engine engine = mock(Engine.class);
+        IrisComplex complex = mock(IrisComplex.class);
+        CachedDoubleStream2D heightStream = mock(CachedDoubleStream2D.class);
+        CachedDoubleStream2D naturalHeightStream = mock(CachedDoubleStream2D.class);
+        CachedStream2D<IrisBiome> caveBiomeStream = mock(CachedStream2D.class);
+        PlatformChunkGenerator generator = generatorFor(engine);
+        when(engine.getComplex()).thenReturn(complex);
+        when(complex.getHeightStream()).thenReturn(heightStream);
+        when(complex.getNaturalHeightStream()).thenReturn(naturalHeightStream);
+        when(complex.getCaveBiomeStream()).thenReturn(caveBiomeStream);
+        when(caveBiomeStream.usesFastCache()).thenReturn(true);
+        try {
+            PregenPerformanceProfile.applyToGenerator(generator);
+
+            verify(heightStream, times(1)).setMaximumChunks(4_096);
+            verify(naturalHeightStream, times(1)).setMaximumChunks(4_096);
+            verify(generator, never()).hotloadComplexAsync(30L, TimeUnit.SECONDS);
+            verify(engine, never()).hotloadComplex();
+        } finally {
+            restore(previousSettings, previousFastCache);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static Engine engineWithProfile(int cacheSize, boolean fastCache) {
         Engine engine = mock(Engine.class);
         IrisComplex complex = mock(IrisComplex.class);
         CachedDoubleStream2D heightStream = mock(CachedDoubleStream2D.class);
+        CachedDoubleStream2D naturalHeightStream = mock(CachedDoubleStream2D.class);
         CachedStream2D<IrisBiome> caveBiomeStream = mock(CachedStream2D.class);
         when(heightStream.getMaxSize()).thenReturn((long) cacheSize * 256L);
+        when(naturalHeightStream.getMaxSize()).thenReturn((long) cacheSize * 256L);
         when(caveBiomeStream.usesFastCache()).thenReturn(fastCache);
         when(complex.getHeightStream()).thenReturn(heightStream);
+        when(complex.getNaturalHeightStream()).thenReturn(naturalHeightStream);
         when(complex.getCaveBiomeStream()).thenReturn(caveBiomeStream);
         when(engine.getComplex()).thenReturn(complex);
         return engine;

@@ -57,6 +57,21 @@ public class AsyncPregenMethodConcurrencyCapTest {
     }
 
     @Test
+    public void coldStartMatchesAvailableWorkersBeforeAdaptiveGrowth() {
+        assertEquals(1, AsyncPregenMethod.computeInitialInFlightLimit(1, 16));
+        assertEquals(4, AsyncPregenMethod.computeInitialInFlightLimit(128, 1));
+        assertEquals(16, AsyncPregenMethod.computeInitialInFlightLimit(128, 16));
+        assertEquals(6, AsyncPregenMethod.computeInitialInFlightLimit(6, 16));
+    }
+
+    @Test
+    public void adaptiveRecoveryGrowsWithoutSubmittingColdWaves() {
+        assertEquals(17, AsyncPregenMethod.nextAdaptiveInFlightLimit(16, 128));
+        assertEquals(128, AsyncPregenMethod.nextAdaptiveInFlightLimit(128, 128));
+        assertEquals(1, AsyncPregenMethod.nextAdaptiveInFlightLimit(0, 0));
+    }
+
+    @Test
     public void slowRequestObservationDoesNotCompleteOrReplacePendingFuture() {
         CompletableFuture<String> request = new CompletableFuture<>();
         AtomicInteger slowRequests = new AtomicInteger();

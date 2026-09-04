@@ -1014,14 +1014,20 @@ public class HydrologyFootprintCompilerTest {
                 List.of(surface, cave)
         );
         HydrologyTerrainSample terrain = HydrologyTerrainSample.openLand(80, 1D, "parent");
+        AtomicInteger terrainSamples = new AtomicInteger();
+        HydrologyTerrainSampler sampler = (int x, int z) -> {
+            terrainSamples.incrementAndGet();
+            return terrain;
+        };
         HydrologyFootprintCompiler compiler = new HydrologyFootprintCompiler(
                 HydrologyPlannerSettings.defaults(),
-                (int x, int z) -> terrain,
+                sampler,
                 request -> request.minimum()
         );
 
         HydrologyFootprintCompiler.ValidationRaster first = compiler.compileValidation(List.of(course));
         HydrologyFootprintCompiler.ValidationRaster retry = compiler.compileValidation(List.of(course));
+        int validationSamples = terrainSamples.get();
 
         assertEquals(0, compiler.fullMaterializationCount());
         assertEquals(first.columns(), retry.columns());
@@ -1030,8 +1036,15 @@ public class HydrologyFootprintCompilerTest {
         ).anyMatch((HydrologyColumnLayer layer) -> layer.feature().segmentId() == cave.id()));
 
         RiverFootprint footprint = compiler.compile(List.of(course));
+        RiverFootprint freshFootprint = new HydrologyFootprintCompiler(
+                HydrologyPlannerSettings.defaults(),
+                (int x, int z) -> terrain,
+                request -> request.minimum()
+        ).compile(List.of(course));
 
         assertEquals(1, compiler.fullMaterializationCount());
+        assertEquals(validationSamples, terrainSamples.get());
+        assertEquals(freshFootprint, footprint);
         for (HydrologyColumnSample sample : footprint.columns().values()) {
             assertEquals(
                     "planned surface at " + sample.x() + "," + sample.z(),

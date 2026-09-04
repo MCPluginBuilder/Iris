@@ -26,9 +26,11 @@ import org.junit.Test;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,6 +51,9 @@ public class IrisCaveCarver3DNearParityTest {
 
     private static Method sampleDensityMethod;
     private static Method aquiferCandidateMethod;
+    private static Method aquiferCupSupportMethod;
+    private static Method deepAdaptivePlaneMethod;
+    private static Field baseDensityField;
     private static Field engineField;
     private static Field dataField;
     private static Field profileField;
@@ -65,6 +70,24 @@ public class IrisCaveCarver3DNearParityTest {
         sampleDensityMethod.setAccessible(true);
         aquiferCandidateMethod = IrisCaveCarver3D.class.getDeclaredMethod("isAquiferCandidate", int.class, int.class, int.class, double.class);
         aquiferCandidateMethod.setAccessible(true);
+        aquiferCupSupportMethod = IrisCaveCarver3D.class.getDeclaredMethod(
+                "hasAquiferCupSupport", CaveCarveScratch.class, int.class, int.class, int.class, double.class);
+        aquiferCupSupportMethod.setAccessible(true);
+        deepAdaptivePlaneMethod = IrisCaveCarver3D.class.getDeclaredMethod(
+                "classifyDeepAdaptivePlaneFromSamples",
+                CaveCarveScratch.class,
+                int[].class,
+                double[].class,
+                int.class,
+                boolean[].class,
+                int.class,
+                double[].class,
+                int.class,
+                int.class
+        );
+        deepAdaptivePlaneMethod.setAccessible(true);
+        baseDensityField = IrisCaveCarver3D.class.getDeclaredField("baseDensity");
+        baseDensityField.setAccessible(true);
         engineField = IrisCaveCarver3D.class.getDeclaredField("engine");
         engineField.setAccessible(true);
         dataField = IrisCaveCarver3D.class.getDeclaredField("data");
@@ -198,6 +221,145 @@ public class IrisCaveCarver3DNearParityTest {
     @Test
     public void exactPathMatchesNaiveReferenceWithWarpAndModules() throws Exception {
         assertExactParity(true, true, false);
+    }
+
+    @Test
+    public void exactPathMatchesNaiveReferenceWhenProfileCeilingExceedsTerrain() throws Exception {
+        Engine engine = createEngine(256, 64);
+        double[] columnWeights = fullWeights();
+        int[] precomputedSurfaceHeights = filledHeights(64);
+        IrisCaveProfile optimizedProfile = createProfile(true, true)
+                .setVerticalRange(new IrisRange(0D, 220D))
+                .setAllowSurfaceBreak(false)
+                .setAdaptiveSampling(false);
+        IrisCaveCarver3D optimizedCarver = new IrisCaveCarver3D(engine, optimizedProfile);
+        WriterCapture optimizedCapture = createWriterCapture(256);
+        int optimizedCarved = optimizedCarver.carve(
+                optimizedCapture.writer, 5, -1, columnWeights, 0D, 0D, null, precomputedSurfaceHeights);
+
+        IrisCaveProfile referenceProfile = createProfile(true, true)
+                .setVerticalRange(new IrisRange(0D, 220D))
+                .setAllowSurfaceBreak(false)
+                .setAdaptiveSampling(false);
+        IrisCaveCarver3D referenceCarver = new IrisCaveCarver3D(engine, referenceProfile);
+        WriterCapture referenceCapture = createWriterCapture(256);
+        int referenceCarved = carveNaiveExact(
+                referenceCarver, referenceCapture.writer, 5, -1, columnWeights, null, precomputedSurfaceHeights);
+
+        assertEquals(referenceCarved, optimizedCarved);
+        assertEquals(referenceCapture.carvedCells, optimizedCapture.carvedCells);
+        assertEquals(referenceCapture.carvedLiquids, optimizedCapture.carvedLiquids);
+    }
+
+    @Test
+    public void deepAdaptiveSampleClassifierMatchesLegacyDecisionTree() throws Exception {
+        IrisCaveProfile profile = createProfile(true, true);
+        IrisCaveCarver3D carver = new IrisCaveCarver3D(createEngine(128, 92), profile);
+        CaveCarveScratch scratch = new CaveCarveScratch();
+        int adaptiveSampleStep = 8;
+        int axisCells = 2;
+        int axisSamples = 3;
+        int[] planeColumnIndices = new int[256];
+        double[] planeThresholdLimit = new double[256];
+        boolean[] planeCarve = new boolean[256];
+        double[] adaptivePlaneDensity = scratch.adaptivePlaneDensity;
+        for (int index = 0; index < planeColumnIndices.length; index++) {
+            planeColumnIndices[index] = index;
+            planeThresholdLimit[index] = ((index % 17) - 8) * 0.11D;
+            planeCarve[index] = (index & 1) == 0;
+        }
+        for (int index = 0; index < axisSamples * axisSamples; index++) {
+            adaptivePlaneDensity[index] = ((index * 13) % 19 - 9) * 0.14D;
+        }
+
+        deepAdaptivePlaneMethod.invoke(
+                carver,
+                scratch,
+                planeColumnIndices,
+                planeThresholdLimit,
+                planeColumnIndices.length,
+                planeCarve,
+                adaptiveSampleStep,
+                adaptivePlaneDensity,
+                axisCells,
+                axisSamples
+        );
+
+        double normalization = Math.abs(profile.getBaseWeight()) + Math.abs(profile.getDetailWeight());
+        for (IrisCaveFieldModule module : profile.getModules()) {
+            normalization += Math.abs(module.getWeight());
+        }
+        double inverseNormalization = 1D / normalization;
+        double adaptiveThresholdMargin = 0.19D;
+        for (int columnIndex = 0; columnIndex < planeColumnIndices.length; columnIndex++) {
+            int localX = columnIndex >> 4;
+            int localZ = columnIndex & 15;
+            int cellX = Math.min(localX / adaptiveSampleStep, axisCells - 1);
+            int cellZ = Math.min(localZ / adaptiveSampleStep, axisCells - 1);
+            int x0 = cellX * adaptiveSampleStep;
+            int z0 = cellZ * adaptiveSampleStep;
+            int x1 = Math.min(x0 + adaptiveSampleStep, 16);
+            int z1 = Math.min(z0 + adaptiveSampleStep, 16);
+            double tx = x1 == x0 ? 0D : (localX - x0) / (double) (x1 - x0);
+            double tz = z1 == z0 ? 0D : (localZ - z0) / (double) (z1 - z0);
+            int row0 = cellX * axisSamples;
+            int row1 = (cellX + 1) * axisSamples;
+            double d00 = adaptivePlaneDensity[row0 + cellZ];
+            double d01 = adaptivePlaneDensity[row0 + cellZ + 1];
+            double d10 = adaptivePlaneDensity[row1 + cellZ];
+            double d11 = adaptivePlaneDensity[row1 + cellZ + 1];
+            double dx0 = d00 + ((d10 - d00) * tx);
+            double dx1 = d01 + ((d11 - d01) * tx);
+            double predictedDensity = dx0 + ((dx1 - dx0) * tz);
+            double threshold = planeThresholdLimit[columnIndex] * inverseNormalization;
+            double minDensity = Math.min(Math.min(d00, d01), Math.min(d10, d11));
+            double maxDensity = Math.max(Math.max(d00, d01), Math.max(d10, d11));
+            double ambiguityMargin = adaptiveThresholdMargin + ((maxDensity - minDensity) * 0.125D);
+            boolean expected;
+            if (localX % adaptiveSampleStep == 0 && localZ % adaptiveSampleStep == 0) {
+                expected = predictedDensity <= threshold;
+            } else if (predictedDensity <= threshold - ambiguityMargin) {
+                expected = true;
+            } else if (predictedDensity > threshold + ambiguityMargin) {
+                expected = false;
+            } else {
+                expected = predictedDensity <= threshold;
+            }
+            assertEquals("column " + columnIndex, expected, planeCarve[columnIndex]);
+        }
+    }
+
+    @Test
+    public void aquiferCupSupportStopsAsSoonAsTheResultIsKnown() throws Exception {
+        Engine engine = createEngine(128, 92);
+        IrisCaveProfile profile = createProfile(false, false)
+                .setBaseWeight(1D)
+                .setDetailWeight(0D)
+                .setFluidRequiresFloor(true);
+        IrisCaveCarver3D carver = new IrisCaveCarver3D(engine, profile);
+        Map<String, Double> rejectedDensity = new HashMap<>();
+        rejectedDensity.put("11:10:10", -1D);
+        rejectedDensity.put("9:10:10", -1D);
+        CoordinateDensityCNG rejectedNoise = new CoordinateDensityCNG(rejectedDensity);
+        baseDensityField.set(carver, rejectedNoise);
+
+        boolean rejected = (boolean) aquiferCupSupportMethod.invoke(
+                carver, new CaveCarveScratch(), 10, 10, 10, 0D);
+
+        assertFalse(rejected);
+        assertEquals(List.of("10:9:10", "10:8:10", "11:10:10", "9:10:10"), rejectedNoise.sampledCoordinates);
+
+        CoordinateDensityCNG acceptedNoise = new CoordinateDensityCNG(Map.of());
+        baseDensityField.set(carver, acceptedNoise);
+
+        boolean accepted = (boolean) aquiferCupSupportMethod.invoke(
+                carver, new CaveCarveScratch(), 10, 10, 10, 0D);
+
+        assertTrue(accepted);
+        assertEquals(
+                List.of("10:9:10", "10:8:10", "11:10:10", "9:10:10", "10:10:11", "10:10:9"),
+                acceptedNoise.sampledCoordinates
+        );
     }
 
     @Test
@@ -1152,6 +1314,23 @@ public class IrisCaveCarver3DNearParityTest {
             }
         }
         return min;
+    }
+
+    private static final class CoordinateDensityCNG extends CNG {
+        private final Map<String, Double> densityByCoordinate;
+        private final List<String> sampledCoordinates = new ArrayList<>();
+
+        private CoordinateDensityCNG(Map<String, Double> densityByCoordinate) {
+            super(new RNG(82_991L));
+            this.densityByCoordinate = densityByCoordinate;
+        }
+
+        @Override
+        public double noiseFastSigned3D(double x, double y, double z) {
+            String coordinate = (int) x + ":" + (int) y + ":" + (int) z;
+            sampledCoordinates.add(coordinate);
+            return densityByCoordinate.getOrDefault(coordinate, 1D);
+        }
     }
 
     private static final class WriterCapture {
