@@ -164,24 +164,28 @@ public final class PendingWorldReplacementManager implements Listener {
             boolean configurationApplied = false;
             try {
                 Files.createDirectory(paths.stage());
-                IrisDimension installed = Iris.service(StudioSVC.class).installIntoWorld(
-                        requiredSender,
-                        requiredDimension,
-                        paths.stage().toFile()
-                );
-                if (installed == null) {
-                    throw new IOException("Iris could not stage the dimension pack.");
-                }
-                requireCompatibleEnvironment(target.slotKind(), installed.getEnvironment());
                 long effectiveSeed = WorldReplacementSeed.stageAuthoritativeSeed(
                         paths.target(),
                         paths.stage(),
                         seedSelection
                 );
+                IrisDimension installed = Iris.service(StudioSVC.class).installIntoWorld(
+                        requiredSender,
+                        requiredDimension,
+                        paths.stage().toFile(),
+                        effectiveSeed
+                );
+                if (installed == null) {
+                    throw new IOException("Iris could not stage the dimension pack.");
+                }
+                requireCompatibleEnvironment(target.slotKind(), installed.getEnvironment());
                 if (target.slotKind() == SlotKind.VANILLA_OVERWORLD) {
                     WorldReplacementEntryGuard.stage(target.levelRoot(), paths.stage(), transactionId);
                 }
-                File stagedPack = paths.stage().resolve("iris/pack").toFile();
+                File stagedPack = IrisWorldStorage.requireActiveGenerationPackRoot(
+                        paths.stage().toFile(),
+                        effectiveSeed
+                );
                 IrisWorldGeneratorResolver.requireSnapshotLoadable(stagedPack);
                 String packFingerprint = WorldReplacementFilesystem.fingerprintPack(stagedPack.toPath());
                 transaction = new Transaction(
@@ -806,7 +810,10 @@ public final class PendingWorldReplacementManager implements Listener {
             validatePublishedWorldRuntime(runtimeState, transaction, target.slotKind());
             ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transaction.id());
             String fingerprint = WorldReplacementFilesystem.fingerprintPack(
-                    paths.target().resolve("iris/pack"));
+                    IrisWorldStorage.requireActiveGenerationPackRoot(
+                            paths.target().toFile(),
+                            transaction.seed()
+                    ).toPath());
             if (!transaction.packFingerprint().equals(fingerprint)) {
                 throw new IOException("The replacement pack changed before runtime verification.");
             }

@@ -18,21 +18,30 @@
 
 package art.arcane.iris.modded;
 
-import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineTarget;
+import art.arcane.iris.engine.history.GenerationActivation;
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationEpochContractFactory;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
+import art.arcane.iris.engine.history.IrisBoundarySignatureSampler;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.modded.command.ModdedGuiHost;
+import art.arcane.iris.spi.IrisPlatforms;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Map;
@@ -45,13 +54,25 @@ public final class ModdedWorldEngines {
     private ModdedWorldEngines() {
     }
 
-    public static Engine get(ServerLevel level, String pack, String dimensionKey, long seedOverride) {
+    public static Engine get(
+            ServerLevel level,
+            String pack,
+            String dimensionKey,
+            long seedOverride,
+            ModdedGenerationMode generationMode
+    ) {
         Engine existing = ENGINES.get(level);
         if (existing != null) {
             return existing;
         }
         return ENGINES.computeIfAbsent(level,
-                (ServerLevel l) -> createAndApplyWorldBoundary(l, pack, dimensionKey, seedOverride));
+                (ServerLevel l) -> createAndApplyWorldBoundary(
+                        l,
+                        pack,
+                        dimensionKey,
+                        seedOverride,
+                        generationMode
+                ));
     }
 
     public static Collection<Engine> activeEngines() {
@@ -81,8 +102,14 @@ public final class ModdedWorldEngines {
         ModdedIrisLog.info("Iris engine evicted for {}", level.dimension().identifier());
     }
 
-    static Engine prepareReplacement(ServerLevel level, String pack, String dimensionKey, long seedOverride) {
-        return create(level, pack, dimensionKey, seedOverride);
+    static Engine prepareReplacement(
+            ServerLevel level,
+            String pack,
+            String dimensionKey,
+            long seedOverride,
+            ModdedGenerationMode generationMode
+    ) {
+        return create(level, pack, dimensionKey, seedOverride, generationMode);
     }
 
     static void installReplacement(ServerLevel level, Engine replacement) {
@@ -103,9 +130,14 @@ public final class ModdedWorldEngines {
         ModdedGuiHost.unbind(engine);
     }
 
-    private static Engine createAndApplyWorldBoundary(ServerLevel level, String pack,
-                                                      String dimensionKey, long seedOverride) {
-        Engine engine = create(level, pack, dimensionKey, seedOverride);
+    private static Engine createAndApplyWorldBoundary(
+            ServerLevel level,
+            String pack,
+            String dimensionKey,
+            long seedOverride,
+            ModdedGenerationMode generationMode
+    ) {
+        Engine engine = create(level, pack, dimensionKey, seedOverride, generationMode);
         try {
             engine.getPlatformHooks().applyWorldBoundary(engine);
             return engine;
@@ -126,22 +158,178 @@ public final class ModdedWorldEngines {
         }
     }
 
-    private static Engine create(ServerLevel level, String pack, String dimensionKey, long seedOverride) {
+    private static Engine create(
+            ServerLevel level,
+            String pack,
+            String dimensionKey,
+            long seedOverride,
+            ModdedGenerationMode generationMode
+    ) {
         ModdedEngineBootstrap.bind();
-        File packDir = resolvePack(pack, dimensionKey);
-        PackValidationRegistry.requireLoadable(pack);
-        IrisData data = IrisData.openRuntime(packDir);
-        IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
-        if (dimension == null) {
-            ModdedIrisLog.error("Iris pack '{}' at {} does not contain dimension '{}' (expected dimensions/{}.json). Install a matching Iris pack and restart.",
-                    pack, packDir.getAbsolutePath(), dimensionKey, dimensionKey);
-            throw new IllegalStateException("Iris dimension '" + dimensionKey + "' missing from pack " + packDir.getAbsolutePath());
-        }
-
         long seed = seedOverride == Long.MIN_VALUE ? level.getSeed() : seedOverride;
-        validateDimensionContract(pack, dimensionKey, dimension, level);
-        File worldFolder = DimensionType.getStorageFolder(level.dimension(), level.getServer().getWorldPath(LevelResource.ROOT)).toFile();
-        IrisWorld world = IrisWorld.builder()
+        ModdedGenerationMode requiredMode = Objects.requireNonNull(generationMode, "generationMode");
+        if (requiredMode == ModdedGenerationMode.TRANSIENT_STUDIO) {
+            return createTransientStudioEngine(level, pack, dimensionKey, seed);
+        }
+        ModdedGenerationHistoryStorage.ActivePack active = ModdedGenerationHistoryStorage.openOrAdopt(
+                level,
+                pack,
+                dimensionKey,
+                seed
+        );
+        try {
+            return createHistoryEngine(level, seed, active);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Iris generation history could not initialize runtime routing for '"
+                    + level.dimension().identifier() + "'.", failure);
+        }
+    }
+
+    private static Engine createHistoryEngine(
+            ServerLevel level,
+            long seed,
+            ModdedGenerationHistoryStorage.ActivePack opened
+    ) throws IOException {
+        GenerationHistory history = opened.history();
+        long openedActivationId = history.activeActivation().activationId();
+        IrisEngine candidate = buildEngine(level, seed, opened);
+        boolean ready = false;
+        try {
+            GenerationHistoryRuntimeRouter router = candidate.attachGenerationHistory(
+                    history,
+                    IrisBoundarySignatureSampler.INSTANCE,
+                    IrisSettings.get().getGenerator().getGenerationTransitionWidthBlocks()
+            );
+            router.preloadActiveRuntimes();
+            if (history.activeActivation().activationId() != openedActivationId) {
+                close(candidate);
+                ModdedGenerationHistoryStorage.ActivePack promoted =
+                        ModdedGenerationHistoryStorage.resolveActive(history);
+                candidate = buildEngine(level, seed, promoted);
+                router = GenerationHistoryRuntimeRouter.attach(
+                        candidate,
+                        history,
+                        IrisBoundarySignatureSampler.INSTANCE
+                );
+                router.preloadActiveRuntimes();
+            }
+            requireReady(candidate, level, ModdedGenerationMode.PERSISTENT_RESTORE);
+            ready = true;
+            ModdedIrisLog.info("Iris engine up for {}: pack={} dim={} seed={} height={}..{} activation={}",
+                    level.dimension().identifier(),
+                    candidate.getData().getDataFolder().getAbsolutePath(),
+                    candidate.getDimension().getLoadKey(),
+                    seed,
+                    candidate.getDimension().getMinHeight(),
+                    candidate.getDimension().getMaxHeight(),
+                    history.activeActivation().activationId());
+            return candidate;
+        } finally {
+            if (!ready) {
+                close(candidate);
+            }
+        }
+    }
+
+    private static IrisEngine buildEngine(
+            ServerLevel level,
+            long seed,
+            ModdedGenerationHistoryStorage.ActivePack active
+    ) throws IOException {
+        File packDir = active.packRoot().toFile();
+        PackValidationRegistry.requireLoadable(active.packRoot());
+        IrisData data = IrisData.openRuntime(packDir);
+        boolean runtimeOwnsData = false;
+        try {
+            IrisDimension dimension = data.getDimensionLoader().load(active.dimensionKey());
+            if (dimension == null) {
+                ModdedIrisLog.error("Iris immutable generation pack at {} does not contain dimension '{}' (expected dimensions/{}.json).",
+                        packDir.getAbsolutePath(), active.dimensionKey(), active.dimensionKey());
+                throw new IllegalStateException("Iris dimension '" + active.dimensionKey()
+                        + "' missing from immutable pack " + packDir.getAbsolutePath());
+            }
+
+            validateDimensionContract(active.dimensionContract(), dimension, level);
+            File worldFolder = DimensionType.getStorageFolder(
+                    level.dimension(),
+                    level.getServer().getWorldPath(LevelResource.ROOT)
+            ).toFile();
+            IrisWorld world = buildWorld(level, seed, dimension, worldFolder);
+            GenerationHistory history = active.history();
+            GenerationActivation activation = history.activeActivation();
+            GenerationEpoch epoch = history.activeEpoch();
+            TransitionGenerationPlan transitionPlan = activation.isInitial()
+                    ? null
+                    : history.transitionPlan(activation.activationId());
+            IrisEngine engine = new IrisEngine(
+                    new EngineTarget(world, dimension, data),
+                    IrisEngine.InitializationMode.RUNTIME,
+                    history.paths().activationMantleRoot(activation.activationId()),
+                    epoch.kernelVersion(),
+                    transitionPlan);
+            runtimeOwnsData = true;
+            return engine;
+        } finally {
+            if (!runtimeOwnsData) {
+                data.close();
+            }
+        }
+    }
+
+    private static IrisEngine createTransientStudioEngine(
+            ServerLevel level,
+            String pack,
+            String dimensionKey,
+            long seed
+    ) {
+        File packDir = resolvePack(pack, dimensionKey);
+        PackValidationRegistry.requireLoadable(packDir.toPath());
+        IrisData data = IrisData.openRuntime(packDir);
+        boolean runtimeOwnsData = false;
+        boolean ready = false;
+        IrisEngine engine = null;
+        try {
+            IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
+            if (dimension == null) {
+                throw new IllegalStateException("Transient Iris Studio pack does not contain dimension '"
+                        + dimensionKey + "'.");
+            }
+            File worldFolder = DimensionType.getStorageFolder(
+                    level.dimension(),
+                    level.getServer().getWorldPath(LevelResource.ROOT)
+            ).toFile();
+            IrisWorld world = buildWorld(level, seed, dimension, worldFolder);
+            engine = new IrisEngine(
+                    new EngineTarget(world, dimension, data),
+                    IrisEngine.InitializationMode.STUDIO
+            );
+            runtimeOwnsData = true;
+            requireReady(engine, level, ModdedGenerationMode.TRANSIENT_STUDIO);
+            ready = true;
+            ModdedIrisLog.info("Iris transient Studio engine up for {}: pack={} dim={} seed={} height={}..{}",
+                    level.dimension().identifier(),
+                    packDir.getAbsolutePath(),
+                    dimension.getLoadKey(),
+                    seed,
+                    dimension.getMinHeight(),
+                    dimension.getMaxHeight());
+            return engine;
+        } finally {
+            if (!ready && engine != null) {
+                close(engine);
+            } else if (!runtimeOwnsData) {
+                data.close();
+            }
+        }
+    }
+
+    private static IrisWorld buildWorld(
+            ServerLevel level,
+            long seed,
+            IrisDimension dimension,
+            File worldFolder
+    ) {
+        return IrisWorld.builder()
                 .platformIdentity(level.dimension().identifier().toString())
                 .name(level.dimension().identifier().toString().replace(':', '_'))
                 .seed(seed)
@@ -150,40 +338,52 @@ public final class ModdedWorldEngines {
                 .maxHeight(dimension.getMaxHeight())
                 .platformWorld(new ModdedPlatformWorld(level))
                 .build();
-        Engine engine = new IrisEngine(
-                new EngineTarget(world, dimension, data),
-                IrisEngine.InitializationMode.RUNTIME);
-        if (engine.isClosed() || engine.getComplex() == null) {
-            IllegalStateException failure = new IllegalStateException("Iris engine for "
-                    + level.dimension().identifier() + " did not initialize a ready biome complex");
-            try {
-                close(engine);
-            } catch (Throwable cleanupError) {
-                failure.addSuppressed(cleanupError);
-            }
-            throw failure;
-        }
-
-        ModdedIrisLog.info("Iris engine up for {}: pack={} dim={} seed={} height={}..{}",
-                level.dimension().identifier(), packDir.getAbsolutePath(), dimension.getLoadKey(), seed, dimension.getMinHeight(), dimension.getMaxHeight());
-        return engine;
     }
 
-    private static void validateDimensionContract(String pack, String dimensionKey,
-                                                  IrisDimension dimension, ServerLevel level) {
+    private static void requireReady(
+            IrisEngine engine,
+            ServerLevel level,
+            ModdedGenerationMode generationMode
+    ) {
+        if (engine.isClosed() || engine.getComplex() == null) {
+            throw new IllegalStateException("Iris engine for " + level.dimension().identifier()
+                    + " did not initialize a ready runtime");
+        }
+        if (generationMode.historyRequired()
+                && engine.getGenerationHistoryRuntimeRouter().isEmpty()) {
+            throw new IllegalStateException("Persistent Iris engine for " + level.dimension().identifier()
+                    + " did not initialize a generation-history runtime router");
+        }
+        if (!generationMode.historyRequired()
+                && (!engine.isStudio() || engine.getGenerationHistoryRuntimeRouter().isPresent())) {
+            throw new IllegalStateException("Transient Iris Studio engine for "
+                    + level.dimension().identifier() + " has an invalid history mode");
+        }
+    }
+
+    private static void validateDimensionContract(
+            GenerationEpoch.DimensionContract recorded,
+            IrisDimension dimension,
+            ServerLevel level
+    ) {
+        GenerationEpoch.DimensionContract loaded = GenerationEpochContractFactory.create(
+                dimension,
+                dimension.getLoadKey(),
+                recorded.dimensionTypeKey()
+        );
+        if (!recorded.equals(loaded)) {
+            throw new IllegalStateException("Immutable Iris dimension contract changed for '"
+                    + level.dimension().identifier() + "'.");
+        }
         DimensionType actualType = level.dimensionType();
         String actualTypeKey = level.dimensionTypeRegistration().unwrapKey()
                 .map(key -> key.identifier().toString())
                 .orElse("<unregistered>");
-        String legacyTypeKey = "irisworldgen:" + dimension.getDimensionTypeKey();
-        String expectedTypeKey = legacyTypeKey.equals(actualTypeKey)
-                ? legacyTypeKey
-                : ModdedWorldgenIds.dimensionTypeRef(pack, dimensionKey);
         IrisDimensionRuntimeContract expected = new IrisDimensionRuntimeContract(
-                expectedTypeKey,
-                dimension.getMinHeight(),
-                dimension.getMaxHeight() - dimension.getMinHeight(),
-                dimension.getLogicalHeight());
+                recorded.dimensionTypeKey(),
+                recorded.minHeight(),
+                recorded.height(),
+                recorded.logicalHeight());
         IrisDimensionRuntimeContract actual = new IrisDimensionRuntimeContract(
                 actualTypeKey,
                 actualType.minY(),

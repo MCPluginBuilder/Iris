@@ -163,12 +163,13 @@ public class IrisDecorantActuator extends EngineAssignedActuator<PlatformBlockSt
                 int emptyFor = 0;
                 int lastSolid = 0;
                 realZ = Math.round(z + j);
+                if (!getComplex().allowsNewDiscreteContentAt(realX, realZ)) {
+                    continue;
+                }
                 height = context.getRoundedHeight(i, j);
                 biome = context.getBiome().get(i, j);
                 cave = shouldRay ? context.getCave().get(i, j) : null;
-                HydrologyColumnSample hydrology = getComplex().getHydrologyRuntime() == null
-                        ? null
-                        : getComplex().getHydrologyRuntime().sample(realX, realZ).orElse(null);
+                HydrologyColumnSample hydrology = getComplex().sampleHydrologyColumn(realX, realZ);
                 if (isFallingWaterfallThroat(hydrology)) {
                     continue;
                 }

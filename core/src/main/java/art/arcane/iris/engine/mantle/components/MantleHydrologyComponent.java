@@ -11,6 +11,7 @@ import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCavePlan;
 import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.mantle.ComponentFlag;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.IrisMantleComponent;
@@ -71,8 +72,9 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
 
     @Override
     public void generateLayer(MantleWriter writer, int chunkX, int chunkZ, ChunkContext context) {
-        IrisHydrologyRuntime runtime = context.getComplex().getHydrologyRuntime();
-        if (runtime == null) {
+        IrisComplex complex = context.getComplex();
+        IrisHydrologyRuntime runtime = complex.getHydrologyRuntime();
+        if (runtime == null || !complex.allowsNewGenerationChunk(chunkX, chunkZ)) {
             return;
         }
         int minimumX = chunkX << 4;
@@ -88,14 +90,15 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
         CaveVoxelView caveView = new MantleHydrologyCaveVoxelView(
                 writer.getMantle(),
                 writer.getMantle().getWorldHeight(),
-                (x, z) -> runtime.sample(x, z)
-                        .map(HydrologyColumnSample::terrainHeight)
-                        .orElseGet(() -> (int) Math.round(
-                                context.getComplex().getNaturalHeightStream().getDouble(x, z)
-                        )),
+                (x, z) -> {
+                    HydrologyColumnSample sample = complex.sampleHydrologyColumn(x, z);
+                    return sample == null
+                            ? (int) Math.round(complex.getNaturalHeightStream().getDouble(x, z))
+                            : sample.terrainHeight();
+                },
                 (inputChunkX, inputChunkZ) -> MantleHydrologyCaveVoxelView.generateCarvingInput(
                         getEngineMantle(),
-                        context.getComplex(),
+                        complex,
                         inputChunkX,
                         inputChunkZ
                 )
@@ -104,7 +107,7 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
                 chunkX,
                 chunkZ,
                 writer.getMantle().getWorldHeight(),
-                runtime::sample,
+                (x, z) -> Optional.ofNullable(complex.sampleHydrologyColumn(x, z)),
                 cavePlans,
                 caveView
         );

@@ -20,16 +20,21 @@ package art.arcane.iris.engine.actuator;
 
 import art.arcane.iris.engine.DimensionStackContext;
 import art.arcane.iris.engine.DimensionStackLayout;
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedActuator;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.iris.util.project.context.ChunkedDataCache;
+import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
-import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.Matter;
@@ -37,16 +42,15 @@ import art.arcane.volmlib.util.matter.MatterBiomeInject;
 import art.arcane.volmlib.util.matter.slices.BiomeInjectMatter;
 import art.arcane.volmlib.util.scheduling.ChronoLatch;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
-import art.arcane.iris.spi.IrisPlatform;
-import art.arcane.iris.spi.IrisPlatforms;
-import art.arcane.iris.spi.PlatformBiome;
 
 import java.util.List;
+import java.util.Objects;
 
 public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
     private final RNG rng;
     private final ChronoLatch cl = new ChronoLatch(5000);
     private final KMap<String, ResolvedBiome> resolvedBiomes = new KMap<>();
+    private final KMap<String, ResolvedBiome> resolvedPhysicalBiomes = new KMap<>();
 
     public IrisBiomeActuator(Engine engine) {
         super(engine, "Biome");
@@ -56,8 +60,6 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
     @BlockCoordinates
     @Override
     public void onActuate(int x, int z, Hunk<PlatformBiome> h, boolean multicore, ChunkContext context) {
-        // No catch here: a partial biome write must fail the chunk (EngineAssignedActuator
-        // rethrows), or the chunk is flagged REAL with default plains columns forever.
         PrecisionStopwatch p = PrecisionStopwatch.start();
         int width = h.getWidth();
         int depth = h.getDepth();
@@ -65,12 +67,28 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
         Engine engine = getEngine();
         Mantle<Matter> mantle = engine.getMantle().getMantle();
         ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
+        IrisComplex complex = context.getComplex();
         DimensionStackContext dimensionStackContext = engine.getDimensionStackContext();
 
         for (int xf = 0; xf < width; xf++) {
             for (int zf = 0; zf < depth; zf++) {
                 int worldX = x + xf;
                 int worldZ = z + zf;
+                if (!complex.allowsNewDiscreteContentAt(worldX, worldZ)) {
+                    writeHistoricalColumn(
+                            h,
+                            mantle,
+                            xf,
+                            zf,
+                            worldX,
+                            worldZ,
+                            height,
+                            engine,
+                            complex
+                    );
+                    continue;
+                }
+
                 IrisBiome biome = biomeCache.get(xf, zf);
                 ResolvedBiome resolved = resolve(biomeKey(
                         biome,
@@ -81,12 +99,8 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
                         worldZ
                 ));
                 PlatformBiome platformBiome = resolved.biome();
+                writeColumn(h, mantle, xf, zf, worldX, worldZ, height, resolved);
 
-                if (platformBiome != null) {
-                    h.set(xf, 0, zf, xf, height - 1, zf, platformBiome);
-                }
-
-                mantle.set(worldX, 0, worldZ, resolved.matter());
                 if (dimensionStackContext != null) {
                     PlatformBiome bottomBiome = platformBiome == null
                             ? h.getRaw(xf, 0, zf)
@@ -106,6 +120,66 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
             }
         }
         engine.getMetrics().getBiome().put(p.getMilliseconds());
+    }
+
+    private void writeHistoricalColumn(
+            Hunk<PlatformBiome> output,
+            Mantle<Matter> mantle,
+            int localX,
+            int localZ,
+            int worldX,
+            int worldZ,
+            int height,
+            Engine engine,
+            IrisComplex complex
+    ) {
+        TransitionGenerationPlan transitionPlan = complex.getTransitionGenerationPlan();
+        if (transitionPlan == null) {
+            return;
+        }
+        TransitionGenerationPlan.TerrainSample sample = transitionPlan.terrainSampleAt(worldX, worldZ);
+        int minimumWorldY = engine.getMinHeight();
+        String activeKey = sample.historicalPhysicalBiomeKeyAt(minimumWorldY).orElse(null);
+        int rangeStart = 0;
+        for (int internalY = 1; internalY <= height; internalY++) {
+            String nextKey = internalY == height
+                    ? null
+                    : sample.historicalPhysicalBiomeKeyAt(minimumWorldY + internalY).orElse(null);
+            if (Objects.equals(activeKey, nextKey)) {
+                continue;
+            }
+            if (activeKey != null) {
+                applyBiomeRange(
+                        localX,
+                        localZ,
+                        worldX,
+                        worldZ,
+                        rangeStart,
+                        internalY - 1,
+                        output,
+                        mantle,
+                        resolvePhysicalKey(activeKey)
+                );
+            }
+            activeKey = nextKey;
+            rangeStart = internalY;
+        }
+    }
+
+    private void writeColumn(
+            Hunk<PlatformBiome> output,
+            Mantle<Matter> mantle,
+            int localX,
+            int localZ,
+            int worldX,
+            int worldZ,
+            int height,
+            ResolvedBiome resolved
+    ) {
+        if (resolved.biome() != null) {
+            output.set(localX, 0, localZ, localX, height - 1, localZ, resolved.biome());
+        }
+        mantle.set(worldX, 0, worldZ, resolved.matter());
     }
 
     private void applyDimensionStackBiomes(
@@ -221,31 +295,39 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
     ) {
         if (biome.isCustom()) {
             IrisBiomeCustom custom = biome.getCustomBiome(rng, engine, x, y, z);
-            return dimension.getCustomBiomeKey(custom.getId());
+            return engine.getData().customBiomeResourceKey(dimension, custom);
         }
         return biome.getSkyBiomeKey(rng, engine, x, y, z);
     }
 
-    /**
-     * The registry lookup and the biome id only depend on the scatter resolved key, so cache the pair
-     * instead of paying two string keyed lookups per column. Unresolved biomes are never cached, so a
-     * biome registered later still resolves.
-     */
     private ResolvedBiome resolve(String key) {
         ResolvedBiome cached = key == null ? null : resolvedBiomes.get(key);
-
         if (cached != null) {
             return cached;
         }
 
         IrisPlatform platform = IrisPlatforms.get();
         PlatformBiome biome = platform.registries().biome(key);
-        ResolvedBiome resolved = new ResolvedBiome(biome, BiomeInjectMatter.get(platform.biomeWriter().biomeIdFor(key)));
-
+        ResolvedBiome resolved = new ResolvedBiome(
+                biome,
+                BiomeInjectMatter.get(platform.biomeWriter().biomeIdFor(key))
+        );
         if (key != null && biome != null) {
             resolvedBiomes.put(key, resolved);
         }
+        return resolved;
+    }
 
+    private ResolvedBiome resolvePhysicalKey(String key) {
+        ResolvedBiome cached = resolvedPhysicalBiomes.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        PlatformBiome biome = IrisPlatforms.get().registries().biome(key);
+        ResolvedBiome resolved = new ResolvedBiome(biome, BiomeInjectMatter.get(key));
+        if (biome != null) {
+            resolvedPhysicalBiomes.put(key, resolved);
+        }
         return resolved;
     }
 

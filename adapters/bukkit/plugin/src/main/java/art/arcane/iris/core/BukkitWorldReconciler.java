@@ -765,13 +765,13 @@ public final class BukkitWorldReconciler {
 
         @Override
         public void requireDimensionLoadable(NamespacedKey worldKey, String dimension) {
-            File snapshotRoot = snapshotRoot(worldKey);
-            IrisWorldGeneratorResolver.requireSnapshotLoadable(snapshotRoot);
             String configuredWorldName = configuredWorldName(worldKey);
             IrisDimension irisDimension = IrisWorldGeneratorResolver.loadDimension(configuredWorldName, dimension);
             if (irisDimension == null) {
                 throw new IllegalStateException("Could not resolve the Iris dimension \"" + dimension + "\".");
             }
+            File snapshotRoot = snapshotRoot(worldKey);
+            IrisWorldGeneratorResolver.requireSnapshotLoadable(snapshotRoot);
         }
 
         private File snapshotRoot(NamespacedKey worldKey) {
@@ -788,7 +788,7 @@ public final class BukkitWorldReconciler {
                 throw new IllegalStateException("Iris world storage does not match the current platform layout for "
                         + worldKey + ".");
             }
-            return IrisWorldStorage.requireFrozenPackRoot(dimensionRoot);
+            return IrisWorldStorage.requireActiveGenerationPackRoot(dimensionRoot);
         }
     }
 }

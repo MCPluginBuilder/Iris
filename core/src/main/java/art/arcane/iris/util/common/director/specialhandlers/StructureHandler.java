@@ -22,6 +22,7 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.StructureReachability;
+import art.arcane.iris.engine.history.GenerationFindCatalog;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -67,6 +68,9 @@ public class StructureHandler implements DirectorParameterHandler<String> {
             }
         }
 
+        for (String key : GenerationFindCatalog.retainedStructureKeys(activeEngine)) {
+            suggestions.putIfAbsent(normalizeKey(key), key);
+        }
         return new KList<>(suggestions.values());
     }
 

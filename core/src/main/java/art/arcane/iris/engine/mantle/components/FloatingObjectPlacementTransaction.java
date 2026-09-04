@@ -20,6 +20,7 @@ package art.arcane.iris.engine.mantle.components;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.object.IObjectPlacer;
 import art.arcane.iris.engine.object.TileData;
 import art.arcane.iris.spi.PlatformBlockState;
@@ -47,7 +48,14 @@ final class FloatingObjectPlacementTransaction implements IObjectPlacer {
             discard();
             return CommitResult.EMPTY;
         }
+        Engine engine = delegate.getEngine();
+        IrisComplex complex = engine == null ? null : engine.getComplex();
         for (BufferedMutation mutation : mutations) {
+            if (complex != null
+                    && !complex.allowsNewDiscreteContentAt(mutation.x(), mutation.z())) {
+                discard();
+                return CommitResult.REJECTED_TRANSITION;
+            }
             if (!delegate.canWriteObjectBlock(mutation.x(), mutation.y(), mutation.z())) {
                 discard();
                 return CommitResult.REJECTED_SUPPORT;
@@ -170,6 +178,7 @@ final class FloatingObjectPlacementTransaction implements IObjectPlacer {
     enum CommitResult {
         COMMITTED,
         EMPTY,
+        REJECTED_TRANSITION,
         REJECTED_SUPPORT
     }
 

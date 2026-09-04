@@ -45,6 +45,12 @@ import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
+import art.arcane.iris.engine.history.GenerationActivation;
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
+import art.arcane.iris.engine.history.IrisBoundarySignatureSampler;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.object.IrisDimensionContractException;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionRuntimeContract;
@@ -84,7 +90,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.PrintWriter;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -111,6 +119,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private final IrisWorld world;
     private final File dataLocation;
     private final String dimensionKey;
+    private final @Nullable GenerationHistory generationHistory;
     private final ReactiveFolder folder;
     private final ReentrantLock lock = new ReentrantLock();
     private final KList<BlockPopulator> populators;
@@ -137,7 +146,13 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     @Setter
     private volatile StudioGenerator studioGenerator;
 
-    public BukkitChunkGenerator(IrisWorld world, boolean studio, File dataLocation, String dimensionKey) {
+    public BukkitChunkGenerator(
+            IrisWorld world,
+            boolean studio,
+            File dataLocation,
+            String dimensionKey,
+            @Nullable GenerationHistory generationHistory
+    ) {
         setup = new AtomicBoolean(false);
         studioGenerator = null;
         dummyBiomeProvider = new DummyBiomeProvider();
@@ -149,6 +164,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         this.studioEntryBootstrapActive = new AtomicBoolean(studio);
         this.dataLocation = dataLocation;
         this.dimensionKey = dimensionKey;
+        this.generationHistory = generationHistory;
         this.folder = new ReactiveFolder(
                 dataLocation,
                 (_a, _b, _c) -> hotloadFromWatcher(),
@@ -385,9 +401,37 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         jigsawStudioActive = request != null
                 && session != null
                 && session.sessionId().equals(request.requestId());
-        IrisEngine createdEngine = new IrisEngine(
-                engineTarget,
-                selectInitializationMode(studio, jigsawStudioActive));
+        IrisEngine createdEngine = createEngine(engineTarget);
+        if (generationHistory != null) {
+            long initialActivationId = generationHistory.activeActivation().activationId();
+            int transitionWidthBlocks = IrisSettings.get()
+                    .getGenerator()
+                    .getGenerationTransitionWidthBlocks();
+            try {
+                createdEngine.attachGenerationHistory(
+                        generationHistory,
+                        IrisBoundarySignatureSampler.INSTANCE,
+                        transitionWidthBlocks);
+                if (generationHistory.activeActivation().activationId() != initialActivationId) {
+                    createdEngine.close();
+                    targetCache.reset();
+                    createdEngine = createEngine(loadActiveGenerationHistoryTarget());
+                    createdEngine.attachGenerationHistory(
+                            generationHistory,
+                            IrisBoundarySignatureSampler.INSTANCE,
+                            transitionWidthBlocks);
+                }
+            } catch (Throwable failure) {
+                try {
+                    createdEngine.close();
+                } catch (Throwable closeFailure) {
+                    if (failure != closeFailure) {
+                        failure.addSuppressed(closeFailure);
+                    }
+                }
+                throw propagateEngineSetupFailure(failure);
+            }
+        }
         createdEngine.setNativeStructureVolumeQueriesEnabled(shouldGenerateNativeStructures(
                 jigsawStudioActive,
                 studioEntryBootstrapActive.get(),
@@ -395,6 +439,66 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         engine = createdEngine;
         populators.clear();
         targetCache.reset();
+    }
+
+    private EngineTarget loadActiveGenerationHistoryTarget() throws IOException {
+        Path packRoot = generationHistory.activePackRoot();
+        IrisData data = IrisData.openRuntime(packRoot.toFile());
+        try {
+            data.dump();
+            data.clearLists();
+            IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
+            if (dimension == null) {
+                throw new IOException("Active Iris generation pack does not contain dimension '"
+                        + dimensionKey + "': " + packRoot);
+            }
+            return new EngineTarget(world, dimension, data);
+        } catch (Throwable failure) {
+            if (!data.isClosed()) {
+                data.close();
+            }
+            if (failure instanceof IOException ioFailure) {
+                throw ioFailure;
+            }
+            if (failure instanceof RuntimeException runtimeFailure) {
+                throw runtimeFailure;
+            }
+            if (failure instanceof Error error) {
+                throw error;
+            }
+            throw new IOException("Unable to load the active Iris generation pack.", failure);
+        }
+    }
+
+    private IrisEngine createEngine(EngineTarget engineTarget) {
+        IrisEngine.InitializationMode mode = selectInitializationMode(studio, jigsawStudioActive);
+        if (generationHistory == null) {
+            return new IrisEngine(engineTarget, mode);
+        }
+        GenerationActivation active = generationHistory.activeActivation();
+        GenerationEpoch epoch = generationHistory.activeEpoch();
+        TransitionGenerationPlan plan;
+        try {
+            plan = active.isInitial() ? null : generationHistory.transitionPlan(active.activationId());
+        } catch (IOException failure) {
+            throw new IllegalStateException("Unable to load the active Iris generation transition.", failure);
+        }
+        return new IrisEngine(
+                engineTarget,
+                mode,
+                generationHistory.paths().activationMantleRoot(active.activationId()),
+                epoch.kernelVersion(),
+                plan);
+    }
+
+    private static RuntimeException propagateEngineSetupFailure(Throwable failure) {
+        if (failure instanceof RuntimeException runtimeFailure) {
+            return runtimeFailure;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        return new IllegalStateException("Unable to attach Iris generation history.", failure);
     }
 
     static IrisEngine.InitializationMode selectInitializationMode(boolean studio, boolean jigsawStudioActive) {
@@ -882,10 +986,15 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             } else {
                 ChunkDataHunkHolder blocks = new ChunkDataHunkHolder(d);
                 Hunk<PlatformBiome> biomes = Hunk.viewBiomes(tc);
-                try (GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_terrain_stage");
-                     IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                try (GenerationHistoryRuntimeRouter.CoordinateScope historyScope =
+                             openGenerationHistoryCoordinateScope(engine, x << 4, z << 4);
+                     GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_terrain_stage");
+                    IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
                     engine.generate(x << 4, z << 4, blocks, biomes, engine.shouldGenerateMulticore());
                     blocks.apply();
+                    if (historyScope != null) {
+                        historyScope.claimGeneratedSemantics();
+                    }
                 }
             }
 
@@ -907,6 +1016,23 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
             throw new IllegalStateException("Iris failed to generate chunk " + x + "," + z + ".", e);
         }
+    }
+
+    private @Nullable GenerationHistoryRuntimeRouter.CoordinateScope openGenerationHistoryCoordinateScope(
+            Engine currentEngine,
+            int blockX,
+            int blockZ
+    ) throws IOException {
+        if (generationHistory == null) {
+            return null;
+        }
+        if (!(currentEngine instanceof IrisEngine irisEngine)) {
+            throw new IllegalStateException("Persistent Iris generation requires an IrisEngine runtime.");
+        }
+        GenerationHistoryRuntimeRouter router = irisEngine.getGenerationHistoryRuntimeRouter()
+                .orElseThrow(() -> new IllegalStateException(
+                        "Persistent Iris generation has no generation-history runtime router."));
+        return router.openCoordinateScope(blockX, blockZ);
     }
 
     private boolean isExpectedTeardown(Engine currentEngine, Throwable throwable) {
@@ -967,10 +1093,12 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             default -> false;
         };
 
-        try (GenerationSessionLease lease = currentEngine.acquireGenerationLease("bukkit_base_height");
+        try (GenerationHistoryRuntimeRouter.CoordinateScope historyScope =
+                     openGenerationHistoryCoordinateScope(currentEngine, x, z);
+             GenerationSessionLease lease = currentEngine.acquireGenerationLease("bukkit_base_height");
              IrisContext.Scope ignored = IrisContext.open(currentEngine, lease.sessionId(), null)) {
             return currentEngine.getMinHeight() + currentEngine.getHeight(x, z, ignoreFluid) + 1;
-        } catch (GenerationSessionException e) {
+        } catch (GenerationSessionException | IOException e) {
             throw new IllegalStateException("Iris base height query was rejected for world '"
                     + worldInfo.getName() + "'.", e);
         }

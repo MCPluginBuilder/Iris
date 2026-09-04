@@ -1,0 +1,625 @@
+package art.arcane.iris.engine;
+
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.GenerationRuntime.BiomeMaxes;
+import art.arcane.iris.engine.framework.EngineEffects;
+import art.arcane.iris.engine.framework.EngineMode;
+import art.arcane.iris.engine.framework.EngineStage;
+import art.arcane.iris.engine.framework.EngineTarget;
+import art.arcane.iris.engine.framework.EngineWorldManager;
+import art.arcane.iris.engine.history.GenerationKernelRegistry;
+import art.arcane.iris.engine.framework.SeedManager;
+import art.arcane.iris.engine.framework.IrisEngineMode;
+import art.arcane.iris.engine.framework.NativeStructureVolumeMemo;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
+import art.arcane.iris.engine.mantle.EngineMantle;
+import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisWorld;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.PlatformRegistries;
+import art.arcane.iris.util.common.parallel.MultiBurst;
+import art.arcane.iris.util.project.context.ChunkContext;
+import org.junit.Test;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.nio.file.Path;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntConsumer;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+public class IrisEngineGenerationRuntimeScopeTest {
+    @BeforeClass
+    public static void bindPlatform() {
+        IrisPlatforms.unbind();
+        PlatformBlockState block = mock(PlatformBlockState.class);
+        PlatformRegistries registries = mock(PlatformRegistries.class);
+        when(registries.block(anyString())).thenReturn(block);
+        IrisPlatform platform = mock(IrisPlatform.class);
+        when(platform.registries()).thenReturn(registries);
+        IrisPlatforms.bind(platform);
+    }
+
+    @AfterClass
+    public static void unbindPlatform() {
+        IrisPlatforms.unbind();
+    }
+
+    @Test
+    public void scopedGettersResolveDetachedGenerationStateAndWorldServicesStayActive() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 2D, 3D);
+        RuntimeFixture detached = runtime(2, 4D, 5D, 6D);
+        EngineEffects effects = mock(EngineEffects.class);
+        EngineWorldManager worldManager = mock(EngineWorldManager.class);
+        IrisEngine engine = engine(active.runtime, effects, worldManager);
+        IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, detached.runtime);
+
+        try (IrisEngine.GenerationRuntimeScope ignored = engine.openGenerationRuntimeScope(binding)) {
+            assertSame(detached.target, engine.getTarget());
+            assertSame(detached.data, engine.getData());
+            assertSame(detached.dimension, engine.getDimension());
+            assertSame(detached.runtime.seedManager(), engine.getSeedManager());
+            assertSame(detached.complex, engine.getComplex());
+            assertSame(detached.upperContext, engine.getUpperContext());
+            assertSame(detached.dimensionStackContext, engine.getDimensionStackContext());
+            assertSame(detached.mode, engine.getMode());
+            assertSame(detached.mantle, engine.getMantle());
+            assertSame(detached.hash32, engine.getHash32());
+            assertEquals(2, engine.getCacheID());
+            assertEquals(4D, engine.getMaxBiomeObjectDensity(), 0D);
+            assertEquals(5D, engine.getMaxBiomeLayerDensity(), 0D);
+            assertEquals(6D, engine.getMaxBiomeDecoratorDensity(), 0D);
+            assertSame(effects, engine.getEffects());
+            assertSame(worldManager, engine.getWorldManager());
+        }
+
+        assertSame(active.target, engine.getTarget());
+        assertSame(active.data, engine.getData());
+        assertSame(active.runtime.seedManager(), engine.getSeedManager());
+        assertSame(active.mantle, engine.getMantle());
+        assertEquals(1, engine.getCacheID());
+    }
+
+    @Test
+    public void scopedKernelVersionProvidesTheAlgorithmDispatchKey() throws Exception {
+        GenerationKernelRegistry.Version activeVersion = new GenerationKernelRegistry.Version(1, 1, 1);
+        GenerationKernelRegistry.Version historicalVersion = new GenerationKernelRegistry.Version(2, 3, 4);
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D, activeVersion);
+        RuntimeFixture historical = runtime(2, 1D, 1D, 1D, historicalVersion);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, historical.runtime);
+
+        assertEquals(activeVersion, engine.getGenerationKernelVersion());
+        assertSame(active.runtime.runtimeKernel(), engine.getGenerationRuntimeKernel());
+        try (IrisEngine.GenerationRuntimeScope ignored = engine.openGenerationRuntimeScope(binding)) {
+            assertEquals(historicalVersion, engine.getGenerationKernelVersion());
+            assertSame(historical.runtime.runtimeKernel(), engine.getGenerationRuntimeKernel());
+            assertNotSame(active.runtime.runtimeKernel(), engine.getGenerationRuntimeKernel());
+        }
+        assertEquals(activeVersion, engine.getGenerationKernelVersion());
+    }
+
+    @Test
+    public void executableKernelFactoriesProduceDistinctRuntimeBindings() throws Exception {
+        GenerationKernelRegistry.Version versionOne = new GenerationKernelRegistry.Version(1, 1, 1);
+        GenerationKernelRegistry.Version versionTwo = new GenerationKernelRegistry.Version(2, 1, 1);
+        IrisComplex complexOne = mock(IrisComplex.class);
+        IrisComplex complexTwo = mock(IrisComplex.class);
+        GenerationKernelRegistry kernels = new GenerationKernelRegistry(
+                versionTwo,
+                Set.of(
+                        new GenerationKernelRegistry.Kernel(
+                                1,
+                                "1".repeat(64),
+                                Map.of(
+                                        new GenerationKernelRegistry.AlgorithmVersion(1, 1),
+                                        (engine, transitionPlan) -> complexOne
+                                )
+                        ),
+                        new GenerationKernelRegistry.Kernel(
+                                2,
+                                "2".repeat(64),
+                                Map.of(
+                                        new GenerationKernelRegistry.AlgorithmVersion(1, 1),
+                                        (engine, transitionPlan) -> complexTwo
+                                )
+                        )
+                )
+        );
+        GenerationKernelRegistry.RuntimeKernel kernelOne = kernels.select(versionOne);
+        GenerationKernelRegistry.RuntimeKernel kernelTwo = kernels.select(versionTwo);
+        IrisEngine factoryContext = mock(IrisEngine.class);
+        RuntimeFixture first = runtime(
+                1, 1D, 1D, 1D, kernelOne, kernelOne.createComplex(factoryContext, null));
+        RuntimeFixture second = runtime(
+                2, 1D, 1D, 1D, kernelTwo, kernelTwo.createComplex(factoryContext, null));
+        IrisEngine engine = engine(first.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding firstBinding = new IrisEngine.GenerationRuntimeBinding(
+                engine, first.runtime);
+        IrisEngine.GenerationRuntimeBinding secondBinding = detachedBinding(engine, second.runtime);
+
+        assertSame(kernelOne, firstBinding.runtimeKernel());
+        assertSame(kernelTwo, secondBinding.runtimeKernel());
+        assertSame(complexOne, engine.getComplex());
+        try (IrisEngine.GenerationRuntimeScope ignored = engine.openGenerationRuntimeScope(secondBinding)) {
+            assertSame(kernelTwo, engine.getGenerationRuntimeKernel());
+            assertSame(complexTwo, engine.getComplex());
+        }
+    }
+
+    @Test
+    public void burstWorkerReopensCapturedGenerationRuntimeScope() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture detached = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, detached.runtime);
+        EngineMode mode = new IrisEngineMode(engine) {
+        };
+        MultiBurst workerPool = new MultiBurst("Generation Runtime Scope Test", Thread.NORM_PRIORITY, () -> 2);
+        when(detached.target.getBurster()).thenReturn(workerPool);
+        AtomicReference<EngineTarget> observedTarget = new AtomicReference<>();
+        AtomicReference<Thread> observedThread = new AtomicReference<>();
+        EngineStage stage = (x, z, blocks, biomes, multicore, context) -> {
+            observedTarget.set(engine.getTarget());
+            observedThread.set(Thread.currentThread());
+        };
+        ChunkContext context = mock(ChunkContext.class);
+        when(context.getGenerationSessionId()).thenReturn(17L);
+        Thread caller = Thread.currentThread();
+
+        try (IrisEngine.GenerationRuntimeScope ignored = engine.openGenerationRuntimeScope(binding)) {
+            mode.burst(stage).generate(0, 0, null, null, true, context);
+        } finally {
+            mode.close();
+            workerPool.close();
+        }
+
+        assertSame(detached.target, observedTarget.get());
+        assertNotSame(caller, observedThread.get());
+    }
+
+    @Test
+    public void scopeRejectsForeignClosedAndOutOfOrderBindings() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture first = runtime(2, 2D, 2D, 2D);
+        RuntimeFixture second = runtime(3, 3D, 3D, 3D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine other = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding foreign = new IrisEngine.GenerationRuntimeBinding(other, first.runtime);
+        assertThrows(IllegalArgumentException.class, () -> engine.openGenerationRuntimeScope(foreign));
+
+        IrisEngine.GenerationRuntimeBinding closed = new IrisEngine.GenerationRuntimeBinding(engine, first.runtime);
+        assertThrows(IllegalStateException.class, () -> engine.openGenerationRuntimeScope(closed));
+
+        IrisEngine.GenerationRuntimeBinding firstBinding = detachedBinding(engine, first.runtime);
+        IrisEngine.GenerationRuntimeBinding secondBinding = detachedBinding(engine, second.runtime);
+        IrisEngine.GenerationRuntimeScope outer = engine.openGenerationRuntimeScope(firstBinding);
+        IrisEngine.GenerationRuntimeScope inner = engine.openGenerationRuntimeScope(secondBinding);
+        assertThrows(IllegalStateException.class, outer::close);
+        inner.close();
+        outer.close();
+        assertSame(active.target, engine.getTarget());
+    }
+
+    @Test
+    public void closingDetachedRuntimeReleasesGenerationTargetAndData() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture detached = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, detached.runtime);
+        doAnswer(invocation -> {
+            assertSame(detached.mantle, engine.getMantle());
+            return null;
+        }).when(detached.mode).close();
+
+        engine.closeDetachedGenerationRuntime(binding);
+
+        verify(detached.mode).close();
+        verify(detached.complex).close();
+        verify(detached.mantle).saveAllNow();
+        verify(detached.mantle).close();
+        verify(detached.data).unregisterEngine(engine);
+        verify(detached.target).close();
+        verify(detached.data).close();
+        assertTrue(detached.hash32.isCancelled());
+        engine.closeDetachedGenerationRuntime(binding);
+    }
+
+    @Test
+    public void detachedRuntimeRetirementEvictsCachesOutsideLifecycleLock() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture detached = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, detached.runtime);
+        AtomicInteger retiredRuntime = new AtomicInteger(-1);
+        AtomicBoolean lifecycleLockHeld = new AtomicBoolean(true);
+        engine.addGenerationRuntimeRetirementListener(runtimeId -> {
+            retiredRuntime.set(runtimeId);
+            lifecycleLockHeld.set(Thread.holdsLock(engine.lifecycleLock));
+        });
+        doAnswer(invocation -> {
+            assertEquals(2, retiredRuntime.get());
+            return null;
+        }).when(detached.mode).close();
+
+        engine.closeDetachedGenerationRuntime(binding);
+
+        assertEquals(2, binding.runtimeId());
+        assertEquals(2, retiredRuntime.get());
+        assertTrue(!lifecycleLockHeld.get());
+    }
+
+    @Test
+    public void detachedRuntimeRejectsNewScopesAfterRetirementBegins() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture detached = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, detached.runtime);
+        AtomicReference<Throwable> rejected = new AtomicReference<>();
+        engine.addGenerationRuntimeRetirementListener(runtimeId -> {
+            try {
+                engine.openGenerationRuntimeScope(binding);
+            } catch (Throwable failure) {
+                rejected.set(failure);
+            }
+        });
+
+        engine.closeDetachedGenerationRuntime(binding);
+
+        assertTrue(rejected.get() instanceof IllegalStateException);
+        assertTrue(rejected.get().getMessage().contains("retiring"));
+    }
+
+    @Test
+    public void closedDetachedScopeFallsBackToTheBaseRuntime() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture detached = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, detached.runtime);
+
+        try (IrisEngine.GenerationRuntimeScope ignored = engine.openGenerationRuntimeScope(binding)) {
+            assertSame(detached.target, engine.getTarget());
+            engine.closeDetachedGenerationRuntime(binding);
+            assertSame(active.target, engine.getTarget());
+            assertSame(active.mantle, engine.getMantle());
+        }
+    }
+
+    @Test
+    public void defaultRuntimeSelectionKeepsThePreviousRuntimeRoutable() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture detached = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding activeBinding = new IrisEngine.GenerationRuntimeBinding(
+                engine,
+                active.runtime);
+        IrisEngine.GenerationRuntimeBinding detachedRuntimeBinding = detachedBinding(engine, detached.runtime);
+
+        engine.setDefaultGenerationRuntime(detachedRuntimeBinding);
+
+        assertSame(detached.target, engine.getTarget());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> engine.closeDetachedGenerationRuntime(detachedRuntimeBinding));
+        try (IrisEngine.GenerationRuntimeScope ignored = engine.openGenerationRuntimeScope(activeBinding)) {
+            assertSame(active.target, engine.getTarget());
+        }
+
+        engine.setDefaultGenerationRuntime(activeBinding);
+
+        assertSame(active.target, engine.getTarget());
+        try (IrisEngine.GenerationRuntimeScope ignored = engine.openGenerationRuntimeScope(detachedRuntimeBinding)) {
+            assertSame(detached.target, engine.getTarget());
+        }
+        engine.closeDetachedGenerationRuntime(detachedRuntimeBinding);
+        assertThrows(
+                IllegalStateException.class,
+                () -> engine.openGenerationRuntimeScope(detachedRuntimeBinding));
+    }
+
+    @Test
+    public void attachedHistoryRouterIsClearedWhenEngineShutdownBegins() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(router.engine()).thenReturn(engine);
+        engine.attachGenerationHistoryRuntimeRouter(router);
+
+        assertTrue(engine.beginShutdown());
+        engine.closeAttachedGenerationHistoryRuntimeRouter();
+        engine.closeAttachedGenerationHistoryRuntimeRouter();
+
+        verify(router).close();
+    }
+
+    @Test
+    public void attachedHistoryRejectsGenerationRuntimeHotload() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(router.engine()).thenReturn(engine);
+        engine.attachGenerationHistoryRuntimeRouter(router);
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class, engine::hotloadComplex);
+
+        assertTrue(failure.getMessage().contains("immutable Iris generation history"));
+        assertSame(active.runtime, engine.runtime.generation());
+        verify(active.complex, never()).close();
+    }
+
+    @Test
+    public void detachedHistoryCannotFallBackToTheDefaultGenerationRuntime() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        assertNull(engine.openGenerationHistoryCoordinateScope(0, 0));
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(router.engine()).thenReturn(engine);
+        engine.attachGenerationHistoryRuntimeRouter(router);
+        engine.detachGenerationHistoryRuntimeRouter(router);
+
+        assertThrows(IllegalStateException.class, () -> engine.openGenerationHistoryCoordinateScope(0, 0));
+        assertThrows(IllegalStateException.class, () -> engine.getHeight(0, 0));
+    }
+
+    @Test
+    public void transferredMantleIsNotClosedWithTheRetiredRuntime() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        EngineShutdownSequence shutdownSequence = new EngineShutdownSequence(engine);
+
+        Throwable failure = shutdownSequence.closeRuntime(engine.runtime, active.mantle, null);
+
+        assertNull(failure);
+        verify(active.mantle, never()).saveAllNow();
+        verify(active.mantle, never()).close();
+    }
+
+    @Test
+    public void ownedAssemblyMantleIsSavedAndClosedOnlyOnce() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        EngineRuntimeBuilder.RuntimeAssembly assembly = new EngineRuntimeBuilder.RuntimeAssembly(
+                2,
+                active.target,
+                Path.of("build", "test-mantles", "assembly"));
+        assembly.mantle = mock(EngineMantle.class);
+        assembly.ownsMantle = true;
+        EngineShutdownSequence shutdownSequence = new EngineShutdownSequence(engine);
+
+        assertNull(shutdownSequence.closeAssembly(assembly, null));
+        assertNull(shutdownSequence.closeAssembly(assembly, null));
+
+        verify(assembly.mantle).saveAllNow();
+        verify(assembly.mantle).close();
+    }
+
+    @Test
+    public void detachedRuntimeRejectsTheActiveMantleDirectory() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture detached = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisWorld activeWorld = active.target.getWorld();
+        when(detached.target.getWorld()).thenReturn(activeWorld);
+        setField(engine, "closing", new AtomicBoolean(false));
+        engine.lifecycleState = IrisEngine.LifecycleState.RUNNING;
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> engine.buildDetachedGenerationRuntime(detached.target, active.mantleStorageDirectory));
+
+        verify(detached.data, never()).registerEngine(engine);
+    }
+
+    @Test
+    public void failedDetachedBuildReleasesTransferredTargetOwnership() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture detached = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisWorld activeWorld = active.target.getWorld();
+        when(detached.target.getWorld()).thenReturn(activeWorld);
+        setField(engine, "closing", new AtomicBoolean(false));
+        engine.lifecycleState = IrisEngine.LifecycleState.RUNNING;
+        EngineRuntimeBuilder runtimeBuilder = mock(EngineRuntimeBuilder.class);
+        setField(engine, "runtimeBuilder", runtimeBuilder);
+        IllegalStateException failure = new IllegalStateException("build failed");
+        Path storageDirectory = Path.of("build", "test-mantles", "failed-detached").toAbsolutePath();
+        when(runtimeBuilder.buildDetachedGenerationRuntime(detached.target, storageDirectory)).thenThrow(failure);
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> engine.buildDetachedGenerationRuntime(detached.target, storageDirectory));
+
+        assertSame(failure, thrown);
+        verify(detached.data).registerEngine(engine);
+        verify(detached.data).unregisterEngine(engine);
+        verify(detached.target).close();
+        verify(detached.data).close();
+    }
+
+    private static IrisEngine engine(
+            GenerationRuntime generationRuntime,
+            EngineEffects effects,
+            EngineWorldManager worldManager
+    ) throws Exception {
+        IrisEngine engine = mock(IrisEngine.class, CALLS_REAL_METHODS);
+        setField(engine, "lifecycleLock", new Object());
+        setField(engine, "generationHistoryRuntimeRouterLock", new Object());
+        setField(engine, "runtimeAssembly", new ThreadLocal<EngineRuntimeBuilder.RuntimeAssembly>());
+        setField(engine, "generationRuntimeScopes", new GenerationRuntimeScopeState());
+        Set<GenerationRuntime> detached = Collections.synchronizedSet(
+                Collections.newSetFromMap(new IdentityHashMap<GenerationRuntime, Boolean>()));
+        setField(engine, "detachedGenerationRuntimes", detached);
+        Set<GenerationRuntime> retiring = Collections.synchronizedSet(
+                Collections.newSetFromMap(new IdentityHashMap<GenerationRuntime, Boolean>()));
+        setField(engine, "retiringGenerationRuntimes", retiring);
+        setField(engine, "generationRuntimeRetirementListeners", new CopyOnWriteArraySet<IntConsumer>());
+        setField(engine, "shutdownSequence", new EngineShutdownSequence(engine));
+        setField(engine, "hotloader", new EngineHotloader(engine));
+        setField(engine, "nativeStructureVolumeMemo", new NativeStructureVolumeMemo());
+        setField(engine, "closing", new AtomicBoolean(false));
+        engine.lifecycleState = IrisEngine.LifecycleState.RUNNING;
+        engine.runtime = new EngineRuntime(generationRuntime, effects, worldManager);
+        engine.publishedTarget = generationRuntime.target();
+        return engine;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static IrisEngine.GenerationRuntimeBinding detachedBinding(
+            IrisEngine engine,
+            GenerationRuntime runtime
+    ) throws Exception {
+        Field field = IrisEngine.class.getDeclaredField("detachedGenerationRuntimes");
+        field.setAccessible(true);
+        Set<GenerationRuntime> detached = (Set<GenerationRuntime>) field.get(engine);
+        detached.add(runtime);
+        return new IrisEngine.GenerationRuntimeBinding(engine, runtime);
+    }
+
+    private static RuntimeFixture runtime(
+            int cacheId,
+            double objectDensity,
+            double layerDensity,
+            double decoratorDensity
+    ) throws IOException {
+        return runtime(
+                cacheId,
+                objectDensity,
+                layerDensity,
+                decoratorDensity,
+                GenerationKernelRegistry.standard().current()
+        );
+    }
+
+    private static RuntimeFixture runtime(
+            int cacheId,
+            double objectDensity,
+            double layerDensity,
+            double decoratorDensity,
+            GenerationKernelRegistry.Version kernelVersion
+    ) throws IOException {
+        GenerationKernelRegistry.RuntimeKernel runtimeKernel = runtimeKernel(kernelVersion);
+        return runtime(
+                cacheId,
+                objectDensity,
+                layerDensity,
+                decoratorDensity,
+                runtimeKernel,
+                mock(IrisComplex.class)
+        );
+    }
+
+    private static RuntimeFixture runtime(
+            int cacheId,
+            double objectDensity,
+            double layerDensity,
+            double decoratorDensity,
+            GenerationKernelRegistry.RuntimeKernel runtimeKernel,
+            IrisComplex complex
+    ) {
+        IrisWorld world = mock(IrisWorld.class);
+        IrisData data = mock(IrisData.class);
+        IrisDimension dimension = mock(IrisDimension.class);
+        EngineTarget target = mock(EngineTarget.class);
+        when(target.getWorld()).thenReturn(world);
+        when(target.getDimension()).thenReturn(dimension);
+        when(target.getData()).thenReturn(data);
+        when(target.getBurster()).thenReturn(MultiBurst.burst);
+        UpperDimensionContext upperContext = mock(UpperDimensionContext.class);
+        DimensionStackContext dimensionStackContext = mock(DimensionStackContext.class);
+        EngineMode mode = mock(EngineMode.class);
+        EngineMantle mantle = mock(EngineMantle.class);
+        Path mantleStorageDirectory = Path.of("build", "test-mantles", Integer.toString(cacheId)).toAbsolutePath();
+        CompletableFuture<Long> hash32 = new CompletableFuture<>();
+        GenerationRuntime runtime = new GenerationRuntime(
+                cacheId,
+                target,
+                data,
+                dimension,
+                runtimeKernel.version(),
+                runtimeKernel,
+                mock(SeedManager.class),
+                null,
+                complex,
+                upperContext,
+                dimensionStackContext,
+                mode,
+                mantle,
+                mantleStorageDirectory,
+                hash32,
+                new BiomeMaxes(objectDensity, layerDensity, decoratorDensity));
+        return new RuntimeFixture(
+                runtime,
+                target,
+                data,
+                dimension,
+                complex,
+                upperContext,
+                dimensionStackContext,
+                mode,
+                mantle,
+                mantleStorageDirectory,
+                hash32);
+    }
+
+    private static GenerationKernelRegistry.RuntimeKernel runtimeKernel(
+            GenerationKernelRegistry.Version version
+    ) throws IOException {
+        if (GenerationKernelRegistry.standard().supports(
+                version.generatorAbi(),
+                version.rngVersion(),
+                version.seedDerivationVersion())) {
+            return GenerationKernelRegistry.standard().select(version);
+        }
+        return new GenerationKernelRegistry.RuntimeKernel(
+                version,
+                "f".repeat(64),
+                (engine, transitionPlan) -> mock(IrisComplex.class)
+        );
+    }
+
+    private static void setField(Object target, String name, Object value) throws Exception {
+        Field field = IrisEngine.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+
+    private record RuntimeFixture(
+            GenerationRuntime runtime,
+            EngineTarget target,
+            IrisData data,
+            IrisDimension dimension,
+            IrisComplex complex,
+            UpperDimensionContext upperContext,
+            DimensionStackContext dimensionStackContext,
+            EngineMode mode,
+            EngineMantle mantle,
+            Path mantleStorageDirectory,
+            CompletableFuture<Long> hash32
+    ) {
+    }
+}

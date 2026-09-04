@@ -9,8 +9,14 @@ import art.arcane.iris.core.nms.datapack.DataVersion;
 import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
+import art.arcane.iris.engine.history.GenerationRegistryContract.PhysicalResourceKey;
+import art.arcane.iris.engine.history.GenerationRegistryContractFactory;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
+import art.arcane.iris.engine.object.IrisCustomBiomeAliasResolver;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
@@ -40,13 +46,14 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public final class IrisDatapackCompiler {
-    private static final int INPUT_FINGERPRINT_SCHEMA = 2;
+    private static final int INPUT_FINGERPRINT_SCHEMA = 3;
     private static final int INPUT_BUFFER_BYTES = 64 * 1024;
     private static final int WORLD_PACK_SCAN_DEPTH = 8;
     private static final Pattern REGISTRY_KEY_PATTERN = Pattern.compile("[a-z0-9_.-]+:[a-z0-9/._-]+");
@@ -90,6 +97,7 @@ public final class IrisDatapackCompiler {
     ) throws IOException {
         LinkedHashMap<Path, File> roots = new LinkedHashMap<>();
         collectInstalledPackRoots(dataDirectory.resolve("packs"), roots, validateWholePack);
+        collectCanonicalWorldPackRoot(serverRoot, roots, validateWholePack);
         collectWorldPackRoots(serverRoot.resolve("dimensions"), roots, validateWholePack);
         return new ArrayList<>(roots.values());
     }
@@ -179,14 +187,18 @@ public final class IrisDatapackCompiler {
         Objects.requireNonNull(packRoots, "packRoots");
         Objects.requireNonNull(fixer, "fixer");
         LinkedHashMap<String, String> requirements = new LinkedHashMap<>();
-        Set<String> installedBiomeKeys = new LinkedHashSet<>();
+        Map<String, Set<String>> biomeTags = new TreeMap<>();
         for (File packRoot : packRoots) {
             PackDirectoryResolver.requireSafePackTree(packRoot);
             if (!hasDimensions(packRoot.toPath())) {
                 continue;
             }
+            BiomeAliasContext aliasContext = biomeAliasContext(packRoot.toPath());
             IrisData data = IrisData.openDatapackCompiler(packRoot);
             try {
+                if (aliasContext.retainedContract() != null) {
+                    data.bindGenerationRegistryContract(aliasContext.retainedContract());
+                }
                 ResourceLoader<IrisDimension> loader = data.getDimensionLoader();
                 String[] possibleKeys = loader.getPossibleKeys();
                 if (possibleKeys == null || possibleKeys.length == 0) {
@@ -199,14 +211,16 @@ public final class IrisDatapackCompiler {
                     }
                     collectRegistryRequirements(
                             requirements,
-                            installedBiomeKeys,
+                            biomeTags,
                             dimension,
-                            fixer);
+                            fixer,
+                            aliasContext);
                 }
             } finally {
                 data.close();
             }
         }
+        addBiomeTagRequirements(requirements, biomeTags);
         return Map.copyOf(requirements);
     }
 
@@ -216,23 +230,35 @@ public final class IrisDatapackCompiler {
     ) throws IOException {
         IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
         IDataFixer requiredFixer = Objects.requireNonNull(fixer, "fixer");
+        IrisData data = Objects.requireNonNull(
+                requiredDimension.getLoader(),
+                "Iris dimension loader"
+        );
         LinkedHashMap<String, String> requirements = new LinkedHashMap<>();
+        Map<String, Set<String>> biomeTags = new TreeMap<>();
+        BiomeAliasContext aliasContext = BiomeAliasContext.contentAddressedOnly();
         collectRegistryRequirements(
                 requirements,
-                new LinkedHashSet<>(),
+                biomeTags,
                 requiredDimension,
-                requiredFixer);
+                requiredFixer,
+                aliasContext);
         collectDimensionStackRegistryRequirements(
                 requirements,
+                biomeTags,
                 requiredDimension,
-                requiredFixer);
+                requiredFixer,
+                aliasContext);
+        addBiomeTagRequirements(requirements, biomeTags);
         return Map.copyOf(requirements);
     }
 
     private static void collectDimensionStackRegistryRequirements(
             Map<String, String> requirements,
+            Map<String, Set<String>> biomeTags,
             IrisDimension hostDimension,
-            IDataFixer fixer
+            IDataFixer fixer,
+            BiomeAliasContext aliasContext
     ) throws IOException {
         if (!hostDimension.hasDimensionStack()) {
             return;
@@ -255,21 +281,31 @@ public final class IrisDatapackCompiler {
             }
             collectRegistryRequirements(
                     requirements,
-                    new LinkedHashSet<>(),
+                    biomeTags,
                     sourceDimension,
-                    fixer);
+                    fixer,
+                    aliasContext);
         }
     }
 
     private static void collectRegistryRequirements(
             Map<String, String> requirements,
-            Set<String> installedBiomeKeys,
+            Map<String, Set<String>> biomeTags,
             IrisDimension dimension,
-            IDataFixer fixer
-    ) {
-        requirements.put(
-                "dimension_type/iris:" + dimension.getDimensionTypeKey(),
-                fingerprintContent(dimension.getDimensionType().toJson(fixer)));
+            IDataFixer fixer,
+            BiomeAliasContext aliasContext
+    ) throws IOException {
+        String dimensionTypeResourceKey = "iris:" + dimension.getDimensionTypeKey();
+        String dimensionTypeSource = aliasContext.generatedSource(
+                GenerationRegistryContractFactory.DIMENSION_TYPE_REGISTRY,
+                dimensionTypeResourceKey,
+                dimension.getDimensionType().toJson(fixer),
+                fixer
+        );
+        putRegistryRequirement(
+                requirements,
+                "dimension_type/" + dimensionTypeResourceKey,
+                fingerprintContent(dimensionTypeSource));
 
         ContentGate contentGate = dimension.getLoader() == null ? null : dimension.getLoader().getContentGate();
         for (IrisBiome biome : dimension.getAllBiomes(dimension::getLoader)) {
@@ -281,13 +317,25 @@ public final class IrisDatapackCompiler {
                 if (customBiome == null) {
                     continue;
                 }
-                String biomeKey = dimension.getCustomBiomeKey(customBiome.getId());
-                if (!installedBiomeKeys.add(biomeKey)) {
-                    continue;
+                String json = customBiome.generateJson(fixer, contentGate);
+                String currentPhysicalKey = GenerationRegistryContractFactory.customBiomeResourceKey(
+                        dimension.getLoadKey(),
+                        customBiome,
+                        contentGate
+                );
+                String physicalKey = aliasContext.physicalResourceKey(
+                        dimension,
+                        biome,
+                        customBiome,
+                        currentPhysicalKey
+                );
+                LinkedHashSet<String> resourceKeys = new LinkedHashSet<>();
+                resourceKeys.add(physicalKey);
+                Collection<String> aliases = aliasContext.aliases(dimension, biome, customBiome, physicalKey);
+                if (!aliases.isEmpty() && physicalKey.equals(dimension.getLoader()
+                        .customBiomeResourceKey(dimension, customBiome.getId()))) {
+                    resourceKeys.addAll(aliases);
                 }
-                requirements.put(
-                        "worldgen/biome/" + biomeKey,
-                        fingerprintContent(customBiome.generateJson(fixer, contentGate)));
                 TreeSet<String> tags = new TreeSet<>();
                 for (String tag : customBiome.getEffectiveTags(derivativeKey)) {
                     String normalizedTag = normalizeRegistryKey(tag);
@@ -295,10 +343,45 @@ public final class IrisDatapackCompiler {
                         tags.add(normalizedTag);
                     }
                 }
-                requirements.put(
-                        "worldgen/biome_tags/" + biomeKey,
-                        fingerprintContent(String.join("\n", tags)));
+                for (String resourceKey : resourceKeys) {
+                    String emittedJson = aliasContext.generatedSource(
+                            GenerationRegistryContractFactory.BIOME_REGISTRY,
+                            resourceKey,
+                            json,
+                            fixer
+                    );
+                    putRegistryRequirement(
+                            requirements,
+                            "worldgen/biome/" + resourceKey,
+                            fingerprintContent(emittedJson)
+                    );
+                    biomeTags.computeIfAbsent(resourceKey, ignored -> new TreeSet<>()).addAll(tags);
+                }
             }
+        }
+    }
+
+    private static void addBiomeTagRequirements(
+            Map<String, String> requirements,
+            Map<String, Set<String>> biomeTags
+    ) throws IOException {
+        for (Map.Entry<String, Set<String>> entry : biomeTags.entrySet()) {
+            putRegistryRequirement(
+                    requirements,
+                    "worldgen/biome_tags/" + entry.getKey(),
+                    fingerprintContent(String.join("\n", entry.getValue()))
+            );
+        }
+    }
+
+    private static void putRegistryRequirement(
+            Map<String, String> requirements,
+            String resourceKey,
+            String contentFingerprint
+    ) throws IOException {
+        String previous = requirements.putIfAbsent(resourceKey, contentFingerprint);
+        if (previous != null && !previous.equals(contentFingerprint)) {
+            throw new IOException("Conflicting Iris datapack registry resource '" + resourceKey + "'.");
         }
     }
 
@@ -359,8 +442,12 @@ public final class IrisDatapackCompiler {
             if (!hasDimensions(packRoot.toPath())) {
                 continue;
             }
+            BiomeAliasContext aliasContext = biomeAliasContext(packRoot.toPath());
             IrisData data = IrisData.openDatapackCompiler(packRoot);
             try {
+                if (aliasContext.retainedContract() != null) {
+                    data.bindGenerationRegistryContract(aliasContext.retainedContract());
+                }
                 ResourceLoader<IrisDimension> loader = data.getDimensionLoader();
                 String[] possibleKeys = loader.getPossibleKeys();
                 if (possibleKeys == null || possibleKeys.length == 0) {
@@ -379,11 +466,22 @@ public final class IrisDatapackCompiler {
                             .add(new DimensionCandidate(
                                     dimension,
                                     packRoot.toPath().toAbsolutePath().normalize(),
-                                    dimension.getDimensionType().toJson(fixer)
+                                    aliasContext.generatedSource(
+                                            GenerationRegistryContractFactory.DIMENSION_TYPE_REGISTRY,
+                                            "iris:" + dimension.getDimensionTypeKey(),
+                                            dimension.getDimensionType().toJson(fixer),
+                                            fixer
+                                    )
                             ));
                     KSet<String> seenBiomes = biomes.computeIfAbsent(dimension.getLoadKey(), ignored -> new KSet<>());
-                    dimension.installBiomes(fixer, dimension::getLoader, datapackRoots, seenBiomes);
-                    dimension.installDimensionType(fixer, datapackRoots);
+                    dimension.installBiomes(
+                            fixer,
+                            dimension::getLoader,
+                            datapackRoots,
+                            seenBiomes,
+                            aliasContext
+                    );
+                    dimension.installDimensionType(fixer, datapackRoots, aliasContext);
                     installedDimensions++;
                     dimensionCount++;
                 }
@@ -501,6 +599,23 @@ public final class IrisDatapackCompiler {
         }
     }
 
+    private static void collectCanonicalWorldPackRoot(
+            Path worldRoot,
+            Map<Path, File> roots,
+            boolean validateWholePack
+    ) throws IOException {
+        if (Files.isSymbolicLink(worldRoot)
+                || !Files.isDirectory(worldRoot, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        List<Path> candidates = new ArrayList<>();
+        collectWorldRootPackRoots(worldRoot, candidates);
+        candidates.sort(Comparator.comparing(Path::toString));
+        for (Path candidate : candidates) {
+            addPackRoot(candidate, roots, validateWholePack);
+        }
+    }
+
     private static void collectNamespaceWorldPackRoots(
             Path namespace,
             List<Path> candidates
@@ -510,23 +625,46 @@ public final class IrisDatapackCompiler {
             public FileVisitResult preVisitDirectory(
                     Path directory,
                     BasicFileAttributes attributes
-            ) {
+            ) throws IOException {
                 if (!directory.equals(namespace)
                         && PackDirectoryResolver.isHiddenName(directory.getFileName().toString())) {
                     return FileVisitResult.SKIP_SUBTREE;
                 }
-                Path irisRoot = directory.resolve("iris");
-                Path candidate = irisRoot.resolve("pack");
-                if (!Files.isSymbolicLink(irisRoot)
-                        && !Files.isSymbolicLink(candidate)
-                        && Files.isDirectory(candidate, LinkOption.NOFOLLOW_LINKS)
-                        && hasDimensions(candidate)) {
-                    candidates.add(candidate);
+                if (collectWorldRootPackRoots(directory, candidates)) {
                     return FileVisitResult.SKIP_SUBTREE;
                 }
                 return FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    private static boolean collectWorldRootPackRoots(
+            Path worldRoot,
+            List<Path> candidates
+    ) throws IOException {
+        Path irisRoot = worldRoot.resolve("iris");
+        Path generationRoot = irisRoot.resolve("generation");
+        if (!Files.isSymbolicLink(irisRoot)
+                && (Files.exists(generationRoot, LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(generationRoot))) {
+            GenerationHistory history = GenerationHistory.open(worldRoot);
+            for (GenerationEpoch epoch : history.manifest().epochs()) {
+                Path retainedPack = history.paths().packRoot(epoch.epochId());
+                if (hasDimensions(retainedPack)) {
+                    candidates.add(retainedPack);
+                }
+            }
+            return true;
+        }
+        Path legacyPack = irisRoot.resolve("pack");
+        if (!Files.isSymbolicLink(irisRoot)
+                && !Files.isSymbolicLink(legacyPack)
+                && Files.isDirectory(legacyPack, LinkOption.NOFOLLOW_LINKS)
+                && hasDimensions(legacyPack)) {
+            candidates.add(legacyPack);
+            return true;
+        }
+        return false;
     }
 
     private static List<Path> visibleDirectories(Path root) throws IOException {
@@ -560,6 +698,43 @@ public final class IrisDatapackCompiler {
             PackDirectoryResolver.requireSafePackTree(normalized.toFile());
         }
         roots.putIfAbsent(identity, normalized.toFile());
+    }
+
+    private static BiomeAliasContext biomeAliasContext(Path packRoot) throws IOException {
+        Path normalizedRoot = packRoot.toAbsolutePath().normalize();
+        Path rootParent = normalizedRoot.getParent();
+        if (rootParent == null || !"pack".equals(normalizedRoot.getFileName().toString())) {
+            return BiomeAliasContext.contentAddressedOnly();
+        }
+        if ("iris".equals(rootParent.getFileName().toString())) {
+            return BiomeAliasContext.legacyPack();
+        }
+
+        Path epochsRoot = rootParent.getParent();
+        Path generationRoot = epochsRoot == null ? null : epochsRoot.getParent();
+        Path irisRoot = generationRoot == null ? null : generationRoot.getParent();
+        Path dimensionRoot = irisRoot == null ? null : irisRoot.getParent();
+        if (epochsRoot == null
+                || generationRoot == null
+                || irisRoot == null
+                || dimensionRoot == null
+                || !"epochs".equals(epochsRoot.getFileName().toString())
+                || !"generation".equals(generationRoot.getFileName().toString())
+                || !"iris".equals(irisRoot.getFileName().toString())) {
+            return BiomeAliasContext.contentAddressedOnly();
+        }
+
+        String epochId = rootParent.getFileName().toString();
+        GenerationHistory history = GenerationHistory.open(dimensionRoot);
+        GenerationEpoch epoch = history.manifest().epoch(epochId).orElseThrow(
+                () -> new IOException("Retained Iris pack is not referenced by its generation history: "
+                        + normalizedRoot)
+        );
+        Path expectedRoot = history.paths().packRoot(epochId).toAbsolutePath().normalize();
+        if (!expectedRoot.equals(normalizedRoot)) {
+            throw new IOException("Retained Iris pack does not match its generation history: " + normalizedRoot);
+        }
+        return BiomeAliasContext.retained(epoch.registryContract());
     }
 
     private static boolean hasDimensions(Path root) {
@@ -702,6 +877,75 @@ public final class IrisDatapackCompiler {
             Path packRoot,
             String dimensionTypeJson
     ) {
+    }
+
+    private record BiomeAliasContext(
+            boolean retainAllLegacyAliases,
+            GenerationRegistryContract retainedContract
+    ) implements IrisCustomBiomeAliasResolver {
+        private static BiomeAliasContext contentAddressedOnly() {
+            return new BiomeAliasContext(false, null);
+        }
+
+        private static BiomeAliasContext legacyPack() {
+            return new BiomeAliasContext(true, null);
+        }
+
+        private static BiomeAliasContext retained(GenerationRegistryContract registryContract) {
+            return new BiomeAliasContext(
+                    false,
+                    Objects.requireNonNull(registryContract, "registryContract")
+            );
+        }
+
+        @Override
+        public String physicalResourceKey(
+                IrisDimension dimension,
+                IrisBiome biome,
+                IrisBiomeCustom customBiome,
+                String currentPhysicalResourceKey
+        ) throws IOException {
+            if (retainedContract == null) {
+                return currentPhysicalResourceKey;
+            }
+            return dimension.getLoader().customBiomeResourceKey(dimension, customBiome);
+        }
+
+        @Override
+        public Collection<String> aliases(
+                IrisDimension dimension,
+                IrisBiome biome,
+                IrisBiomeCustom customBiome,
+                String physicalResourceKey
+        ) {
+            String alias = dimension.getLoadKey().toLowerCase(Locale.ROOT)
+                    + ":" + customBiome.getId().toLowerCase(Locale.ROOT);
+            if (retainAllLegacyAliases) {
+                return List.of(alias);
+            }
+            if (retainedContract == null) {
+                return List.of();
+            }
+            PhysicalResourceKey key = new PhysicalResourceKey(
+                    GenerationRegistryContractFactory.BIOME_REGISTRY,
+                    alias
+            );
+            return retainedContract.definitions().containsKey(key) ? List.of(alias) : List.of();
+        }
+
+        @Override
+        public String generatedSource(
+                String registryKey,
+                String resourceKey,
+                String currentSource,
+                IDataFixer fixer
+        ) throws IOException {
+            if (retainedContract == null) {
+                return currentSource;
+            }
+            PhysicalResourceKey key = new PhysicalResourceKey(registryKey, resourceKey);
+            return GenerationRegistryContractFactory.renderGeneratedSource(retainedContract, key, fixer);
+        }
     }
 
     public static final class DimensionHeight {

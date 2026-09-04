@@ -69,8 +69,25 @@ public class PreservationSVC implements IrisService, PreservationRegistry {
     public void dereference() {
         IrisData.dereference();
         threads.removeIf((i) -> !i.isAlive());
-        services.removeIf(ExecutorService::isShutdown);
+        services.removeIf(ExecutorService::isTerminated);
         updateCaches();
+    }
+
+    public boolean hasActiveResources() {
+        if (dereferencer != null && dereferencer.isAlive()) {
+            return true;
+        }
+        for (Thread thread : threads) {
+            if (thread.isAlive()) {
+                return true;
+            }
+        }
+        for (ExecutorService executor : services) {
+            if (!executor.isTerminated()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

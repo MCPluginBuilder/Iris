@@ -36,27 +36,31 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.MobSpawnSettings;
 
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 final class ModdedSpawnTableMerger {
     private final IrisModdedChunkGenerator generator;
-    private volatile SpawnTableState state = new SpawnTableState();
+    private final ConcurrentHashMap<SpawnBiomeKey, Holder<Biome>> vanillaSpawnBiomes = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<SpawnTableKey, WeightedList<MobSpawnSettings.SpawnerData>> mergedSpawnTables =
+            new ConcurrentHashMap<>();
+    private final Set<Integer> initializedRuntimeIdentities = ConcurrentHashMap.newKeySet();
 
     ModdedSpawnTableMerger(IrisModdedChunkGenerator generator) {
         this.generator = generator;
     }
 
     void initializeVanillaSpawnBiomes(Registry<Biome> registry) {
-        SpawnTableState active = state;
-        if (active.initialized) {
+        Engine current = generator.engineOrNull();
+        if (current == null) {
             return;
         }
-        synchronized (active) {
-            if (active != state || active.initialized) {
-                return;
-            }
-            Engine current = generator.engineOrNull();
-            if (current == null) {
+        int runtimeIdentity = current.getCacheID();
+        if (initializedRuntimeIdentities.contains(runtimeIdentity)) {
+            return;
+        }
+        synchronized (generator) {
+            if (initializedRuntimeIdentities.contains(runtimeIdentity)) {
                 return;
             }
 
@@ -68,7 +72,7 @@ final class ModdedSpawnTableMerger {
                         hostDimension,
                         current.getData(),
                         hostDimension.getReachableBiomes(current),
-                        active
+                        runtimeIdentity
                 );
                 DimensionStackContext stackContext = current.getDimensionStackContext();
                 if (stackContext != null) {
@@ -82,11 +86,11 @@ final class ModdedSpawnTableMerger {
                                 dimension,
                                 terrainContext.getData(),
                                 dimension.getReachableBiomes(terrainContext),
-                                active
+                                runtimeIdentity
                         );
                     }
                 }
-                active.initialized = true;
+                initializedRuntimeIdentities.add(runtimeIdentity);
             }
         }
     }
@@ -96,7 +100,7 @@ final class ModdedSpawnTableMerger {
             IrisDimension dimension,
             IrisData data,
             Iterable<IrisBiome> biomes,
-            SpawnTableState state
+            int runtimeIdentity
     ) {
         for (IrisBiome irisBiome : biomes) {
             if (irisBiome == null || !irisBiome.isCustom()) {
@@ -110,31 +114,43 @@ final class ModdedSpawnTableMerger {
             for (IrisBiomeCustom customBiome : irisBiome.getCustomDerivitives()) {
                 Holder<Biome> customHolder = resolveBiomeHolder(
                         registry,
-                        ModdedWorldgenIds.biomeRef(
-                                data.getDataFolder().getName(),
-                                dimension.getLoadKey(),
-                                customBiome.getId()
-                        )
+                        data.customBiomeResourceKey(dimension, customBiome)
                 );
                 if (customHolder == null) {
                     continue;
                 }
-                state.vanillaSpawnBiomes.putIfAbsent(customHolder.value(), vanillaHolder);
+                vanillaSpawnBiomes.putIfAbsent(
+                        new SpawnBiomeKey(runtimeIdentity, customHolder.value()),
+                        vanillaHolder
+                );
             }
         }
     }
 
     Holder<Biome> vanillaSpawnBiome(Biome biome) {
-        return state.vanillaSpawnBiomes.get(biome);
+        Engine current = generator.engineOrNull();
+        return current == null
+                ? null
+                : vanillaSpawnBiomes.get(new SpawnBiomeKey(current.getCacheID(), biome));
     }
 
     WeightedList<MobSpawnSettings.SpawnerData> mergedSpawnTable(
-            Biome biome, MobCategory category,
+            Engine engine,
+            Biome biome,
+            MobCategory category,
             WeightedList<MobSpawnSettings.SpawnerData> vanillaSpawns,
             WeightedList<MobSpawnSettings.SpawnerData> explicitSpawns) {
-        SpawnTableKey key = new SpawnTableKey(biome, category);
-        return state.mergedSpawnTables.computeIfAbsent(
-                key, ignored -> NativeSpawnTableMerger.merge(vanillaSpawns, explicitSpawns));
+        SpawnTableKey key = new SpawnTableKey(engine.getCacheID(), biome, category);
+        return mergedSpawnTables.computeIfAbsent(
+                key,
+                ignored -> NativeSpawnTableMerger.merge(vanillaSpawns, explicitSpawns)
+        );
+    }
+
+    void evictRuntime(int runtimeIdentity) {
+        vanillaSpawnBiomes.keySet().removeIf(key -> key.runtimeIdentity() == runtimeIdentity);
+        mergedSpawnTables.keySet().removeIf(key -> key.runtimeIdentity() == runtimeIdentity);
+        initializedRuntimeIdentities.remove(runtimeIdentity);
     }
 
     private Holder<Biome> resolveBiomeHolder(Registry<Biome> registry, String key) {
@@ -150,16 +166,16 @@ final class ModdedSpawnTableMerger {
     }
 
     void resetVanillaSpawnBiomes() {
-        state = new SpawnTableState();
+        synchronized (generator) {
+            vanillaSpawnBiomes.clear();
+            mergedSpawnTables.clear();
+            initializedRuntimeIdentities.clear();
+        }
     }
 
-    private record SpawnTableKey(Biome biome, MobCategory category) {
+    private record SpawnBiomeKey(int runtimeIdentity, Biome biome) {
     }
 
-    private static final class SpawnTableState {
-        private final ConcurrentHashMap<Biome, Holder<Biome>> vanillaSpawnBiomes = new ConcurrentHashMap<>();
-        private final ConcurrentHashMap<SpawnTableKey, WeightedList<MobSpawnSettings.SpawnerData>> mergedSpawnTables =
-                new ConcurrentHashMap<>();
-        private volatile boolean initialized;
+    private record SpawnTableKey(int runtimeIdentity, Biome biome, MobCategory category) {
     }
 }

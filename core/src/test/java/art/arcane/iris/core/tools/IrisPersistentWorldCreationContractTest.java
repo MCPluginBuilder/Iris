@@ -19,7 +19,7 @@ public class IrisPersistentWorldCreationContractTest {
         int dimensionRoot = create.indexOf("WorldCreatorCompat.persistentDimensionRoot(worldKey)");
         int levelRoot = create.indexOf("WorldCreatorCompat.persistentLevelRoot(worldKey)");
         int existingStorage = create.indexOf("Files.exists(storageRoot.toPath())");
-        int freezePack = create.indexOf(".installIntoWorld(sender, resolvedDimension, dimensionRoot)");
+        int freezePack = create.indexOf("studioService.installIntoWorld(sender, resolvedDimension, dimensionRoot, seed)");
         int persistentCreator = create.indexOf(".persistent(!studio && !benchmark)");
         int bukkitCreate = create.indexOf("INMS.get().createWorldAsync(wc, request)");
         int rollbackStorage = create.indexOf(
@@ -48,13 +48,16 @@ public class IrisPersistentWorldCreationContractTest {
         int persistentStorage = create.indexOf("WorldCreatorCompat.persistentDimensionRoot(worldKey)");
         int canonicalIdentity = create.indexOf(".platformIdentity(worldKey.toString())");
         int configuredName = create.indexOf(".name(creator.name())");
-        int exactPack = create.indexOf("new File(w.worldFolder(), \"iris/pack\")");
+        int history = create.indexOf("requireGenerationHistory(w.worldFolder(), seed)");
+        int exactPack = create.indexOf("requireActivePack(generationHistory)");
 
         assertTrue(persistentCreator >= 0);
         assertTrue(persistentStorage > persistentCreator);
         assertTrue(canonicalIdentity > persistentStorage);
         assertTrue(configuredName > canonicalIdentity);
-        assertTrue(exactPack > configuredName);
+        assertTrue(history > configuredName);
+        assertTrue(exactPack > history);
+        assertTrue(create.contains("new File(w.worldFolder(), \"iris/pack\")"));
     }
 
     @Test

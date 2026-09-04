@@ -19,6 +19,7 @@ import org.junit.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -78,6 +79,30 @@ public class NativeStructureVolumeIndexTest {
         assertFalse(cold.isEmpty());
         assertEquals(cold, cached);
         assertEquals(coldResolutions, resolver.resolutions());
+    }
+
+    @Test
+    public void runtimeBucketsStayIsolatedAndRetirementEvictsOnlyTheirEntries() {
+        AtomicInteger runtimeId = new AtomicInteger(1);
+        Engine engine = runtimeEngine(runtimeId);
+        CountingResolver resolver = new CountingResolver(0, 0);
+        NativeStructureVolumeIndex index = NativeStructureVolumeIndex.forTesting(resolver);
+
+        index.resolve(engine, 0, 0, 15, 15);
+        assertEquals(289, resolver.resolutions());
+        index.resolve(engine, 0, 0, 15, 15);
+        assertEquals(289, resolver.resolutions());
+
+        runtimeId.set(2);
+        index.resolve(engine, 0, 0, 15, 15);
+        assertEquals(578, resolver.resolutions());
+        index.resolve(engine, 0, 0, 15, 15);
+        assertEquals(578, resolver.resolutions());
+
+        index.evictRuntime(1);
+        runtimeId.set(1);
+        index.resolve(engine, 0, 0, 15, 15);
+        assertEquals(867, resolver.resolutions());
     }
 
     @Test
@@ -188,10 +213,43 @@ public class NativeStructureVolumeIndexTest {
         assertTrue(source.contains("isStructureChunk("));
     }
 
+    @Test
+    public void originResolutionRoutesAndCachesByScopedRuntime() throws Exception {
+        String source = Files.readString(Path.of(System.getProperty("iris.nativeStructureVolumeIndexSource")));
+
+        assertTrue(source.contains("openHistoryCoordinateScope(engine, chunkX, chunkZ)"));
+        assertTrue(source.contains("new RuntimeChunkKey(runtimeId, chunkKey(chunkX, chunkZ))"));
+        assertTrue(source.contains("addGenerationRuntimeRetirementListener(retirementListener)"));
+        assertTrue(source.contains("originCache.keySet().removeIf(key -> key.runtimeId() == runtimeId)"));
+        assertTrue(source.contains("queryCache.keySet().removeIf(key -> key.runtimeId() == runtimeId)"));
+    }
+
     private static StructureStart swampHut(int chunkX, int chunkZ, int x, int z) {
         Structure source = new SwampHutStructure(new Structure.StructureSettings(HolderSet.empty()));
         SwampHutPiece piece = new SwampHutPiece(RandomSource.create(17L), x, z);
         return new StructureStart(source, new ChunkPos(chunkX, chunkZ), 0, new PiecesContainer(List.of(piece)));
+    }
+
+    private static Engine runtimeEngine(AtomicInteger runtimeId) {
+        return (Engine) Proxy.newProxyInstance(
+                Engine.class.getClassLoader(),
+                new Class<?>[]{Engine.class},
+                (proxy, method, arguments) -> {
+                    if (method.getName().equals("getCacheID")) {
+                        return runtimeId.get();
+                    }
+                    if (method.getName().equals("hashCode")) {
+                        return System.identityHashCode(proxy);
+                    }
+                    if (method.getName().equals("equals")) {
+                        return proxy == arguments[0];
+                    }
+                    if (method.getName().equals("toString")) {
+                        return "runtime-engine-" + runtimeId.get();
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                }
+        );
     }
 
     private static int findDisjointWindow(int chunkX, int chunkZ) {

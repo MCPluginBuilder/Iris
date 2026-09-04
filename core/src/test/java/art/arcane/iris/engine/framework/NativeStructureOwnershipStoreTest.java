@@ -1,11 +1,24 @@
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.engine.IrisEngine;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
+import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
 import art.arcane.iris.engine.object.IrisStructureTerrain;
 import art.arcane.iris.engine.object.NativeStructureGenerationStatus;
+import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.util.common.data.B;
+import art.arcane.volmlib.util.mantle.runtime.Mantle;
+import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
+import art.arcane.volmlib.util.matter.Matter;
+import art.arcane.volmlib.util.matter.MatterSlice;
+import org.junit.BeforeClass;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -14,16 +27,33 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class NativeStructureOwnershipStoreTest {
     private static final String FINGERPRINT = "34".repeat(32);
+
+    @BeforeClass
+    public static void initializeMantleBlockState() throws Exception {
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        try (MockedStatic<B> blocks = mockStatic(B.class)) {
+            blocks.when(() -> B.getState("AIR")).thenReturn(air);
+            Class.forName(EngineMantle.class.getName());
+        }
+    }
 
     @Test
     public void fullReferenceEnvelopeWritesOnlyItsOriginAuthority() {
@@ -400,11 +430,103 @@ public class NativeStructureOwnershipStoreTest {
         assertEquals(2, storage.flushes);
     }
 
+    @Test
+    public void queuedOwnershipFlushUsesMantleCapturedBeforeRuntimePromotion() {
+        IrisEngine engine = mock(IrisEngine.class);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        IrisEngine.GenerationRuntimeBinding bindingA = runtimeBinding(11);
+        IrisEngine.GenerationRuntimeBinding bindingB = runtimeBinding(12);
+        MantleFixture mantleA = mantleFixture();
+        MantleFixture mantleB = mantleFixture();
+        AtomicReference<GenerationHistoryRuntimeRouter.RuntimeOwnership> ownership =
+                new AtomicReference<>(new GenerationHistoryRuntimeRouter.RuntimeOwnership(1L, bindingA));
+        AtomicReference<EngineMantle> currentMantle = new AtomicReference<>(mantleA.engineMantle());
+        AtomicInteger currentRuntime = new AtomicInteger(11);
+        when(engine.getGenerationHistoryRuntimeRouter()).thenReturn(Optional.of(router));
+        when(router.currentRuntimeOwnership()).thenAnswer(ignored -> Optional.of(ownership.get()));
+        when(engine.getMantle()).thenAnswer(ignored -> currentMantle.get());
+        when(engine.getCacheID()).thenAnswer(ignored -> currentRuntime.get());
+        NativeStructureOwnershipStore.MantleStorage storage =
+                new NativeStructureOwnershipStore.MantleStorage(engine);
+        NativeStructureOwnershipRecord record = record("test:captured_mantle", 4, -5, 109L);
+
+        storage.write(NativeStructureOwnershipStore.pack(4, -5), record);
+        ownership.set(new GenerationHistoryRuntimeRouter.RuntimeOwnership(2L, bindingB));
+        currentMantle.set(mantleB.engineMantle());
+        currentRuntime.set(12);
+
+        assertTrue(storage.flush());
+        verify(mantleA.mantle(), times(2)).getChunk(4, -5);
+        verify(mantleA.mantle()).saveIdleTectonicPlates(any());
+        verify(mantleB.mantle(), never()).getChunk(anyInt(), anyInt());
+        verify(mantleB.mantle(), never()).saveIdleTectonicPlates(any());
+        storage.close();
+    }
+
+    @Test
+    public void flushPartitionsPendingOwnershipByCapturedRuntime() {
+        IrisEngine engine = mock(IrisEngine.class);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        IrisEngine.GenerationRuntimeBinding bindingA = runtimeBinding(21);
+        IrisEngine.GenerationRuntimeBinding bindingB = runtimeBinding(22);
+        MantleFixture mantleA = mantleFixture();
+        MantleFixture mantleB = mantleFixture();
+        AtomicReference<GenerationHistoryRuntimeRouter.RuntimeOwnership> ownership =
+                new AtomicReference<>(new GenerationHistoryRuntimeRouter.RuntimeOwnership(3L, bindingA));
+        AtomicReference<EngineMantle> currentMantle = new AtomicReference<>(mantleA.engineMantle());
+        AtomicInteger currentRuntime = new AtomicInteger(21);
+        when(engine.getGenerationHistoryRuntimeRouter()).thenReturn(Optional.of(router));
+        when(router.currentRuntimeOwnership()).thenAnswer(ignored -> Optional.of(ownership.get()));
+        when(engine.getMantle()).thenAnswer(ignored -> currentMantle.get());
+        when(engine.getCacheID()).thenAnswer(ignored -> currentRuntime.get());
+        NativeStructureOwnershipStore.MantleStorage storage =
+                new NativeStructureOwnershipStore.MantleStorage(engine);
+        NativeStructureOwnershipRecord recordA = record("test:partition_a", -7, 8, 110L);
+        NativeStructureOwnershipRecord recordB = record("test:partition_b", 9, -10, 111L);
+
+        storage.write(NativeStructureOwnershipStore.pack(-7, 8), recordA);
+        ownership.set(new GenerationHistoryRuntimeRouter.RuntimeOwnership(4L, bindingB));
+        currentMantle.set(mantleB.engineMantle());
+        currentRuntime.set(22);
+        storage.write(NativeStructureOwnershipStore.pack(9, -10), recordB);
+
+        assertTrue(storage.flush());
+        verify(mantleA.mantle(), times(2)).getChunk(-7, 8);
+        verify(mantleA.mantle()).saveIdleTectonicPlates(any());
+        verify(mantleB.mantle(), times(2)).getChunk(9, -10);
+        verify(mantleB.mantle()).saveIdleTectonicPlates(any());
+        storage.close();
+    }
+
     private static Engine engine() {
         Engine engine = mock(Engine.class);
         when(engine.isClosing()).thenReturn(false);
         when(engine.isClosed()).thenReturn(false);
         return engine;
+    }
+
+    private static IrisEngine.GenerationRuntimeBinding runtimeBinding(int runtimeId) {
+        IrisEngine.GenerationRuntimeBinding binding = mock(IrisEngine.GenerationRuntimeBinding.class);
+        when(binding.runtimeId()).thenReturn(runtimeId);
+        return binding;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static MantleFixture mantleFixture() {
+        EngineMantle engineMantle = mock(EngineMantle.class);
+        Mantle<Matter> mantle = mock(Mantle.class);
+        MantleChunk<Matter> chunk = mock(MantleChunk.class);
+        Matter section = mock(Matter.class);
+        MatterSlice<NativeStructureOwnershipBundle> slice = mock(MatterSlice.class);
+        when(engineMantle.getMantle()).thenReturn(mantle);
+        when(mantle.getChunk(anyInt(), anyInt())).thenReturn(chunk);
+        when(chunk.use()).thenReturn(chunk);
+        when(chunk.getOrCreate(0)).thenReturn(section);
+        when(section.<NativeStructureOwnershipBundle>slice(
+                NativeStructureOwnershipBundle.class)).thenReturn(slice);
+        when(slice.get(0, 0, 0)).thenReturn(null);
+        when(mantle.saveIdleTectonicPlates(any())).thenReturn(Set.of());
+        return new MantleFixture(engineMantle, mantle);
     }
 
     private static NativeStructureOwnershipRecord record(String key, int originX, int originZ,
@@ -582,5 +704,8 @@ public class NativeStructureOwnershipStoreTest {
                 throw new IllegalStateException("Ownership write was interrupted", error);
             }
         }
+    }
+
+    private record MantleFixture(EngineMantle engineMantle, Mantle<Matter> mantle) {
     }
 }

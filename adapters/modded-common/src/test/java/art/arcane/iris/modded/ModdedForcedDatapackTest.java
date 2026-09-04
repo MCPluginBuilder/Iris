@@ -52,6 +52,19 @@ public class ModdedForcedDatapackTest {
         assertEquals("iris:overworld", ModdedWorldgenIds.generatorIdentity("overworld"));
         assertEquals("iris:other/overworld",
                 ModdedWorldgenIds.generatorIdentity("other:overworld"));
+        assertEquals(
+                new ModdedWorldgenIds.ScopedDimension("overworld", "overworld"),
+                ModdedWorldgenIds.scopedDimensionType(
+                        ModdedWorldgenIds.dimensionTypeRef("overworld", "overworld")
+                ).orElseThrow()
+        );
+        assertEquals(
+                List.of(
+                        ModdedWorldgenIds.biomeRef("overworld", "overworld", "mist"),
+                        "overworld:mist"
+                ),
+                ModdedWorldgenIds.legacyBiomeRefs("overworld", "overworld", "mist")
+        );
     }
 
     @Test
@@ -143,6 +156,24 @@ public class ModdedForcedDatapackTest {
             assertEquals("known-good",
                     Files.readString(published.resolve("pack.mcmeta"), StandardCharsets.UTF_8));
             assertEquals(List.of("iris"), directoryEntries(root));
+        } finally {
+            deleteTree(root);
+        }
+    }
+
+    @Test
+    public void rejectsConflictingRegistryDefinitionsDuringMerge() throws IOException {
+        Path root = Files.createTempDirectory("iris-forced-pack-conflict");
+        try {
+            Path source = Files.createDirectories(root.resolve("source/data/iris/worldgen/biome"));
+            Path destination = Files.createDirectories(root.resolve("destination/data/iris/worldgen/biome"));
+            Files.writeString(source.resolve("shared.json"), "{\"temperature\":1}", StandardCharsets.UTF_8);
+            Files.writeString(destination.resolve("shared.json"), "{\"temperature\":2}", StandardCharsets.UTF_8);
+
+            assertThrows(
+                    IOException.class,
+                    () -> ModdedForcedDatapack.mergeDirectory(root.resolve("source"), root.resolve("destination"))
+            );
         } finally {
             deleteTree(root);
         }

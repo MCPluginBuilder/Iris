@@ -14,15 +14,16 @@ public class ModdedLifecycleFailureContractTest {
     private static final String SOURCE_ROOT_PROPERTY = "iris.moddedCommonSources";
 
     @Test
-    public void existingDimensionRepointBindsBeforeHandlePublication() throws IOException {
+    public void existingDimensionStagesWithoutReplacingTheLiveEngine() throws IOException {
         String managerSource = source("ModdedDimensionManager.java");
-        String create = method(managerSource, "public static Handle create(");
+        String create = method(managerSource, "private static Handle create(");
         int existingStart = requiredIndex(create, "if (existing != null");
         int presentStart = requiredIndex(create, "if (serverAccess.hasLevel(server, key))", existingStart + 1);
         int injectionStart = requiredIndex(create, "try {", presentStart);
 
-        assertRepointBeforePublication(create.substring(existingStart, presentStart));
-        assertRepointBeforePublication(create.substring(presentStart, injectionStart));
+        assertFalse(create.substring(existingStart, presentStart).contains("repointAndBind("));
+        assertFalse(create.substring(presentStart, injectionStart).contains("repointAndBind("));
+        assertBefore(create, "ModdedGenerationHistoryStorage.createOrStage(", "if (existing != null");
 
         String generatorSource = source("IrisModdedChunkGenerator.java");
         String repointAndBind = method(generatorSource, "void repointAndBind(");
@@ -38,6 +39,31 @@ public class ModdedLifecycleFailureContractTest {
         assertTrue(installReplacement.contains("ENGINES.compute("));
         assertBefore(installReplacement, "close(current);", "return activeReplacement;");
         assertFalse(installReplacement.contains("catch ("));
+    }
+
+    @Test
+    public void persistentPackUpdatesUseAnExplicitRestartBoundPath() throws IOException {
+        String managerSource = source("ModdedDimensionManager.java");
+        String createPersistent = method(managerSource, "public static Handle createPersistent(");
+        String update = method(managerSource, "public static UpdateResult stagePersistentUpdate(");
+
+        assertBefore(createPersistent, "if (previous != null)", "ModdedDimensionRegistryStore.put(");
+        assertTrue(createPersistent.contains("Use the Iris world update command"));
+        assertTrue(update.contains("ModdedGenerationHistoryStorage.createOrStage("));
+        assertTrue(update.contains("active.history().pendingActivation()"));
+        assertTrue(update.contains("restartRequired()"));
+        assertFalse(update.contains("inject("));
+        assertFalse(update.contains("repointAndBind("));
+        assertBefore(update, "ModdedDimensionRegistryStore.put(server, updated);",
+                "ModdedGenerationHistoryStorage.createOrStage(");
+        assertTrue(update.contains("ModdedDimensionRegistryStore.put(server, previous);"));
+
+        String commandsSource = source("command/ModdedWorldCommands.java");
+        assertTrue(commandsSource.contains("root.then(updateTree());"));
+        String command = method(commandsSource, "private static int update(");
+        assertTrue(command.contains("ModdedDimensionManager.stagePersistentUpdate("));
+        assertTrue(command.contains("Restart the server to activate it"));
+        assertTrue(command.contains("running world remains on its current pack"));
     }
 
     @Test
@@ -110,18 +136,13 @@ public class ModdedLifecycleFailureContractTest {
     }
 
     @Test
-    public void packDimensionLoadingNeverSuppressesTheFailureAsNull() throws IOException {
-        String source = source("ModdedDimensionManager.java");
-        String loading = method(source, "private static IrisDimension loadPackDimension(");
+    public void persistentRestoreOpensHistoryBeforeConsultingTheGlobalPack() throws IOException {
+        String source = source("ModdedGenerationHistoryStorage.java");
+        String restore = method(source, "static GenerationHistory restoreOrAdopt(");
 
-        assertFalse(loading.contains("return null;"));
-        assertFalse(loading.contains("e.toString()"));
-        int catchIndex = loading.indexOf("catch (");
-        if (catchIndex >= 0) {
-            String failure = blockAt(loading, requiredIndex(loading, "{", catchIndex));
-            assertTrue(failure.contains("throw "));
-            assertTrue(failure.contains(", e);") || failure.contains("throw e;"));
-        }
+        assertBefore(restore, "GenerationHistory.openIfPresent(", "sourceSupplier\").get();");
+        assertTrue(restore.contains("if (existing.isPresent())"));
+        assertBefore(restore, "requireRegistryDefinitions(existing.get()", "return existing.get();");
     }
 
     @Test
@@ -247,12 +268,6 @@ public class ModdedLifecycleFailureContractTest {
         assertTrue(bind.contains("rollback.add(customContentDiscovery::rollback);"));
         assertBefore(failure, "createdServices.rollback(failure);", "rollback.restore(failure);");
         assertBefore(failure, "rollback.restore(failure);", "throw ");
-    }
-
-    private static void assertRepointBeforePublication(String branch) {
-        assertBefore(branch, "repointAndBind(", "new Handle(");
-        assertBefore(branch, "repointAndBind(", "HANDLES.put(");
-        assertBefore(branch, "repointAndBind(", "return ");
     }
 
     private static void assertBefore(String source, String first, String second) {

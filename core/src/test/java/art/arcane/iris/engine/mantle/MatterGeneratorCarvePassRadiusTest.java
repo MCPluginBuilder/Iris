@@ -3,12 +3,18 @@ package art.arcane.iris.engine.mantle;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.matter.Matter;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.LinkedHashSet;
@@ -19,11 +25,34 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 public class MatterGeneratorCarvePassRadiusTest {
+    private static IrisPlatform previousPlatform;
+
+    @BeforeClass
+    public static void bindPlatform() {
+        previousPlatform = IrisPlatforms.isBound() ? IrisPlatforms.get() : null;
+        IrisPlatforms.unbind();
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        PlatformRegistries registries = mock(PlatformRegistries.class);
+        IrisPlatform platform = mock(IrisPlatform.class);
+        when(registries.block(anyString())).thenReturn(air);
+        when(platform.registries()).thenReturn(registries);
+        IrisPlatforms.bind(platform);
+    }
+
+    @AfterClass
+    public static void restorePlatform() {
+        IrisPlatforms.unbind();
+        if (previousPlatform != null) {
+            IrisPlatforms.bind(previousPlatform);
+        }
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     public void platformFilterRemovesSkippedComponentFromGenerationReach() {
@@ -345,6 +374,9 @@ public class MatterGeneratorCarvePassRadiusTest {
         private final List<MantlePass> components;
 
         private TestMatterGenerator(Engine engine, Mantle<Matter> mantle, List<MantlePass> components) {
+            EngineMantle engineMantle = mock(EngineMantle.class);
+            when(engine.getMantle()).thenReturn(engineMantle);
+            when(engineMantle.getEngine()).thenReturn(engine);
             this.engine = engine;
             this.mantle = mantle;
             this.components = components;

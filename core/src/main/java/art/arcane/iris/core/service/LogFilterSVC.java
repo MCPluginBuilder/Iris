@@ -7,6 +7,7 @@ import org.apache.logging.log4j.Marker;
 import org.apache.logging.log4j.core.Filter;
 import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.config.LoggerConfig;
 import org.apache.logging.log4j.message.Message;
 
 import java.util.List;
@@ -21,14 +22,15 @@ public class LogFilterSVC implements IrisService, Filter {
     // so a mutable static here was both a CME hazard and grew by three entries per enable.
     private static final List<String> FILTERS = List.of(HEIGHTMAP_MISMATCH, RAID_PERSISTENCE, DUPLICATE_ENTITY_UUID);
 
-    private boolean installed = false;
+    private LoggerConfig installedLogger;
 
     public void onEnable() {
-        if (installed) {
+        if (installedLogger != null) {
             return;
         }
-        ((Logger) LogManager.getRootLogger()).addFilter(this);
-        installed = true;
+        LoggerConfig logger = ((Logger) LogManager.getRootLogger()).get();
+        logger.addFilter(this);
+        installedLogger = logger;
     }
 
     public void initialize() {
@@ -41,11 +43,12 @@ public class LogFilterSVC implements IrisService, Filter {
     }
 
     public void onDisable() {
-        if (!installed) {
+        LoggerConfig logger = installedLogger;
+        if (logger == null) {
             return;
         }
-        ((Logger) LogManager.getRootLogger()).get().removeFilter(this);
-        installed = false;
+        logger.removeFilter(this);
+        installedLogger = null;
     }
 
     public boolean isStarted() {

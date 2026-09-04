@@ -668,15 +668,56 @@ public class HydrologyModelTest {
         HydrologyColumnSample column = new HydrologyColumnSample(
                 1000, 0, 80, 63, false, "parent", List.of(layer)
         );
+        HydrologyFeatureRef middle = new HydrologyFeatureRef(
+                203L,
+                HydrologyFeatureType.DEEP_CHANNEL,
+                course.id(),
+                segment.id(),
+                500,
+                20,
+                0,
+                1,
+                0,
+                false
+        );
+        HydrologyColumnLayer middleLayer = new HydrologyColumnLayer(
+                middle,
+                18,
+                20,
+                24,
+                true,
+                false,
+                false,
+                true,
+                false,
+                false,
+                true,
+                true,
+                false,
+                "acid",
+                "surface",
+                "mouth",
+                "shore",
+                "dry",
+                "flooded"
+        );
+        HydrologyColumnSample middleColumn = new HydrologyColumnSample(
+                500, 0, 80, 63, false, "parent", List.of(middleLayer)
+        );
         HashMap<CavePosition, HydrologyCaveAction> actions = new HashMap<>();
         HashMap<CavePosition, CaveVoxelPrecondition> preconditions = new HashMap<>();
-        for (int y = layer.bedY() + 1; y <= layer.ceilingY(); y++) {
-            CavePosition position = new CavePosition(column.x(), y, column.z());
-            actions.put(
-                    position,
-                    y > layer.fluidHeadY() ? HydrologyCaveAction.DRY_AIR : HydrologyCaveAction.WET_SOURCE
-            );
-            preconditions.put(position, new CaveVoxelPrecondition(CaveVoxel.SOLID, false));
+        for (HydrologyColumnSample plannedColumn : List.of(column, middleColumn)) {
+            HydrologyColumnLayer plannedLayer = plannedColumn.layers().getFirst();
+            for (int y = plannedLayer.bedY() + 1; y <= plannedLayer.ceilingY(); y++) {
+                CavePosition position = new CavePosition(plannedColumn.x(), y, plannedColumn.z());
+                actions.put(
+                        position,
+                        y > plannedLayer.fluidHeadY()
+                                ? HydrologyCaveAction.DRY_AIR
+                                : HydrologyCaveAction.WET_SOURCE
+                );
+                preconditions.put(position, new CaveVoxelPrecondition(CaveVoxel.SOLID, false));
+            }
         }
         HydrologyCavePlan plan = new HydrologyCavePlan(
                 new HydrologyCaveSource(
@@ -702,13 +743,24 @@ public class HydrologyModelTest {
                 List.of(course),
                 List.of(plan),
                 List.of(),
-                new RiverFootprint(Map.of(RiverFootprint.pack(1000, 0), column))
+                new RiverFootprint(Map.of(
+                        RiverFootprint.pack(1000, 0), column,
+                        RiverFootprint.pack(500, 0), middleColumn
+                ))
         );
 
         assertEquals(endpoint, tile.nearestFeature(
                 Set.of(HydrologyFeatureType.DEEP_CHANNEL), "acid", 1000, 0, 10).orElseThrow());
         assertTrue(tile.nearestFeature(
                 Set.of(HydrologyFeatureType.DEEP_CHANNEL), "deep_lava", 1000, 0, 10).isEmpty());
+        assertEquals(middle, tile.nearestFeature(
+                Set.of(HydrologyFeatureType.DEEP_CHANNEL),
+                "acid",
+                1000,
+                0,
+                1000,
+                feature -> feature.x() != 1000
+        ).orElseThrow());
     }
 
     private HydrologyFeatureRef feature(HydrologyFeatureType type, long id, int y) {

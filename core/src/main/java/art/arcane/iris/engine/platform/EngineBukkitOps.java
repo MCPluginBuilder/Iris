@@ -18,6 +18,8 @@
 
 package art.arcane.iris.engine.platform;
 
+import art.arcane.iris.engine.history.GenerationFindCatalog;
+
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.core.events.IrisLootEvent;
 import art.arcane.iris.core.link.Identifier;
@@ -581,7 +583,7 @@ public final class EngineBukkitOps {
     }
 
     public static void gotoRegion(Engine engine, IrisRegion r, Player player, boolean teleport) {
-        if (!engine.getDimension().getRegions().contains(r.getLoadKey())) {
+        if (GenerationFindCatalog.region(engine, r.getLoadKey()) == null) {
             ComponentMessenger.sendSection(player, IrisLanguage.text(BukkitRuntimeMessages.ENGINE_BUKKIT_OPS_IS_NOT_DEFINED_DIMENSION, MessageArgument.untrusted("name", String.valueOf(r.getName()))));
             return;
         }

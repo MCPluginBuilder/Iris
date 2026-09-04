@@ -2,6 +2,8 @@ package art.arcane.iris.engine.mantle;
 
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -43,6 +45,8 @@ public class MantleWriterOverlayTest {
     private MatterSlice<MatterCavern> cavernSlice;
     private MatterSlice<HydrologyCaveCell> hydrologySlice;
     private IrisDimension dimension;
+    private EngineMantle engineMantle;
+    private Mantle<Matter> mantle;
 
     @Before
     @SuppressWarnings("unchecked")
@@ -55,10 +59,10 @@ public class MantleWriterOverlayTest {
         when(platform.registries()).thenReturn(registries);
         IrisPlatforms.bind(platform);
 
-        EngineMantle engineMantle = mock(EngineMantle.class);
+        engineMantle = mock(EngineMantle.class);
         Engine engine = mock(Engine.class);
         dimension = mock(IrisDimension.class);
-        Mantle<Matter> mantle = mock(Mantle.class);
+        mantle = mock(Mantle.class);
         chunk = mock(MantleChunk.class);
         matter = mock(Matter.class);
         blockSlice = mock(MatterSlice.class);
@@ -182,6 +186,29 @@ public class MantleWriterOverlayTest {
         verify(blockSlice, never()).set(X, Y, Z, null);
         verify(identifierSlice, never()).set(X, Y, Z, null);
         verify(cavernSlice, never()).set(X, Y, Z, cavern);
+    }
+
+    @Test
+    public void historicalChunkRejectsAllMutationKinds() {
+        writer.close();
+        IrisComplex complex = mock(IrisComplex.class);
+        TransitionGenerationPlan transition = mock(TransitionGenerationPlan.class);
+        when(engineMantle.getComplex()).thenReturn(complex);
+        when(complex.getTransitionGenerationPlan()).thenReturn(transition);
+        when(transition.isHistoricalBlock(X, Z)).thenReturn(true);
+        writer = new MantleWriter(engineMantle, mantle, 0, 0, 0, false);
+        PlatformBlockState replacement = mock(PlatformBlockState.class);
+        MatterCavern cavern = new MatterCavern(true, "", (byte) 3);
+
+        writer.setData(X, Y, Z, replacement);
+        assertFalse(writer.setDataIfAbsent(X, Y, Z, cavern));
+        assertFalse(writer.carveDataIfAbsent(X, Y, Z, cavern));
+        writer.setForcedCarve(X, Y, Z, cavern);
+        writer.clearBlock(X, Y, Z);
+        writer.clearData(X, Y, Z, PlatformBlockState.class);
+
+        verify(blockSlice, never()).set(anyInt(), anyInt(), anyInt(), any());
+        verify(cavernSlice, never()).set(anyInt(), anyInt(), anyInt(), any());
     }
 
     @Test

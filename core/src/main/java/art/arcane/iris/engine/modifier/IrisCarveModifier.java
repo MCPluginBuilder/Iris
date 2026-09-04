@@ -104,9 +104,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             if (protectUpper) {
                 int worldX = localX + chunkBlockX;
                 int worldZ = localZ + chunkBlockZ;
-                int rawUpper = upperCtx.getUpperSurfaceY(worldX, worldZ);
-                int gap = getEngine().getDimension().getUpperDimensionGap();
-                upperSurfaceHeights[columnIndex] = Math.max(rawUpper, surfaceHeights[columnIndex] + gap);
+                upperSurfaceHeights[columnIndex] = upperCtx.getEffectiveSurfaceY(worldX, worldZ);
             }
             if (stackLayouts != null) {
                 stackLayouts[columnIndex] = context.getDimensionStackLayout(localX, localZ);

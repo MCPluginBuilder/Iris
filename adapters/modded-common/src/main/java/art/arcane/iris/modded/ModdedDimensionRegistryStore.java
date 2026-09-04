@@ -53,6 +53,10 @@ public final class ModdedDimensionRegistryStore {
         return contents(file).dimensions();
     }
 
+    static List<PersistentDimension> loadWorldRoot(Path worldRoot) {
+        return load(storeFile(worldRoot));
+    }
+
     /**
      * Boot-safe load: a corrupt registry must not abort server start. The broken file is renamed aside so the
      * next write starts clean, and every id we can still recognise in the raw text is reported as lost.
@@ -232,7 +236,11 @@ public final class ModdedDimensionRegistryStore {
     }
 
     private static Path storeFile(MinecraftServer server) {
-        return server.getWorldPath(LevelResource.ROOT).resolve("iris").resolve(FILE_NAME);
+        return storeFile(server.getWorldPath(LevelResource.ROOT));
+    }
+
+    private static Path storeFile(Path worldRoot) {
+        return worldRoot.resolve("iris").resolve(FILE_NAME);
     }
 
     public record PersistentDimension(String id, String pack, String dimension, long seed) {

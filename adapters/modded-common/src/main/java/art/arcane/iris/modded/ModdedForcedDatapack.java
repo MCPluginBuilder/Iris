@@ -18,7 +18,7 @@
 
 package art.arcane.iris.modded;
 
-import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.core.IrisDatapackCompiler;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
@@ -27,11 +27,25 @@ import art.arcane.iris.core.nms.datapack.IDataFixer;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackValidationResult;
 import art.arcane.iris.core.pack.PackValidator;
+import art.arcane.iris.engine.history.GenerationEpoch;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationHistoryPaths;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
+import art.arcane.iris.engine.history.GenerationRegistryContract.PhysicalResourceKey;
+import art.arcane.iris.engine.history.GenerationRegistryContractFactory;
+import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisBiomeCustom;
+import art.arcane.iris.engine.object.IrisCustomBiomeAliasResolver;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionType;
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KSet;
 import net.minecraft.network.chat.Component;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.packs.PackLocationInfo;
 import net.minecraft.server.packs.PackSelectionConfig;
 import net.minecraft.server.packs.PackType;
@@ -39,25 +53,28 @@ import net.minecraft.server.packs.PathPackResources;
 import net.minecraft.server.packs.repository.Pack;
 import net.minecraft.server.packs.repository.PackSource;
 import net.minecraft.server.packs.repository.RepositorySource;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -67,14 +84,10 @@ public final class ModdedForcedDatapack {
     private static final String PACK_ID = "iris_worldgen";
     private static final String PACK_FOLDER = "iris";
     private static final String HASH_FILE_NAME = "packs.hash";
-    // Bump this whenever the emitted datapack content changes for reasons the pack-directory hash cannot see.
-    // v2: custom biomes now inherit their vanilla derivative's biome tags, so every already-published pack has
-    // to regenerate once.
-    private static final String HASH_SALT = "iris-forced-datapack-v2";
+    private static final String HASH_SALT = "iris-forced-datapack-v3-content-addressed-biomes";
     private static final long PACKS_HASH_TTL_NANOS = 2_000_000_000L;
     private static final Object LOCK = new Object();
     private static final AtomicBoolean LOADED = new AtomicBoolean(false);
-    private static final AtomicBoolean STALE_SERVE_LOGGED = new AtomicBoolean(false);
     private static volatile PublishedState published;
     private static volatile HashMemo packsHashMemo;
 
@@ -119,11 +132,9 @@ public final class ModdedForcedDatapack {
                 reason = "no published pack";
             } else if (!hash.isEmpty() && !state.packsHash().equals(hash)) {
                 reason = "stale cache (hash changed)";
+            } else if (hash.isEmpty()) {
+                reason = "current registry inputs could not be verified";
             } else {
-                if (hash.isEmpty() && STALE_SERVE_LOGGED.compareAndSet(false, true)) {
-                    ModdedIrisLog.warn("Iris cannot hash the installed packs; serving the last generated forced datapack from {} unverified",
-                            state.directory());
-                }
                 try {
                     return requireReadablePack(state.directory());
                 } catch (RuntimeException unreadable) {
@@ -163,17 +174,7 @@ public final class ModdedForcedDatapack {
     }
 
     private static Pack buildPack() {
-        try {
-            return requireReadablePack(regenerate());
-        } catch (RuntimeException | Error generationFailure) {
-            Path lastKnownGood = packDirectory();
-            if (Files.isRegularFile(lastKnownGood.resolve("pack.mcmeta"))) {
-                ModdedIrisLog.error("Iris kept the last known-good generated datapack after regeneration failed",
-                        generationFailure);
-                return requireReadablePack(lastKnownGood);
-            }
-            throw generationFailure;
-        }
+        return requireReadablePack(regenerate());
     }
 
     private static Pack requireReadablePack(Path directory) {
@@ -263,7 +264,6 @@ public final class ModdedForcedDatapack {
             // Publish the hash this run was built from as the memo too: a memo captured before staging would
             // otherwise mismatch what was just published and send the next serve straight back into buildPack.
             packsHashMemo = new HashMemo(packsHash, System.nanoTime());
-            STALE_SERVE_LOGGED.set(false);
             return packDirectory();
         } catch (IOException | RuntimeException | Error failure) {
             try {
@@ -335,10 +335,6 @@ public final class ModdedForcedDatapack {
         return hash;
     }
 
-    /**
-     * Content hash over the installed packs: relative path, size and mtime of every regular file, plus the
-     * pack format and loader the generated datapack is shaped for.
-     */
     private static String packsHash() throws IOException {
         MessageDigest digest;
         try {
@@ -348,39 +344,13 @@ public final class ModdedForcedDatapack {
         }
         digest.update((HASH_SALT + '|' + ModdedEngineBootstrap.loader().platformName()
                 + '|' + DataVersion.getLatest().getPackFormat() + '\n').getBytes(StandardCharsets.UTF_8));
-        Path root = packsRoot();
-        if (Files.isDirectory(root)) {
-            List<String> entries = new ArrayList<>();
-            Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
-                @Override
-                public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
-                    return !directory.equals(root)
-                            && PackDirectoryResolver.isHiddenName(directory.getFileName().toString())
-                            ? FileVisitResult.SKIP_SUBTREE
-                            : FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
-                    if (attributes.isRegularFile()) {
-                        entries.add(root.relativize(file).toString().replace('\\', '/')
-                                + '|' + attributes.size() + '|' + attributes.lastModifiedTime().toMillis());
-                    }
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult visitFileFailed(Path file, IOException failure) {
-                    entries.add(root.relativize(file).toString().replace('\\', '/') + "|unreadable");
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-            entries.sort(Comparator.naturalOrder());
-            for (String entry : entries) {
-                digest.update(entry.getBytes(StandardCharsets.UTF_8));
-                digest.update((byte) '\n');
-            }
-        }
+        String inputFingerprint = IrisDatapackCompiler.computeInputFingerprint(
+                compilationPackRoots(),
+                List.of(),
+                DataVersion.getLatest().get(),
+                false
+        );
+        digest.update(inputFingerprint.getBytes(StandardCharsets.UTF_8));
         return HexFormat.of().formatHex(digest.digest());
     }
 
@@ -390,10 +360,11 @@ public final class ModdedForcedDatapack {
 
         int packCount = 0;
         KList<String> presetIds = new KList<>();
-        File root = packsRoot().toFile();
-        List<File> packs = PackDirectoryResolver.listVisiblePackDirectoriesOrThrow(root);
-        for (File pack : packs) {
-            if (stagePack(pack, fixer, stagingDirectory, seenBiomes, presetIds)) {
+        Path worldRoot = worldRootOrNull();
+        Set<PackSelection> legacySelections = unadoptedSelections(worldRoot);
+        for (File pack : compilationPackRoots(worldRoot)) {
+            PackStageContext context = packStageContext(pack.toPath(), legacySelections);
+            if (stagePack(context, fixer, stagingDirectory, seenBiomes, presetIds)) {
                 packCount++;
             }
         }
@@ -414,19 +385,28 @@ public final class ModdedForcedDatapack {
         }
     }
 
-    private static boolean stagePack(File sourcePack, IDataFixer fixer, Path stagingDirectory,
+    private static boolean stagePack(PackStageContext context, IDataFixer fixer, Path stagingDirectory,
                                      Map<String, KSet<String>> seenBiomes,
                                      KList<String> presetIds) throws IOException {
+        File sourcePack = context.packRoot().toFile();
         PackValidationResult validation;
         try {
             validation = PackValidator.validateForDatapackBootstrap(sourcePack);
         } catch (Throwable validationFailure) {
+            if (context.required()) {
+                throw requiredPackFailure(context, "validation", validationFailure);
+            }
             ModdedIrisLog.error("Iris excluded pack '{}' from Create World because validation failed",
                     sourcePack.getName(), validationFailure);
             rethrowIfUnrecoverable(validationFailure);
             return false;
         }
         if (!validation.isLoadable()) {
+            if (context.required()) {
+                throw new IOException("Retained Iris generation pack at " + context.packRoot()
+                        + " has " + validation.getBlockingErrors().size()
+                        + " blocking validation error(s): " + validation.getBlockingErrors().getFirst());
+            }
             ModdedIrisLog.error("Iris excluded pack '{}' from Create World: {} blocking validation error(s); first error: {}",
                     sourcePack.getName(), validation.getBlockingErrors().size(),
                     validation.getBlockingErrors().getFirst());
@@ -441,8 +421,11 @@ public final class ModdedForcedDatapack {
         packFolders.add(packStagingDirectory.toFile());
         boolean installed;
         try {
-            installed = installPack(sourcePack, fixer, packFolders, packBiomes, packPresetIds);
+            installed = installPack(context, fixer, packFolders, packBiomes, packPresetIds);
         } catch (Throwable installationFailure) {
+            if (context.required()) {
+                throw requiredPackFailure(context, "datapack serialization", installationFailure);
+            }
             ModdedIrisLog.error("Iris excluded pack '{}' from Create World because datapack serialization failed",
                     sourcePack.getName(), installationFailure);
             rethrowIfUnrecoverable(installationFailure);
@@ -481,7 +464,7 @@ public final class ModdedForcedDatapack {
         }
     }
 
-    private static void mergeDirectory(Path sourceDirectory, Path destinationDirectory) throws IOException {
+    static void mergeDirectory(Path sourceDirectory, Path destinationDirectory) throws IOException {
         List<Path> entries = new ArrayList<>();
         try (Stream<Path> walk = Files.walk(sourceDirectory)) {
             walk.sorted(Comparator.comparingInt(Path::getNameCount)).forEach(entries::add);
@@ -490,9 +473,14 @@ public final class ModdedForcedDatapack {
             Path relative = sourceDirectory.relativize(source);
             Path destination = destinationDirectory.resolve(relative);
             if (Files.isDirectory(source)) {
+                if (Files.exists(destination) && !Files.isDirectory(destination)) {
+                    throw new IOException("Conflicting Iris datapack output at " + destination + ".");
+                }
                 Files.createDirectories(destination);
             } else if (!Files.exists(destination)) {
                 Files.copy(source, destination);
+            } else if (!Files.isRegularFile(destination) || Files.mismatch(source, destination) != -1L) {
+                throw new IOException("Conflicting Iris datapack output at " + destination + ".");
             }
         }
     }
@@ -505,37 +493,65 @@ public final class ModdedForcedDatapack {
         }
     }
 
-    private static boolean installPack(File packFolder, IDataFixer fixer, KList<File> folders,
+    private static boolean installPack(PackStageContext context, IDataFixer fixer, KList<File> folders,
                                        Map<String, KSet<String>> seenBiomes,
                                        KList<String> presetIds) throws IOException {
-        String packName = packFolder.getName();
+        File packFolder = context.packRoot().toFile();
+        String packName = context.packName();
         File dimensionsDirectory = new File(packFolder, "dimensions");
         if (!dimensionsDirectory.isDirectory()) {
             return false;
         }
-        IrisData data = IrisData.get(packFolder);
-        String[] dimensionKeys = data.getDimensionLoader().getPossibleKeys();
-        if (dimensionKeys == null || dimensionKeys.length == 0) {
-            return false;
-        }
-        List<String> sortedDimensionKeys = Stream.of(dimensionKeys).sorted().toList();
-        for (String dimensionKey : sortedDimensionKeys) {
-            IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
-            if (dimension == null) {
-                throw new IllegalStateException("Iris pack '" + packName + "' dimension '"
-                        + dimensionKey + "' did not load while building the forced datapack");
+        IrisData data = IrisData.openDatapackCompiler(packFolder);
+        try {
+            if (context.retainedContract() != null) {
+                data.bindGenerationRegistryContract(context.retainedContract());
             }
-            String biomePathPrefix = ModdedWorldgenIds.biomePathPrefix(packName, dimensionKey);
-            dimension.installBiomes(fixer, () -> data, folders, "irisworldgen", biomePathPrefix,
-                    biomesForNamespace(seenBiomes, biomePathPrefix));
-            dimension.installBiomes(fixer, () -> data, folders,
-                    biomesForNamespace(seenBiomes, dimension.getLoadKey()));
-            writeDimensionType(folders, fixer, dimension, packName, dimensionKey);
-            String presetRef = ModdedWorldgenIds.presetRef(packName, dimensionKey);
-            writeWorldPreset(folders, packName, dimensionKey, presetRef);
-            presetIds.add(presetRef);
+            String[] dimensionKeys = data.getDimensionLoader().getPossibleKeys();
+            if (dimensionKeys == null || dimensionKeys.length == 0) {
+                return false;
+            }
+            int installedDimensions = 0;
+            List<String> sortedDimensionKeys = Stream.of(dimensionKeys).sorted().toList();
+            for (String dimensionKey : sortedDimensionKeys) {
+                if (context.dimensionKey() != null && !context.dimensionKey().equals(dimensionKey)) {
+                    continue;
+                }
+                IrisDimension dimension = data.getDimensionLoader().load(dimensionKey);
+                if (dimension == null) {
+                    throw new IllegalStateException("Iris pack '" + packName + "' dimension '"
+                            + dimensionKey + "' did not load while building the forced datapack");
+                }
+                dimension.installBiomes(
+                        fixer,
+                        () -> data,
+                        folders,
+                        biomesForNamespace(seenBiomes, "iris"),
+                        context
+                );
+                writeDimensionType(
+                        folders,
+                        fixer,
+                        dimension,
+                        context.dimensionTypeRef(dimensionKey),
+                        context.emitLegacyDimensionTypeAlias(),
+                        context
+                );
+                if (context.emitPresets()) {
+                    String presetRef = ModdedWorldgenIds.presetRef(packName, dimensionKey);
+                    writeWorldPreset(folders, packName, dimensionKey, presetRef);
+                    presetIds.add(presetRef);
+                }
+                installedDimensions++;
+            }
+            if (context.required() && installedDimensions == 0) {
+                throw new IOException("Retained Iris generation pack at " + context.packRoot()
+                        + " does not contain dimension '" + context.dimensionKey() + "'.");
+            }
+            return installedDimensions > 0;
+        } finally {
+            data.close();
         }
-        return true;
     }
 
     static KSet<String> biomesForNamespace(Map<String, KSet<String>> biomes, String namespace) {
@@ -625,15 +641,41 @@ public final class ModdedForcedDatapack {
 
     static void writeDimensionType(KList<File> folders, IDataFixer fixer, IrisDimension dimension,
                                    String pack, String packDimensionKey) throws IOException {
+        writeDimensionType(
+                folders,
+                fixer,
+                dimension,
+                ModdedWorldgenIds.dimensionTypeRef(pack, packDimensionKey),
+                true,
+                IrisCustomBiomeAliasResolver.none()
+        );
+    }
+
+    private static void writeDimensionType(
+            KList<File> folders,
+            IDataFixer fixer,
+            IrisDimension dimension,
+            String typeRef,
+            boolean emitLegacyAlias,
+            IrisCustomBiomeAliasResolver sourceResolver
+    ) throws IOException {
         IrisDimensionType type = dimension.getDimensionType();
-        String json = type.toJson(fixer);
-        String typeRef = ModdedWorldgenIds.dimensionTypeRef(pack, packDimensionKey);
+        String json = Objects.requireNonNull(sourceResolver, "sourceResolver").generatedSource(
+                GenerationRegistryContractFactory.DIMENSION_TYPE_REGISTRY,
+                typeRef,
+                type.toJson(fixer),
+                fixer
+        );
         String typePath = typeRef.substring(typeRef.indexOf(':') + 1);
+        String typeNamespace = typeRef.substring(0, typeRef.indexOf(':'));
         for (File datapackRoot : folders) {
-            Path output = datapackRoot.toPath().resolve("data").resolve("irisworldgen")
+            Path output = datapackRoot.toPath().resolve("data").resolve(typeNamespace)
                     .resolve("dimension_type").resolve(typePath + ".json");
             Files.createDirectories(output.getParent());
             Files.writeString(output, json, StandardCharsets.UTF_8);
+            if (!emitLegacyAlias) {
+                continue;
+            }
             // Load-bearing, not dead: worlds created before the scoped pack path reference
             // irisworldgen:<dimensionTypeKey> in their level.dat, and ModdedWorldEngines accepts that legacy
             // key when validating the runtime dimension contract. Removing this emission unloads those worlds.
@@ -725,8 +767,237 @@ public final class ModdedForcedDatapack {
         }
     }
 
+    private static List<File> compilationPackRoots() throws IOException {
+        return compilationPackRoots(worldRootOrNull());
+    }
+
+    private static List<File> compilationPackRoots(Path worldRoot) throws IOException {
+        Path dataDirectory = packsRoot().getParent();
+        Path historyRoot = worldRoot == null
+                ? dataDirectory.resolve(".iris-world-unavailable")
+                : worldRoot;
+        return IrisDatapackCompiler.collectPackRoots(dataDirectory, historyRoot);
+    }
+
+    private static Path worldRootOrNull() throws IOException {
+        MinecraftServer server = ModdedEngineBootstrap.currentServer();
+        if (server != null) {
+            return server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
+        }
+        if (ModdedEngineBootstrap.loader().clientEnvironment()) {
+            return null;
+        }
+        return MainWorldService.configuredWorldRootIfPresent();
+    }
+
+    private static Set<PackSelection> unadoptedSelections(Path worldRoot) throws IOException {
+        if (worldRoot == null) {
+            return Set.of();
+        }
+        Set<PackSelection> selections = new LinkedHashSet<>();
+        for (ModdedDimensionRegistryStore.PersistentDimension dimension
+                : ModdedDimensionRegistryStore.loadWorldRoot(worldRoot)) {
+            Identifier identifier = Identifier.tryParse(dimension.id());
+            if (identifier == null) {
+                throw new IOException("Invalid persistent Iris dimension ID '" + dimension.id() + "'.");
+            }
+            ResourceKey<Level> key = ResourceKey.create(Registries.DIMENSION, identifier);
+            Path dimensionRoot = DimensionType.getStorageFolder(key, worldRoot).toAbsolutePath().normalize();
+            Path generationRoot = GenerationHistoryPaths.forDimension(dimensionRoot).generationRoot();
+            if (!Files.exists(generationRoot)) {
+                selections.add(new PackSelection(dimension.pack(), dimension.dimension()));
+            }
+        }
+        return Set.copyOf(selections);
+    }
+
+    private static PackStageContext packStageContext(
+            Path packRoot,
+            Set<PackSelection> unadoptedSelections
+    ) throws IOException {
+        Path normalizedRoot = packRoot.toAbsolutePath().normalize();
+        RetainedPack retained = retainedPack(normalizedRoot);
+        if (retained != null) {
+            ModdedWorldgenIds.ScopedDimension identity = ModdedWorldgenIds
+                    .scopedDimensionType(retained.epoch().dimensionContract().dimensionTypeKey())
+                    .orElseThrow(() -> new IOException("Retained Iris dimension type key is not scoped: "
+                            + retained.epoch().dimensionContract().dimensionTypeKey()));
+            if (!identity.dimension().equals(retained.epoch().dimensionContract().dimensionKey())) {
+                throw new IOException("Retained Iris dimension type identity does not match its epoch contract.");
+            }
+            return PackStageContext.retained(normalizedRoot, identity.pack(), retained.epoch());
+        }
+
+        String packName = normalizedRoot.getFileName().toString();
+        Set<String> legacyDimensions = new LinkedHashSet<>();
+        for (PackSelection selection : unadoptedSelections) {
+            if (selection.pack().equals(packName)) {
+                legacyDimensions.add(selection.dimension());
+            }
+        }
+        return PackStageContext.installed(normalizedRoot, packName, legacyDimensions);
+    }
+
+    private static RetainedPack retainedPack(Path packRoot) throws IOException {
+        Path epochRoot = packRoot.getParent();
+        Path epochsRoot = epochRoot == null ? null : epochRoot.getParent();
+        Path generationRoot = epochsRoot == null ? null : epochsRoot.getParent();
+        Path irisRoot = generationRoot == null ? null : generationRoot.getParent();
+        Path dimensionRoot = irisRoot == null ? null : irisRoot.getParent();
+        if (epochRoot == null
+                || epochsRoot == null
+                || generationRoot == null
+                || irisRoot == null
+                || dimensionRoot == null
+                || !"pack".equals(packRoot.getFileName().toString())
+                || !GenerationHistoryPaths.EPOCHS_DIRECTORY_NAME.equals(epochsRoot.getFileName().toString())
+                || !GenerationHistoryPaths.GENERATION_DIRECTORY_NAME.equals(generationRoot.getFileName().toString())
+                || !GenerationHistoryPaths.IRIS_DIRECTORY_NAME.equals(irisRoot.getFileName().toString())) {
+            return null;
+        }
+        GenerationHistory history = GenerationHistory.open(dimensionRoot);
+        String epochId = epochRoot.getFileName().toString();
+        GenerationEpoch epoch = history.manifest().epoch(epochId).orElseThrow(
+                () -> new IOException("Retained Iris pack is not referenced by generation history: " + packRoot)
+        );
+        if (!history.paths().packRoot(epochId).toAbsolutePath().normalize().equals(packRoot)) {
+            throw new IOException("Retained Iris pack path does not match generation history: " + packRoot);
+        }
+        return new RetainedPack(history, epoch);
+    }
+
+    private static IOException requiredPackFailure(
+            PackStageContext context,
+            String operation,
+            Throwable failure
+    ) {
+        if (failure instanceof IOException ioFailure) {
+            return ioFailure;
+        }
+        return new IOException("Retained Iris generation pack at " + context.packRoot()
+                + " failed " + operation + ".", failure);
+    }
+
     private static Path packsRoot() {
         return IrisPlatforms.get().packsFolderNoCreate().toPath();
+    }
+
+    private record PackSelection(String pack, String dimension) {
+    }
+
+    private record RetainedPack(GenerationHistory history, GenerationEpoch epoch) {
+    }
+
+    private record PackStageContext(
+            Path packRoot,
+            String packName,
+            String dimensionKey,
+            String retainedDimensionTypeRef,
+            boolean emitPresets,
+            boolean emitLegacyDimensionTypeAlias,
+            boolean required,
+            Set<String> legacyDimensions,
+            GenerationRegistryContract retainedContract
+    ) implements IrisCustomBiomeAliasResolver {
+        private static PackStageContext installed(
+                Path packRoot,
+                String packName,
+                Set<String> legacyDimensions
+        ) {
+            return new PackStageContext(
+                    packRoot,
+                    packName,
+                    null,
+                    null,
+                    true,
+                    true,
+                    false,
+                    Set.copyOf(legacyDimensions),
+                    null
+            );
+        }
+
+        private static PackStageContext retained(
+                Path packRoot,
+                String packName,
+                GenerationEpoch epoch
+        ) {
+            return new PackStageContext(
+                    packRoot,
+                    packName,
+                    epoch.dimensionContract().dimensionKey(),
+                    epoch.dimensionContract().dimensionTypeKey(),
+                    false,
+                    true,
+                    true,
+                    Set.of(),
+                    epoch.registryContract()
+            );
+        }
+
+        private String dimensionTypeRef(String installedDimensionKey) {
+            return retainedDimensionTypeRef == null
+                    ? ModdedWorldgenIds.dimensionTypeRef(packName, installedDimensionKey)
+                    : retainedDimensionTypeRef;
+        }
+
+        @Override
+        public String physicalResourceKey(
+                IrisDimension dimension,
+                IrisBiome biome,
+                IrisBiomeCustom customBiome,
+                String currentPhysicalResourceKey
+        ) throws IOException {
+            if (retainedContract == null) {
+                return currentPhysicalResourceKey;
+            }
+            return dimension.getLoader().customBiomeResourceKey(dimension, customBiome);
+        }
+
+        @Override
+        public List<String> aliases(
+                IrisDimension dimension,
+                IrisBiome biome,
+                IrisBiomeCustom customBiome,
+                String physicalResourceKey
+        ) {
+            List<String> candidates = ModdedWorldgenIds.legacyBiomeRefs(
+                    packName,
+                    dimension.getLoadKey(),
+                    customBiome.getId()
+            );
+            if (legacyDimensions.contains(dimension.getLoadKey())) {
+                return candidates;
+            }
+            if (retainedContract == null) {
+                return List.of();
+            }
+            List<String> aliases = new ArrayList<>(candidates.size());
+            for (String candidate : candidates) {
+                PhysicalResourceKey key = new PhysicalResourceKey(
+                        GenerationRegistryContractFactory.BIOME_REGISTRY,
+                        candidate
+                );
+                if (retainedContract.definitions().containsKey(key)) {
+                    aliases.add(candidate);
+                }
+            }
+            return List.copyOf(aliases);
+        }
+
+        @Override
+        public String generatedSource(
+                String registryKey,
+                String resourceKey,
+                String currentSource,
+                IDataFixer fixer
+        ) throws IOException {
+            if (retainedContract == null) {
+                return currentSource;
+            }
+            PhysicalResourceKey key = new PhysicalResourceKey(registryKey, resourceKey);
+            return GenerationRegistryContractFactory.requireGeneratedSource(retainedContract, key, fixer);
+        }
     }
 
     private record PublishedState(Path directory, String packsHash) {

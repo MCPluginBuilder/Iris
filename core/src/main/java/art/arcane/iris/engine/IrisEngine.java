@@ -20,6 +20,7 @@ package art.arcane.iris.engine;
 
 import art.arcane.iris.engine.EngineBackgroundTasks.BackgroundTaskDrain;
 import art.arcane.iris.engine.EngineRuntimeBuilder.RuntimeAssembly;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineEffects;
 import art.arcane.iris.engine.framework.EngineMetrics;
@@ -33,10 +34,16 @@ import art.arcane.iris.engine.framework.EngineWorldManager;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.framework.GenerationSessionManager;
+import art.arcane.iris.engine.history.GenerationBoundarySignatureSampler;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
+import art.arcane.iris.engine.history.GenerationKernelRegistry;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.framework.SeedManager;
 import art.arcane.iris.engine.framework.WrongEngineBroException;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
 import art.arcane.iris.engine.object.IrisEngineData;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.core.compat.PackCompatReport;
@@ -59,6 +66,7 @@ import art.arcane.volmlib.util.atomics.AtomicRollingSequence;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
+import art.arcane.volmlib.util.documentation.ChunkCoordinates;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import art.arcane.volmlib.util.math.M;
@@ -71,17 +79,23 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
 @Data
@@ -96,7 +110,9 @@ public class IrisEngine implements Engine {
     private final AtomicLong lastGPS;
     private final EngineTarget target;
     private final InitializationMode initializationMode;
-    private final EngineMantle mantle;
+    private final Path initialMantleStorageDirectory;
+    private final GenerationKernelRegistry.Version initialKernelVersion;
+    private final TransitionGenerationPlan initialTransitionPlan;
     private final ChronoLatch perSecondLatch;
     private final ChronoLatch perSecondBudLatch;
     private final EngineMetrics metrics;
@@ -108,7 +124,24 @@ public class IrisEngine implements Engine {
     final Object lifecycleLock = new Object();
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
+    final Object generationHistoryRuntimeRouterLock = new Object();
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
     final ThreadLocal<RuntimeAssembly> runtimeAssembly = new ThreadLocal<>();
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    final GenerationRuntimeScopeState generationRuntimeScopes = new GenerationRuntimeScopeState();
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    final Set<GenerationRuntime> detachedGenerationRuntimes = Collections.synchronizedSet(
+            Collections.newSetFromMap(new IdentityHashMap<>()));
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    final Set<GenerationRuntime> retiringGenerationRuntimes = Collections.synchronizedSet(
+            Collections.newSetFromMap(new IdentityHashMap<>()));
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    final Set<IntConsumer> generationRuntimeRetirementListeners = new CopyOnWriteArraySet<>();
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     final EngineBackgroundTasks backgroundTasks = new EngineBackgroundTasks();
@@ -147,6 +180,12 @@ public class IrisEngine implements Engine {
     volatile EngineRuntime runtime;
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
+    volatile GenerationHistoryRuntimeRouter generationHistoryRuntimeRouter;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private boolean generationHistoryRoutingRequired;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
     volatile EngineTarget publishedTarget;
     private volatile int parallelism;
     private volatile boolean failing;
@@ -176,11 +215,57 @@ public class IrisEngine implements Engine {
     }
 
     public IrisEngine(EngineTarget target, InitializationMode initializationMode) {
+        this(
+                target,
+                initializationMode,
+                IrisEngineMantle.legacyStorageDirectory(target),
+                GenerationKernelRegistry.standard().current(),
+                null);
+    }
+
+    public IrisEngine(
+            EngineTarget target,
+            InitializationMode initializationMode,
+            Path mantleStorageDirectory
+    ) {
+        this(
+                target,
+                initializationMode,
+                mantleStorageDirectory,
+                GenerationKernelRegistry.standard().current(),
+                null);
+    }
+
+    public IrisEngine(
+            EngineTarget target,
+            InitializationMode initializationMode,
+            Path mantleStorageDirectory,
+            TransitionGenerationPlan transitionPlan
+    ) {
+        this(
+                target,
+                initializationMode,
+                mantleStorageDirectory,
+                GenerationKernelRegistry.standard().current(),
+                transitionPlan);
+    }
+
+    public IrisEngine(
+            EngineTarget target,
+            InitializationMode initializationMode,
+            Path mantleStorageDirectory,
+            GenerationKernelRegistry.Version kernelVersion,
+            TransitionGenerationPlan transitionPlan
+    ) {
+        EngineTarget requiredTarget = Objects.requireNonNull(target, "engine target");
         InitializationMode requiredMode = Objects.requireNonNull(initializationMode, "initialization mode");
         this.initializationMode = requiredMode;
         this.studio = requiredMode.studio();
-        this.target = target;
-        this.publishedTarget = target;
+        this.target = requiredTarget;
+        this.publishedTarget = requiredTarget;
+        this.initialMantleStorageDirectory = IrisEngineMantle.normalizeStorageDirectory(mantleStorageDirectory);
+        this.initialKernelVersion = Objects.requireNonNull(kernelVersion, "generation kernel version");
+        this.initialTransitionPlan = transitionPlan;
         this.platformHooks = IrisServices.get(EnginePlatformHooks.class);
         this.generationSessions = new GenerationSessionManager();
         this.closing = new AtomicBoolean(true);
@@ -190,7 +275,8 @@ public class IrisEngine implements Engine {
         this.failing = false;
         getEngineData();
         verifySeed();
-        this.seedManager = new SeedManager(target.getWorld().getRawWorldSeed());
+        this.seedManager = EngineRuntimeBuilder.selectRuntimeKernel(initialKernelVersion)
+                .createSeedManager(requiredTarget.getWorld().getRawWorldSeed());
         bud = new AtomicInteger(0);
         buds = new AtomicInteger(0);
         metrics = new EngineMetrics(32);
@@ -203,9 +289,7 @@ public class IrisEngine implements Engine {
         wallClock = new AtomicRollingSequence(32);
         lastGPS = new AtomicLong(M.ms());
         generated = new AtomicInteger(0);
-        long _t0 = M.ms();
-        mantle = new IrisEngineMantle(this);
-        IrisLogging.debug("[IrisEngine timing] new IrisEngineMantle=" + (M.ms() - _t0) + "ms");
+        long _t0;
         cleaning = new AtomicBoolean(false);
         modeFallbackLogged = new AtomicBoolean(false);
         prefetchSaveStarted = new AtomicBoolean(false);
@@ -235,7 +319,7 @@ public class IrisEngine implements Engine {
             } catch (Throwable e) {
                 IrisLogging.reportError(e);
             }
-            IrisLogging.notice("Engine init: " + target.getWorld().name() + "/" + target.getDimension().getLoadKey() + " seed=" + getSeedManager().getSeed());
+            IrisLogging.notice("Engine init: " + requiredTarget.getWorld().name() + "/" + requiredTarget.getDimension().getLoadKey() + " seed=" + getSeedManager().getSeed());
             _t0 = M.ms();
             phaseStartedAt = System.nanoTime();
             EngineRuntime initialRuntime = runtimeBuilder.buildRuntime();
@@ -258,7 +342,7 @@ public class IrisEngine implements Engine {
             EngineTickRegistry.registerTicking(this);
         } catch (Throwable e) {
             shutdownSequence.cleanupFailedConstruction(e);
-            throw new IllegalStateException("Failed to initialize Iris engine for world '" + target.getWorld().name() + "'.", e);
+            throw new IllegalStateException("Failed to initialize Iris engine for world '" + requiredTarget.getWorld().name() + "'.", e);
         }
         IrisLogging.debug("Engine Initialized " + getCacheID());
     }
@@ -349,7 +433,7 @@ public class IrisEngine implements Engine {
             IrisLogging.warn("Studio packs changed during runtime compilation; shared generation caches are disabled.");
             return;
         }
-        runtime.complex().enableStudioHydrologyCache(initialIdentity, studioHydrologyCacheRoot());
+        runtime.generation().complex().enableStudioHydrologyCache(initialIdentity, studioHydrologyCacheRoot());
         IrisLogging.debug("Enabled shared Studio hydrology cache identity="
                 + initialIdentity.substring(0, Math.min(12, initialIdentity.length())));
     }
@@ -451,7 +535,9 @@ public class IrisEngine implements Engine {
     @Override
     public void generateMatter(int x, int z, boolean multicore, ChunkContext context) {
         awaitGenerationCacheWarm();
-        try (GenerationSessionLease lease = acquireGenerationLease("matter_generate");
+        try (GenerationHistoryRuntimeRouter.CoordinateScope historyScope =
+                     openGenerationHistoryCoordinateScope(x << 4, z << 4);
+             GenerationSessionLease lease = acquireGenerationLease("matter_generate");
              IrisContext.Scope ignored = IrisContext.open(this, lease.sessionId(), context)) {
             IrisComplex activeComplex = getComplex();
             if (context == null || context.getComplex() != activeComplex) {
@@ -463,21 +549,114 @@ public class IrisEngine implements Engine {
                         + context.getGenerationSessionId() + " instead of " + lease.sessionId() + ".");
             }
             getMantle().generateMatter(x, z, multicore, context);
-        } catch (GenerationSessionException e) {
+        } catch (GenerationSessionException | IOException e) {
             throw new IllegalStateException("Matter generation was rejected by the Iris lifecycle.", e);
         }
     }
 
+    @BlockCoordinates
     @Override
-    public Set<String> getObjectsAt(int x, int z) {
-        return getMantle().getObjectComponent().guess(x, z);
+    public IrisRegion getRegion(int x, int z) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a region")) {
+            return Engine.super.getRegion(x, z);
+        }
     }
 
+    @BlockCoordinates
     @Override
-    public Set<Pair<String, BlockPos>> getPOIsAt(int chunkX, int chunkY) {
-        Set<Pair<String, BlockPos>> pois = new HashSet<>();
-        getMantle().getMantle().iterateChunk(chunkX, chunkY, MatterStructurePOI.class, (x, y, z, d) -> pois.add(new Pair<>(d.getType(), new BlockPos(x, y, z))));
-        return pois;
+    public IrisBiome getCaveOrMantleBiome(int x, int y, int z) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a cave or mantle biome")) {
+            return Engine.super.getCaveOrMantleBiome(x, y, z);
+        }
+    }
+
+    @BlockCoordinates
+    @Override
+    public IrisBiome getCaveBiome(int x, int z) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a cave biome")) {
+            return Engine.super.getCaveBiome(x, z);
+        }
+    }
+
+    @BlockCoordinates
+    @Override
+    public IrisBiome getCaveBiome(int x, int y, int z) {
+        return getCaveBiome(x, y, z, null);
+    }
+
+    @BlockCoordinates
+    @Override
+    public IrisBiome getCaveBiome(
+            int x,
+            int y,
+            int z,
+            IrisDimensionCarvingResolver.State state
+    ) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a vertical cave biome")) {
+            return Engine.super.getCaveBiome(x, y, z, state);
+        }
+    }
+
+    @BlockCoordinates
+    @Override
+    public IrisBiome getSurfaceBiome(int x, int z) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a surface biome")) {
+            return Engine.super.getSurfaceBiome(x, z);
+        }
+    }
+
+    @BlockCoordinates
+    @Override
+    public double getSlope(int x, int z) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve terrain slope")) {
+            return Engine.super.getSlope(x, z);
+        }
+    }
+
+    @BlockCoordinates
+    @Override
+    public int getHeight(int x, int z) {
+        return getHeight(x, z, true);
+    }
+
+    @BlockCoordinates
+    @Override
+    public int getHeight(int x, int z, boolean ignoreFluid) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve terrain height")) {
+            return Engine.super.getHeight(x, z, ignoreFluid);
+        }
+    }
+
+    @ChunkCoordinates
+    @Override
+    public Set<String> getObjectsAt(int x, int z) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x << 4, z << 4, "resolve chunk objects")) {
+            return getMantle().getObjectComponent().guess(x, z);
+        }
+    }
+
+    @ChunkCoordinates
+    @Override
+    public Set<Pair<String, BlockPos>> getPOIsAt(int chunkX, int chunkZ) {
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(
+                             chunkX << 4, chunkZ << 4, "resolve chunk points of interest")) {
+            Set<Pair<String, BlockPos>> pois = new HashSet<>();
+            getMantle().getMantle().iterateChunk(
+                    chunkX,
+                    chunkZ,
+                    MatterStructurePOI.class,
+                    (x, y, z, data) -> pois.add(new Pair<>(data.getType(), new BlockPos(x, y, z))));
+            return pois;
+        }
     }
 
     private void warmupChunk(int x, int z) {
@@ -514,7 +693,50 @@ public class IrisEngine implements Engine {
         if (!nativeStructureVolumeQueriesEnabled.get()) {
             return NativeStructureVolume.NONE;
         }
-        return nativeStructureVolumeMemo.volumes(this, platformHooks, minX, minZ, maxX, maxZ);
+        int minimumX = Math.min(minX, maxX);
+        int maximumX = Math.max(minX, maxX);
+        int minimumZ = Math.min(minZ, maxZ);
+        int maximumZ = Math.max(minZ, maxZ);
+        int fromChunkX = minimumX >> 4;
+        int toChunkX = maximumX >> 4;
+        int fromChunkZ = minimumZ >> 4;
+        int toChunkZ = maximumZ >> 4;
+        KList<NativeStructureVolume> matches = null;
+        for (int chunkX = fromChunkX; chunkX <= toChunkX; chunkX++) {
+            for (int chunkZ = fromChunkZ; chunkZ <= toChunkZ; chunkZ++) {
+                int chunkMinimumX = chunkX << 4;
+                int chunkMinimumZ = chunkZ << 4;
+                int queryMinimumX = Math.max(minimumX, chunkMinimumX);
+                int queryMaximumX = Math.min(maximumX, chunkMinimumX + 15);
+                int queryMinimumZ = Math.max(minimumZ, chunkMinimumZ);
+                int queryMaximumZ = Math.min(maximumZ, chunkMinimumZ + 15);
+                try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                             openGenerationHistoryCoordinateScopeUnchecked(
+                                     chunkMinimumX,
+                                     chunkMinimumZ,
+                                     "resolve native structure volumes")) {
+                    KList<NativeStructureVolume> resolved = nativeStructureVolumeMemo.volumes(
+                            this,
+                            platformHooks,
+                            queryMinimumX,
+                            queryMinimumZ,
+                            queryMaximumX,
+                            queryMaximumZ);
+                    for (NativeStructureVolume volume : resolved) {
+                        if (!volume.intersectsRect(minimumX, minimumZ, maximumX, maximumZ)) {
+                            continue;
+                        }
+                        if (matches == null) {
+                            matches = new KList<>();
+                        }
+                        if (!matches.contains(volume)) {
+                            matches.add(volume);
+                        }
+                    }
+                }
+            }
+        }
+        return matches == null ? NativeStructureVolume.NONE : matches;
     }
 
     public void setNativeStructureVolumeQueriesEnabled(boolean enabled) {
@@ -561,6 +783,312 @@ public class IrisEngine implements Engine {
         shutdownSequence.close();
     }
 
+    public GenerationHistoryRuntimeRouter attachGenerationHistory(
+            GenerationHistory history,
+            GenerationBoundarySignatureSampler signatureSampler
+    ) throws IOException {
+        return GenerationHistoryRuntimeRouter.attachAndPromotePending(this, history, signatureSampler);
+    }
+
+    public GenerationHistoryRuntimeRouter attachGenerationHistory(
+            GenerationHistory history,
+            GenerationBoundarySignatureSampler signatureSampler,
+            int transitionWidthBlocks
+    ) throws IOException {
+        return GenerationHistoryRuntimeRouter.attachAndPromotePending(
+                this,
+                history,
+                signatureSampler,
+                transitionWidthBlocks
+        );
+    }
+
+    public Optional<GenerationHistoryRuntimeRouter> getGenerationHistoryRuntimeRouter() {
+        synchronized (generationHistoryRuntimeRouterLock) {
+            return Optional.ofNullable(generationHistoryRuntimeRouter);
+        }
+    }
+
+    public GenerationHistoryRuntimeRouter.CoordinateScope openGenerationHistoryCoordinateScope(
+            int blockX,
+            int blockZ
+    ) throws IOException {
+        GenerationHistoryRuntimeRouter router;
+        synchronized (generationHistoryRuntimeRouterLock) {
+            router = generationHistoryRuntimeRouter;
+            if (router == null && generationHistoryRoutingRequired) {
+                throw new IllegalStateException("Iris generation-history runtime router is detached.");
+            }
+        }
+        return router == null ? null : router.openCoordinateScope(blockX, blockZ);
+    }
+
+    public boolean hasGenerationRuntimeScope() {
+        return generationRuntimeScopes.current() != null;
+    }
+
+    private GenerationHistoryRuntimeRouter.CoordinateScope openGenerationHistoryCoordinateScopeUnchecked(
+            int blockX,
+            int blockZ,
+            String operation
+    ) {
+        try {
+            return openGenerationHistoryCoordinateScope(blockX, blockZ);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Unable to " + operation + " through Iris generation history at "
+                    + blockX + "," + blockZ + ".", failure);
+        }
+    }
+
+    public void attachGenerationHistoryRuntimeRouter(GenerationHistoryRuntimeRouter router) {
+        GenerationHistoryRuntimeRouter required = Objects.requireNonNull(router, "generation-history runtime router");
+        if (required.engine() != this) {
+            throw new IllegalArgumentException("Generation-history runtime router belongs to a different Iris engine.");
+        }
+        synchronized (lifecycleLock) {
+            requireRunning("attach a generation-history runtime router");
+            synchronized (generationHistoryRuntimeRouterLock) {
+                if (generationHistoryRuntimeRouter != null) {
+                    throw new IllegalStateException("Iris engine already has a generation-history runtime router.");
+                }
+                generationHistoryRuntimeRouter = required;
+                generationHistoryRoutingRequired = true;
+            }
+        }
+    }
+
+    public void detachGenerationHistoryRuntimeRouter(GenerationHistoryRuntimeRouter router) {
+        synchronized (generationHistoryRuntimeRouterLock) {
+            if (generationHistoryRuntimeRouter == router) {
+                generationHistoryRuntimeRouter = null;
+            }
+        }
+    }
+
+    void closeAttachedGenerationHistoryRuntimeRouter() {
+        GenerationHistoryRuntimeRouter attached;
+        synchronized (generationHistoryRuntimeRouterLock) {
+            attached = generationHistoryRuntimeRouter;
+            if (attached == null) {
+                return;
+            }
+        }
+        attached.close();
+        synchronized (generationHistoryRuntimeRouterLock) {
+            if (generationHistoryRuntimeRouter == attached) {
+                generationHistoryRuntimeRouter = null;
+            }
+        }
+    }
+
+    boolean beginShutdown() {
+        synchronized (lifecycleLock) {
+            if (closed) {
+                return false;
+            }
+            lifecycleState = LifecycleState.CLOSING;
+            closing.set(true);
+            return true;
+        }
+    }
+
+    public GenerationRuntimeBinding getActiveGenerationRuntimeBinding() {
+        EngineRuntime current = runtimeBuilder.requireRuntime("capture the active generation runtime");
+        return new GenerationRuntimeBinding(this, current.generation());
+    }
+
+    public GenerationRuntimeBinding captureGenerationRuntimeBinding() {
+        GenerationRuntimeBinding scoped = generationRuntimeScopes.current();
+        return scoped == null ? getActiveGenerationRuntimeBinding() : scoped;
+    }
+
+    public GenerationRuntimeScope openGenerationRuntimeScope(GenerationRuntimeBinding binding) {
+        GenerationRuntimeBinding required = Objects.requireNonNull(binding, "generation runtime binding");
+        synchronized (lifecycleLock) {
+            if (required.engine != this) {
+                throw new IllegalArgumentException("Generation runtime binding belongs to a different Iris engine.");
+            }
+            if (retiringGenerationRuntimes.contains(required.runtime)) {
+                throw new IllegalStateException("Iris generation runtime binding is retiring.");
+            }
+            if (!isGenerationRuntimeBindingLive(required)) {
+                throw new IllegalStateException("Iris generation runtime binding is closed or no longer owned.");
+            }
+            return generationRuntimeScopes.open(required);
+        }
+    }
+
+    public GenerationRuntimeBinding buildDetachedGenerationRuntime(EngineTarget runtimeTarget) {
+        return buildDetachedGenerationRuntime(
+                runtimeTarget,
+                IrisEngineMantle.legacyStorageDirectory(runtimeTarget));
+    }
+
+    public GenerationRuntimeBinding buildDetachedGenerationRuntime(
+            EngineTarget runtimeTarget,
+            Path mantleStorageDirectory
+    ) {
+        return buildDetachedGenerationRuntime(
+                runtimeTarget,
+                mantleStorageDirectory,
+                GenerationKernelRegistry.standard().current(),
+                null);
+    }
+
+    public GenerationRuntimeBinding buildDetachedGenerationRuntime(
+            EngineTarget runtimeTarget,
+            Path mantleStorageDirectory,
+            TransitionGenerationPlan transitionPlan
+    ) {
+        return buildDetachedGenerationRuntime(
+                runtimeTarget,
+                mantleStorageDirectory,
+                GenerationKernelRegistry.standard().current(),
+                transitionPlan);
+    }
+
+    public GenerationRuntimeBinding buildDetachedGenerationRuntime(
+            EngineTarget runtimeTarget,
+            Path mantleStorageDirectory,
+            GenerationKernelRegistry.Version kernelVersion,
+            TransitionGenerationPlan transitionPlan
+    ) {
+        EngineTarget requiredTarget = Objects.requireNonNull(runtimeTarget, "detached generation target");
+        Path requiredMantleStorageDirectory = IrisEngineMantle.normalizeStorageDirectory(mantleStorageDirectory);
+        synchronized (lifecycleLock) {
+            requireRunning("build a detached generation runtime");
+            GenerationRuntime active = runtime.generation();
+            if (requiredTarget.getWorld() != active.target().getWorld()) {
+                throw new IllegalArgumentException("Detached generation runtime must target this Iris world.");
+            }
+            IrisData detachedData = requiredTarget.getData();
+            if (detachedData == active.data()) {
+                throw new IllegalArgumentException("Detached generation runtime requires a detached Iris data loader.");
+            }
+            if (requiredMantleStorageDirectory.equals(active.mantleStorageDirectory())) {
+                throw new IllegalArgumentException("Detached generation runtime requires an exclusive mantle storage directory.");
+            }
+            for (GenerationRuntime detached : detachedGenerationRuntimes) {
+                if (detached.data() == detachedData) {
+                    throw new IllegalArgumentException("Detached Iris data loader already belongs to a generation runtime.");
+                }
+                if (detached.mantleStorageDirectory().equals(requiredMantleStorageDirectory)) {
+                    throw new IllegalArgumentException("Mantle storage directory already belongs to a detached generation runtime.");
+                }
+            }
+            GenerationRuntime detached = null;
+            try {
+                detachedData.registerEngine(this);
+                GenerationKernelRegistry.Version requiredKernelVersion = Objects.requireNonNull(
+                        kernelVersion,
+                        "generation kernel version");
+                detached = transitionPlan == null
+                        && requiredKernelVersion.equals(GenerationKernelRegistry.standard().current())
+                        ? runtimeBuilder.buildDetachedGenerationRuntime(
+                                requiredTarget,
+                                requiredMantleStorageDirectory)
+                        : runtimeBuilder.buildDetachedGenerationRuntime(
+                                requiredTarget,
+                                requiredMantleStorageDirectory,
+                                requiredKernelVersion,
+                                transitionPlan);
+                detachedGenerationRuntimes.add(detached);
+                return new GenerationRuntimeBinding(this, detached);
+            } catch (Throwable e) {
+                Throwable cleanupFailure = detached == null
+                        ? shutdownSequence.closeDetachedTarget(requiredTarget, null)
+                        : shutdownSequence.closeDetachedGenerationRuntime(detached, null);
+                if (cleanupFailure != null) {
+                    e.addSuppressed(cleanupFailure);
+                }
+                throw EngineShutdownSequence.propagate(e);
+            }
+        }
+    }
+
+    public void closeDetachedGenerationRuntime(GenerationRuntimeBinding binding) {
+        GenerationRuntimeBinding required = Objects.requireNonNull(binding, "detached generation runtime binding");
+        GenerationRuntime retired;
+        synchronized (lifecycleLock) {
+            if (required.engine != this) {
+                throw new IllegalArgumentException("Generation runtime binding belongs to a different Iris engine.");
+            }
+            EngineRuntime current = runtime;
+            if (current != null && current.generation() == required.runtime) {
+                throw new IllegalArgumentException("The active Iris generation runtime cannot be closed as detached.");
+            }
+            if (!detachedGenerationRuntimes.contains(required.runtime)) {
+                return;
+            }
+            if (!retiringGenerationRuntimes.add(required.runtime)) {
+                throw new IllegalStateException("Detached Iris generation runtime is already retiring.");
+            }
+            retired = required.runtime;
+        }
+        Throwable failure = retireGenerationRuntimeCaches(retired.cacheId(), null);
+        try {
+            failure = shutdownSequence.closeDetachedGenerationRuntime(retired, failure);
+        } finally {
+            synchronized (lifecycleLock) {
+                detachedGenerationRuntimes.remove(retired);
+                retiringGenerationRuntimes.remove(retired);
+            }
+        }
+        if (failure != null) {
+            throw new IllegalStateException("Failed to close a detached Iris generation runtime.", failure);
+        }
+    }
+
+    public void addGenerationRuntimeRetirementListener(IntConsumer listener) {
+        generationRuntimeRetirementListeners.add(Objects.requireNonNull(listener, "generation runtime retirement listener"));
+    }
+
+    public void removeGenerationRuntimeRetirementListener(IntConsumer listener) {
+        generationRuntimeRetirementListeners.remove(listener);
+    }
+
+    Throwable retireGenerationRuntimeCaches(int runtimeId, Throwable failure) {
+        nativeStructureVolumeMemo.evictRuntime(runtimeId);
+        for (IntConsumer listener : generationRuntimeRetirementListeners) {
+            try {
+                listener.accept(runtimeId);
+            } catch (Throwable listenerFailure) {
+                if (failure == null) {
+                    failure = listenerFailure;
+                } else if (failure != listenerFailure) {
+                    failure.addSuppressed(listenerFailure);
+                }
+            }
+        }
+        return failure;
+    }
+
+    public void setDefaultGenerationRuntime(GenerationRuntimeBinding binding) {
+        GenerationRuntimeBinding required = Objects.requireNonNull(binding, "generation runtime binding");
+        synchronized (lifecycleLock) {
+            requireRunning("select the default generation runtime");
+            if (required.engine != this) {
+                throw new IllegalArgumentException("Generation runtime binding belongs to a different Iris engine.");
+            }
+            EngineRuntime current = runtime;
+            GenerationRuntime previous = current.generation();
+            if (previous == required.runtime) {
+                return;
+            }
+            if (!detachedGenerationRuntimes.contains(required.runtime)) {
+                throw new IllegalStateException("Default Iris generation runtime must be live and engine-owned.");
+            }
+            if (retiringGenerationRuntimes.contains(required.runtime)) {
+                throw new IllegalStateException("Default Iris generation runtime cannot be retiring.");
+            }
+            detachedGenerationRuntimes.add(previous);
+            detachedGenerationRuntimes.remove(required.runtime);
+            runtime = current.withGeneration(required.runtime);
+            publishedTarget = required.runtime.target();
+            nativeStructureVolumeMemo.clear();
+        }
+    }
+
     private boolean isPregeneratorActiveForThisWorld() {
         return platformHooks.isPregeneratorActive(this);
     }
@@ -577,12 +1105,22 @@ public class IrisEngine implements Engine {
     }
 
     @Override
+    public SeedManager getSeedManager() {
+        RuntimeAssembly assembly = runtimeAssembly.get();
+        if (assembly != null) {
+            return assembly.seedManager;
+        }
+        GenerationRuntime current = selectedGenerationRuntime();
+        return current == null ? seedManager : current.seedManager();
+    }
+
+    @Override
     public IrisComplex getComplex() {
         RuntimeAssembly assembly = runtimeAssembly.get();
         if (assembly != null && assembly.complex != null) {
             return assembly.complex;
         }
-        EngineRuntime current = runtime;
+        GenerationRuntime current = selectedGenerationRuntime();
         return current == null ? null : current.complex();
     }
 
@@ -592,8 +1130,38 @@ public class IrisEngine implements Engine {
         if (assembly != null) {
             return assembly.target;
         }
-        EngineRuntime current = runtime;
+        GenerationRuntime current = selectedGenerationRuntime();
         return current == null ? publishedTarget : current.target();
+    }
+
+    @Override
+    public IrisData getData() {
+        RuntimeAssembly assembly = runtimeAssembly.get();
+        if (assembly != null) {
+            return assembly.target.getData();
+        }
+        GenerationRuntime current = selectedGenerationRuntime();
+        return current == null ? publishedTarget.getData() : current.data();
+    }
+
+    @Override
+    public IrisDimension getDimension() {
+        RuntimeAssembly assembly = runtimeAssembly.get();
+        if (assembly != null) {
+            return assembly.target.getDimension();
+        }
+        GenerationRuntime current = selectedGenerationRuntime();
+        return current == null ? publishedTarget.getDimension() : current.dimension();
+    }
+
+    @Override
+    public EngineMantle getMantle() {
+        RuntimeAssembly assembly = runtimeAssembly.get();
+        if (assembly != null && assembly.mantle != null) {
+            return assembly.mantle;
+        }
+        GenerationRuntime current = selectedGenerationRuntime();
+        return current == null ? null : current.mantle();
     }
 
     @Override
@@ -602,7 +1170,7 @@ public class IrisEngine implements Engine {
         if (assembly != null && assembly.mode != null) {
             return assembly.mode;
         }
-        EngineRuntime current = runtimeBuilder.requireRuntime("access the engine mode");
+        GenerationRuntime current = requireSelectedGenerationRuntime("access the engine mode");
         return current.mode();
     }
 
@@ -632,7 +1200,7 @@ public class IrisEngine implements Engine {
         if (assembly != null) {
             return assembly.upperContext;
         }
-        EngineRuntime current = runtime;
+        GenerationRuntime current = selectedGenerationRuntime();
         return current == null ? null : current.upperContext();
     }
 
@@ -642,7 +1210,7 @@ public class IrisEngine implements Engine {
         if (assembly != null) {
             return assembly.dimensionStackContext;
         }
-        EngineRuntime current = runtime;
+        GenerationRuntime current = selectedGenerationRuntime();
         return current == null ? null : current.dimensionStackContext();
     }
 
@@ -652,25 +1220,25 @@ public class IrisEngine implements Engine {
         if (assembly != null && assembly.hash32 != null) {
             return assembly.hash32;
         }
-        EngineRuntime current = runtimeBuilder.requireRuntime("access the pack hash");
+        GenerationRuntime current = requireSelectedGenerationRuntime("access the pack hash");
         return current.hash32();
     }
 
     @Override
     public double getMaxBiomeObjectDensity() {
-        EngineRuntime current = runtime;
+        GenerationRuntime current = selectedGenerationRuntime();
         return current == null ? 0D : current.biomeMaxes().objectDensity();
     }
 
     @Override
     public double getMaxBiomeLayerDensity() {
-        EngineRuntime current = runtime;
+        GenerationRuntime current = selectedGenerationRuntime();
         return current == null ? 0D : current.biomeMaxes().layerDensity();
     }
 
     @Override
     public double getMaxBiomeDecoratorDensity() {
-        EngineRuntime current = runtime;
+        GenerationRuntime current = selectedGenerationRuntime();
         return current == null ? 0D : current.biomeMaxes().decoratorDensity();
     }
 
@@ -717,7 +1285,9 @@ public class IrisEngine implements Engine {
     @Override
     public void generate(int x, int z, Hunk<PlatformBlockState> vblocks, Hunk<PlatformBiome> vbiomes, boolean multicore) throws WrongEngineBroException {
         awaitGenerationCacheWarm();
-        try (GenerationSessionLease lease = acquireGenerationLease("chunk_generate");
+        try (GenerationHistoryRuntimeRouter.CoordinateScope historyScope =
+                     openGenerationHistoryCoordinateScope(x, z);
+             GenerationSessionLease lease = acquireGenerationLease("chunk_generate");
              IrisContext.Scope generationScope = IrisContext.open(this, lease.sessionId(), null)) {
             getEngineData().getStatistics().generatedChunk();
             PrecisionStopwatch p = PrecisionStopwatch.start();
@@ -810,8 +1380,56 @@ public class IrisEngine implements Engine {
         if (assembly != null) {
             return assembly.cacheId;
         }
-        EngineRuntime current = runtime;
+        GenerationRuntime current = selectedGenerationRuntime();
         return current == null ? -1 : current.cacheId();
+    }
+
+    private GenerationRuntime selectedGenerationRuntime() {
+        GenerationRuntimeBinding scoped = generationRuntimeScopes.current();
+        if (scoped != null && isGenerationRuntimeBindingLive(scoped)) {
+            return scoped.runtime;
+        }
+        EngineRuntime current = runtime;
+        return current == null ? null : current.generation();
+    }
+
+    public GenerationKernelRegistry.Version getGenerationKernelVersion() {
+        RuntimeAssembly assembly = runtimeAssembly.get();
+        if (assembly != null) {
+            return assembly.kernelVersion;
+        }
+        return requireSelectedGenerationRuntime("resolve the generation kernel version").kernelVersion();
+    }
+
+    public GenerationKernelRegistry.RuntimeKernel getGenerationRuntimeKernel() {
+        RuntimeAssembly assembly = runtimeAssembly.get();
+        if (assembly != null) {
+            return assembly.runtimeKernel;
+        }
+        return requireSelectedGenerationRuntime("resolve the executable generation kernel").runtimeKernel();
+    }
+
+    public TransitionGenerationPlan getTransitionGenerationPlan() {
+        RuntimeAssembly assembly = runtimeAssembly.get();
+        if (assembly != null) {
+            return assembly.transitionPlan;
+        }
+        return requireSelectedGenerationRuntime("resolve the generation transition plan").transitionPlan();
+    }
+
+    private boolean isGenerationRuntimeBindingLive(GenerationRuntimeBinding binding) {
+        EngineRuntime current = runtime;
+        return (current != null && current.generation() == binding.runtime)
+                || detachedGenerationRuntimes.contains(binding.runtime);
+    }
+
+    private GenerationRuntime requireSelectedGenerationRuntime(String operation) {
+        GenerationRuntime current = selectedGenerationRuntime();
+        if (current == null) {
+            throw new IllegalStateException("Cannot " + operation + " without an active Iris runtime for "
+                    + getWorld().name() + ".");
+        }
+        return current;
     }
 
     void requireRunning(String operation) {
@@ -864,6 +1482,73 @@ public class IrisEngine implements Engine {
 
         public boolean warmGenerationCaches() {
             return warmGenerationCaches;
+        }
+    }
+
+    public static final class GenerationRuntimeBinding {
+        private final IrisEngine engine;
+        private final GenerationRuntime runtime;
+
+        GenerationRuntimeBinding(IrisEngine engine, GenerationRuntime runtime) {
+            this.engine = Objects.requireNonNull(engine, "Iris engine");
+            this.runtime = Objects.requireNonNull(runtime, "generation runtime");
+        }
+
+        GenerationRuntime generationRuntime() {
+            return runtime;
+        }
+
+        public TransitionGenerationPlan transitionPlan() {
+            return runtime.transitionPlan();
+        }
+
+        public GenerationKernelRegistry.Version kernelVersion() {
+            return runtime.kernelVersion();
+        }
+
+        public GenerationKernelRegistry.RuntimeKernel runtimeKernel() {
+            return runtime.runtimeKernel();
+        }
+
+        public EngineTarget target() {
+            return runtime.target();
+        }
+
+        public Path mantleStorageDirectory() {
+            return runtime.mantleStorageDirectory();
+        }
+
+        public int runtimeId() {
+            return runtime.cacheId();
+        }
+    }
+
+    public static final class GenerationRuntimeScope implements AutoCloseable {
+        private final GenerationRuntimeScopeState state;
+        private final Thread owner;
+        private final GenerationRuntimeBinding previous;
+        private final GenerationRuntimeBinding installed;
+        private boolean closed;
+
+        GenerationRuntimeScope(
+                GenerationRuntimeScopeState state,
+                Thread owner,
+                GenerationRuntimeBinding previous,
+                GenerationRuntimeBinding installed
+        ) {
+            this.state = state;
+            this.owner = owner;
+            this.previous = previous;
+            this.installed = installed;
+        }
+
+        @Override
+        public void close() {
+            if (closed) {
+                return;
+            }
+            state.close(owner, previous, installed);
+            closed = true;
         }
     }
 

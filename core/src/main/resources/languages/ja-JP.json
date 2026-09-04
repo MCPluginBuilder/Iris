@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "中心からの半径（チャンク単位）",
     "iris.director.commanddeveloper.param.center_chunk_x": "中心チャンクの X",
     "iris.director.commanddeveloper.param.center_chunk_z": "中心チャンクの Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "ワールドのパックを更新します（危険!）",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "ワールド生成の更新を準備",
     "iris.director.commanddeveloper.param.world_update": "更新するワールド",
     "iris.director.commanddeveloper.param.pack_install_into_world": "ワールドへインストールするパック",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "必ずバックアップを作成し、先に警告を読んでください!",
@@ -1053,15 +1053,13 @@
       "other": "§7  ...ほか {count} 件の警告。",
       "one": "§7  ...ほか {count} 件の警告。"
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cこの機能を使用する前に、必ずバックアップを作成してください",
-      "§e発生する可能性がある問題には、次のものがあります:",
-      "§e - 更新前 & 更新後の古いチャンクと新しいチャンク間に生じる切れ目",
-      "§e - 再生成されたチャンクが古いチャンクとつながらない",
-      "§e - 再生成時に構造物が再びスポーンしない",
-      "§e - 洞窟がつながらない",
-      "§e - 地形レイヤーがつながらない",
-      "§cリスクを理解し、バックアップを作成したら実行してください:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cこの更新を準備する前に、ワールド全体をバックアップしてください。",
+      "§e既存のチャンクは再生成も上書きもしません。",
+      "§e再起動後、新しいチャンクは準備したパックを使用し、保存した境界で地形を徐々につなぎます。",
+      "§eワールドのシード、高さ、環境、ディメンションの種類は変更できません。",
+      "§eすべてのバックアップに iris/generation ディレクトリ全体を含めてください。",
+      "§c更新を準備し、正常な再起動を要求するには、次を実行してください。",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aバニラおよびデータパック構造物 §f{total}§a 件をインポートしています（mode={mode}、includeNonJigsaw={includeNonJigsaw}）...",

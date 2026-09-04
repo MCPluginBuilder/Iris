@@ -626,7 +626,7 @@
     "iris.director.commanddeveloper.param.radius_chunks_around_center": "Straal in stukjes rond het centrum",
     "iris.director.commanddeveloper.param.center_chunk_x": "Middendeel X",
     "iris.director.commanddeveloper.param.center_chunk_z": "Middenstuk Z",
-    "iris.director.commanddeveloper.director.update_pack_world_unsafe": "De verpakking van een wereld bijwerken (UNSAFE!)",
+    "iris.director.commanddeveloper.director.stage_world_generation_update": "Een update van de wereldgeneratie klaarzetten",
     "iris.director.commanddeveloper.param.world_update": "De wereld om bij te werken",
     "iris.director.commanddeveloper.param.pack_install_into_world": "Het pakket te installeren in de wereld",
     "iris.director.commanddeveloper.param.make_sure_make_backup_read_warnings_first": "Zorg ervoor dat u een back-up maakt & Lees eerst de waarschuwingen!",
@@ -1053,15 +1053,13 @@
       "other": "§7    ...  en {count} meer waarschuwingen.",
       "one": "§7    ...  en {count} Meer waarschuwing."
     },
-    "iris.bukkit.runtime.commanddeveloper.update_world_warning": [
-      "§cMaak altijd een back-up voordat je dit gebruikt",
-      "§eMogelijke problemen zijn onder andere:",
-      "§e - Gechunken chunks (afgesneden randen) tussen oude en nieuwe chunks (voor & na de update)",
-      "§e - Opnieuw gegenereerde chunks die niet aansluiten op de oude chunks",
-      "§e - Structuren die bij regeneratie niet opnieuw spawnen",
-      "§e - Grotten die niet op elkaar aansluiten",
-      "§e - Terreinlagen die niet op elkaar aansluiten",
-      "§cWanneer je de risico's begrijpt en een back-up hebt gemaakt:",
+    "iris.bukkit.runtime.commanddeveloper.stage_world_generation_update_warning": [
+      "§cMaak een back-up van de volledige wereld voordat je deze update klaarzet.",
+      "§eBestaande chunks worden niet opnieuw gegenereerd of overschreven.",
+      "§eNa de herstart gebruiken nieuwe chunks het klaargezette pakket, met een geleidelijke overgang aan de opgeslagen grens.",
+      "§eDe seed, hoogte, omgeving en het dimensietype van de wereld mogen niet veranderen.",
+      "§eElke back-up moet de volledige map iris/generation bevatten.",
+      "§cOm de update klaar te zetten en een nette herstart aan te vragen:",
       "§c/iris developer update-world {world} {pack} confirm=true"
     ],
     "iris.bukkit.runtime.bulkstructureimporter.importing_vanilla_datapack_structures_mode_includenonjigsaw": "§aImporteren §f{total}§a vanilla & datapack structuren (mode={mode}, includeNonJigsaw={includeNonJigsaw})...",

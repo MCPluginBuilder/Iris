@@ -28,8 +28,8 @@ import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.framework.StructureReachability;
+import art.arcane.iris.engine.history.GenerationSemanticQueries;
 import art.arcane.iris.engine.hydrology.HydrologyFeatureQuery;
-import art.arcane.iris.engine.hydrology.HydrologyFeatureRef;
 import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisNativeStructureDecision;
@@ -41,8 +41,10 @@ import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformStructureHooks;
 import art.arcane.iris.util.common.director.DirectorExecutor;
 import art.arcane.iris.util.common.director.specialhandlers.HydrologyTypeHandler;
-import art.arcane.iris.util.common.director.specialhandlers.ObjectHandler;
+import art.arcane.iris.engine.history.GenerationFindCatalog;
+import art.arcane.iris.util.common.director.specialhandlers.LocatableObjectHandler;
 import art.arcane.iris.util.common.director.specialhandlers.ReachableBiomeHandler;
+import art.arcane.iris.util.common.director.specialhandlers.ReachableRegionHandler;
 import art.arcane.iris.util.common.director.specialhandlers.StructureHandler;
 import art.arcane.iris.util.common.format.C;
 import art.arcane.iris.util.common.plugin.VolmitSender;
@@ -90,7 +92,7 @@ public class CommandFind implements DirectorExecutor {
 
     @Director(description = "Find a region", descriptionKey = "iris.director.commandfind.director.find_region")
     public void region(
-            @Param(description = "The region to look for", descriptionKey = "iris.director.commandfind.param.region_look")
+            @Param(description = "The region to look for", descriptionKey = "iris.director.commandfind.param.region_look", customHandler = ReachableRegionHandler.class)
             IrisRegion region,
             @Param(description = "Should you be teleported", descriptionKey = "iris.director.commandfind.param.should_you_be_teleported_2", defaultValue = "true")
             boolean teleport
@@ -138,10 +140,6 @@ public class CommandFind implements DirectorExecutor {
             return;
         }
         IrisHydrologyRuntime runtime = activeEngine.getComplex().getHydrologyRuntime();
-        if (runtime == null) {
-            commandSender.sendMessage(C.YELLOW + "Hydrology is not active in this world.");
-            return;
-        }
         HydrologyFeatureQuery query;
         try {
             query = HydrologyFeatureQuery.parse(type);
@@ -150,15 +148,19 @@ public class CommandFind implements DirectorExecutor {
             return;
         }
         Location origin = target.getLocation();
-        int requestedDistance = Math.min(8192, runtime.settings().routing().tileSize() * 15);
-        int maximumDistance = runtime.maximumFeatureSearchDistance(
-                origin.getBlockX(), origin.getBlockZ(), requestedDistance);
+        int requestedDistance = runtime == null
+                ? 8192
+                : Math.min(8192, runtime.settings().routing().tileSize() * 15);
+        int maximumDistance = runtime == null
+                ? requestedDistance
+                : runtime.maximumFeatureSearchDistance(
+                        origin.getBlockX(), origin.getBlockZ(), requestedDistance);
         commandSender.sendMessage(C.GRAY + "Searching accepted hydrology plans for " + type + "...");
         J.a(() -> {
             try {
-                HydrologyFeatureRef feature = runtime.nearestFeature(
-                        query.types(),
-                        query.profileKey(),
+                GenerationSemanticQueries.RiverResult feature = GenerationSemanticQueries.nearestRiver(
+                        activeEngine,
+                        query,
                         origin.getBlockX(),
                         origin.getBlockZ(),
                         maximumDistance,
@@ -171,15 +173,14 @@ public class CommandFind implements DirectorExecutor {
                                     + maximumDistance + " blocks.");
                     return;
                 }
-                int worldY = feature.y() + activeEngine.getDimension().getMinHeight();
                 String label = type + " hydrology feature";
                 if (!teleport) {
                     sendStructureMessage(target, commandSender,
-                            C.GREEN + "Found " + label + " at " + feature.x() + ", " + worldY + ", " + feature.z() + ".");
+                            C.GREEN + "Found " + label + " at " + feature.x() + ", " + feature.y() + ", " + feature.z() + ".");
                     return;
                 }
                 Location destination = new Location(
-                        target.getWorld(), feature.x(), worldY, feature.z());
+                        target.getWorld(), feature.x(), feature.y(), feature.z());
                 prepareStructureTeleport(
                         target, target.getWorld(), commandSender, label, destination, true);
             } catch (Throwable error) {
@@ -232,6 +233,12 @@ public class CommandFind implements DirectorExecutor {
         StructureLookupRoute route = selectStructureLookupRoute(
                 registered, decision, nativePlacement, locatableNativePlacement,
                 locatableEditablePlacement, nativeGenerationEnabled, reachable);
+
+        if (route != StructureLookupRoute.NATIVE && route != StructureLookupRoute.IRIS
+                && GenerationFindCatalog.hasRetainedStructurePlacement(e, structureKey)) {
+            locateIrisStructure(e, structureKey, commandSender);
+            return;
+        }
 
         if (route == StructureLookupRoute.UNKNOWN) {
             commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessages.COMMAND_FIND_UNKNOWN_STRUCTURE, MessageArgument.untrusted("structureKey", structureKey)));
@@ -672,7 +679,7 @@ public class CommandFind implements DirectorExecutor {
         J.a(() -> {
             try {
                 IrisStructureLocator.LocateResult result =
-                        IrisStructureLocator.locate(engine, structure, blockX, blockZ, 1024);
+                        GenerationSemanticQueries.nearestStructure(engine, structure, blockX, blockZ, 1024);
                 if (result.status() == IrisStructureLocator.LocateStatus.SEARCH_LIMIT_REACHED) {
                     sendStructureMessage(target, commandSender,
                             C.YELLOW + "Unable to locate " + structure
@@ -697,7 +704,7 @@ public class CommandFind implements DirectorExecutor {
 
     @Director(description = "Find an object", descriptionKey = "iris.director.commandfind.director.find_object")
     public void object(
-            @Param(description = "The object to look for", descriptionKey = "iris.director.commandfind.param.object_look", customHandler = ObjectHandler.class)
+            @Param(description = "The object to look for", descriptionKey = "iris.director.commandfind.param.object_look", customHandler = LocatableObjectHandler.class)
             String object,
             @Param(description = "Should you be teleported", descriptionKey = "iris.director.commandfind.param.should_you_be_teleported_4", defaultValue = "true")
             boolean teleport
@@ -721,7 +728,7 @@ public class CommandFind implements DirectorExecutor {
             }
         }
 
-        if (e.hasObjectPlacement(object)) {
+        if (GenerationFindCatalog.hasObjectPlacement(e, object)) {
             EngineBukkitOps.gotoObject(e, object, player(), teleport);
             return;
         }

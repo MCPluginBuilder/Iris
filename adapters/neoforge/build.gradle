@@ -26,6 +26,8 @@ plugins {
     alias(libs.plugins.shadow)
 }
 
+apply from: file('../../gradle/modded-generation-kernel-seals.gradle')
+
 Properties rootProperties = new Properties()
 file('../../gradle.properties').withInputStream { InputStream stream -> rootProperties.load(stream) }
 String irisVersion = providers.gradleProperty('irisVersion').getOrElse(rootProperties.getProperty('irisVersion', '4.1.0-26.2'))
@@ -132,6 +134,7 @@ dependencies {
         "art.arcane:core:${irisVersion}".toString(),
         "art.arcane:spi:${irisVersion}".toString(),
         libs.paralithic,
+        libs.asm,
         libs.lru,
         libs.caffeine,
         libs.dom4j,

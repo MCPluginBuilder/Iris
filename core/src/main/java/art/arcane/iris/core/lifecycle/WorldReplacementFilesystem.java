@@ -2,6 +2,7 @@ package art.arcane.iris.core.lifecycle;
 
 import art.arcane.iris.core.ExactWorldSlotPathPolicy;
 import art.arcane.iris.core.SnapshotDirectoryTreeDeleter;
+import art.arcane.iris.engine.history.GenerationHistory;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 
 import java.io.IOException;
@@ -94,7 +95,7 @@ public final class WorldReplacementFilesystem {
         State state = inspect(requiredPaths);
         if (state.stagePresent()) {
             requireSafeTree(requiredPaths.stage(), "replacement stage");
-            requireFingerprint(requiredPaths.stage().resolve("iris/pack"), expectedFingerprint);
+            requireFingerprint(activePackRoot(requiredPaths.stage()), expectedFingerprint);
             if (originalTargetPresent) {
                 Path retainedWorld = state.targetPresent()
                         ? requiredPaths.target()
@@ -118,7 +119,7 @@ public final class WorldReplacementFilesystem {
                 throw new IOException("Replacement backup state does not match the original target state.");
             }
             requireSafeTree(requiredPaths.stage(), "replacement stage");
-            requireFingerprint(requiredPaths.stage().resolve("iris/pack"), expectedFingerprint);
+            requireFingerprint(activePackRoot(requiredPaths.stage()), expectedFingerprint);
             move(requiredPaths.stage(), requiredPaths.target());
             state = inspect(requiredPaths);
         }
@@ -130,11 +131,11 @@ public final class WorldReplacementFilesystem {
             throw new IOException("Replacement publication lost or unexpectedly created its backup.");
         }
         requireSafeTree(requiredPaths.target(), "replacement target");
-        requireFingerprint(requiredPaths.target().resolve("iris/pack"), expectedFingerprint);
+        requireFingerprint(activePackRoot(requiredPaths.target()), expectedFingerprint);
         if (originalTargetPresent) {
             preservePaperWorldMetadata(requiredPaths.backup(), requiredPaths.target());
             requireSafeTree(requiredPaths.target(), "replacement target");
-            requireFingerprint(requiredPaths.target().resolve("iris/pack"), expectedFingerprint);
+            requireFingerprint(activePackRoot(requiredPaths.target()), expectedFingerprint);
         }
     }
 
@@ -224,7 +225,7 @@ public final class WorldReplacementFilesystem {
             throw new IOException("Committed replacement storage does not contain one exact target directory.");
         }
         requireSafeTree(requiredPaths.target(), "replacement target");
-        requireFingerprint(requiredPaths.target().resolve("iris/pack"), expectedFingerprint);
+        requireFingerprint(activePackRoot(requiredPaths.target()), expectedFingerprint);
     }
 
     public static void validatePublishedTarget(
@@ -240,7 +241,7 @@ public final class WorldReplacementFilesystem {
             throw new IOException("Published replacement storage does not match its retained-world contract.");
         }
         requireSafeTree(requiredPaths.target(), "replacement target");
-        requireFingerprint(requiredPaths.target().resolve("iris/pack"), expectedFingerprint);
+        requireFingerprint(activePackRoot(requiredPaths.target()), expectedFingerprint);
     }
 
     public static String fingerprintPack(Path packRoot) throws IOException {
@@ -277,6 +278,10 @@ public final class WorldReplacementFilesystem {
             }
         }
         return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static Path activePackRoot(Path worldRoot) throws IOException {
+        return GenerationHistory.open(worldRoot).activePackRoot();
     }
 
     private static FingerprintEntry fingerprintEntry(Path root, Path path) {

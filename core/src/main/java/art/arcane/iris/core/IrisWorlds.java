@@ -367,7 +367,7 @@ public class IrisWorlds {
                 configuredWorldName,
                 worldKey
         );
-        return dimensionRoot.map(IrisWorldStorage::requireFrozenPackRoot);
+        return dimensionRoot.map(IrisWorldStorage::requireActiveGenerationPackRoot);
     }
 
     private static void warnUnusableStorage(String worldIdentity, IllegalStateException failure) {
@@ -376,7 +376,7 @@ public class IrisWorlds {
         }
         IrisLogging.error("Iris world %s has unusable world storage and is excluded: %s",
                 worldIdentity, failure.getMessage());
-        IrisLogging.error("Restore its iris/pack snapshot, or drop the world with /iris remove world=%s delete=true.",
+        IrisLogging.error("Restore its iris/generation history, or drop the world with /iris remove world=%s delete=true.",
                 worldIdentity);
     }
 

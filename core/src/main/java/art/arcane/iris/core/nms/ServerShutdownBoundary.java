@@ -7,33 +7,32 @@ import java.util.function.BooleanSupplier;
 public final class ServerShutdownBoundary {
     private static final long MAX_JOIN_SLICE_MILLIS = 1000L;
 
-    private ServerShutdownBoundary() {
+    private final BooleanSupplier boundaryReached;
+    private final Thread serverThread;
+
+    public ServerShutdownBoundary(BooleanSupplier boundaryReached, Thread serverThread) {
+        this.boundaryReached = Objects.requireNonNull(boundaryReached, "Server shutdown boundary");
+        this.serverThread = Objects.requireNonNull(serverThread, "Server thread");
+        this.boundaryReached.getAsBoolean();
     }
 
-    public static boolean await(
-            BooleanSupplier boundaryReached,
-            Thread serverThread,
-            long timeout,
-            TimeUnit unit
-    ) {
-        BooleanSupplier reached = Objects.requireNonNull(boundaryReached, "Server shutdown boundary");
-        Thread activeServerThread = Objects.requireNonNull(serverThread, "Server thread");
+    public boolean await(long timeout, TimeUnit unit) {
         TimeUnit activeUnit = Objects.requireNonNull(unit, "Server shutdown timeout unit");
-        if (reached.getAsBoolean()) {
+        if (boundaryReached.getAsBoolean()) {
             return true;
         }
-        if (activeServerThread == Thread.currentThread()) {
+        if (serverThread == Thread.currentThread()) {
             return false;
         }
 
         long timeoutNanos = Math.max(0L, activeUnit.toNanos(timeout));
         long started = System.nanoTime();
         boolean interrupted = false;
-        while (!reached.getAsBoolean()) {
+        while (!boundaryReached.getAsBoolean()) {
             long remaining = timeoutNanos - (System.nanoTime() - started);
-            if (remaining <= 0L || !activeServerThread.isAlive()) {
+            if (remaining <= 0L || !serverThread.isAlive()) {
                 restoreInterrupt(interrupted);
-                return reached.getAsBoolean();
+                return boundaryReached.getAsBoolean();
             }
 
             long joinMillis = Math.max(
@@ -41,7 +40,7 @@ public final class ServerShutdownBoundary {
                     Math.min(MAX_JOIN_SLICE_MILLIS, TimeUnit.NANOSECONDS.toMillis(remaining))
             );
             try {
-                activeServerThread.join(joinMillis);
+                serverThread.join(joinMillis);
             } catch (InterruptedException e) {
                 interrupted = true;
             }

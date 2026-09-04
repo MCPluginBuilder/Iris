@@ -195,7 +195,7 @@ public class IrisWorldGeneratorResolverTest {
     }
 
     @Test
-    public void configuredWorldResolutionUsesOnlyFrozenWorldLocalSnapshot() throws Exception {
+    public void configuredWorldResolutionUsesOnlyActiveImmutableGenerationPack() throws Exception {
         String source = Files.readString(Path.of(
                 "src/main/java/art/arcane/iris/core/IrisWorldGeneratorResolver.java")).replace("\r\n", "\n");
         int resolverStart = source.indexOf("private ChunkGenerator resolveFrozenWorldGenerator(");
@@ -208,26 +208,32 @@ public class IrisWorldGeneratorResolverTest {
                 "Frozen Iris world storage does not match the current platform layout",
                 currentPlatformRoot
         );
-        int snapshotRoot = resolver.indexOf("IrisWorldStorage.requireFrozenPackRoot(dimensionRoot)");
+        int history = resolver.indexOf("requireGenerationHistory(dimensionRoot, id, worldSeed)");
+        int snapshotRoot = resolver.indexOf("requireActivePack(history)", history);
         int validation = resolver.indexOf("requireSnapshotLoadable(snapshotRoot)");
-        int exactLoad = resolver.indexOf(
-                "IrisData.get(snapshotRoot).getDimensionLoader().load(id, false)"
-        );
+        int exactLoad = resolver.indexOf("requireHistoricalDimension(history, snapshotRoot, id)");
         int canonicalIdentity = resolver.indexOf(".platformIdentity(worldKey.toString())");
+        int historicalSeed = resolver.indexOf(".seed(history.activeEpoch().worldSeed())");
         int resolvedStorage = resolver.indexOf(".worldFolder(dimensionRoot)");
 
         assertTrue(dimensionRoot >= 0);
         assertTrue(currentPlatformRoot > dimensionRoot);
         assertTrue(layoutRefusal > currentPlatformRoot);
-        assertTrue(snapshotRoot > layoutRefusal);
+        assertTrue(history > layoutRefusal);
+        assertTrue(snapshotRoot > history);
         assertTrue(validation > snapshotRoot);
         assertTrue(exactLoad > validation);
         assertTrue(canonicalIdentity > exactLoad);
-        assertTrue(resolvedStorage > canonicalIdentity);
+        assertTrue(historicalSeed > canonicalIdentity);
+        assertTrue(resolvedStorage > historicalSeed);
         assertFalse(resolver.contains("loadDimension("));
         assertFalse(resolver.contains("loadAnyDimension("));
         assertFalse(resolver.contains("replaceIntoWorld("));
         assertFalse(resolver.contains("installIntoWorld("));
+        assertFalse(resolver.contains(".seed(1337)"));
+        assertTrue(resolver.contains("GenerationHistory.openIfPresent(root, worldSeed)"));
+        assertTrue(resolver.contains("GenerationHistory.adoptLegacyPack("));
+        assertTrue(resolver.contains("GenerationRegistryContractFactory.captureRequiredDefinitions("));
     }
 
     @Test
