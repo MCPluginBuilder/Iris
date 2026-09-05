@@ -538,6 +538,21 @@ public enum NoiseStyle {
 
     @Desc("Vascular noise gets higher as the position nears a cell border. Cells are distorted using Iris styled wispy noise.")
     VASCULAR_IRIS_HALF(rng -> CNG.signatureHalf(rng, NoiseType.VASCULAR), NoiseType.VASCULAR),
+
+    @Desc("Warped gyroid sheets form rounded mazes in 2D and interconnected labyrinths in 3D.")
+    GYROID(rng -> new CNG(rng, NoiseType.GYROID, 1D, 1), NoiseType.GYROID),
+
+    @Desc("Fivefold wave interference forms non-repeating stars, rosettes, and crystalline contours.")
+    QUASICRYSTAL(rng -> new CNG(rng, NoiseType.QUASICRYSTAL, 1D, 1), NoiseType.QUASICRYSTAL),
+
+    @Desc("Connected quarter-circle ribbons form tiled loops that twist continuously through height.")
+    TRUCHET(rng -> new CNG(rng, NoiseType.TRUCHET, 1D, 1), NoiseType.TRUCHET),
+
+    @Desc("Scattered bowls with raised rims form crater fields in 2D and hollow shells in 3D.")
+    CRATER(rng -> new CNG(rng, NoiseType.CRATER, 1D, 1), NoiseType.CRATER),
+
+    @Desc("Seeded spiral arms form swirling eddies in 2D and winding funnels in 3D.")
+    VORTEX(rng -> new CNG(rng, NoiseType.VORTEX, 1D, 1), NoiseType.VORTEX),
     ;
 
     private final CNGFactory f;

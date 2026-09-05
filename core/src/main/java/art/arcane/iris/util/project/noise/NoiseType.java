@@ -87,7 +87,12 @@ public enum NoiseType {
     SIERPINSKI_TRIANGLE_BILINEAR((s) -> new InterpolatedNoise(s, SIERPINSKI_TRIANGLE, InterpolationMethod.BILINEAR), 1D),
     SIERPINSKI_TRIANGLE_BICUBIC((s) -> new InterpolatedNoise(s, SIERPINSKI_TRIANGLE, InterpolationMethod.BICUBIC), 1D),
     SIERPINSKI_TRIANGLE_HERMITE((s) -> new InterpolatedNoise(s, SIERPINSKI_TRIANGLE, InterpolationMethod.HERMITE), 1D),
-    VASCULAR(VascularNoise::new);
+    VASCULAR(VascularNoise::new),
+    GYROID(GyroidNoise::new, 1D / 64D),
+    QUASICRYSTAL(QuasicrystalNoise::new, 1D / 64D),
+    TRUCHET(TruchetNoise::new, 1D / 64D),
+    CRATER(CraterNoise::new, 1D / 64D),
+    VORTEX(VortexNoise::new, 1D / 64D);
 
     private final NoiseFactory f;
     private final double coordinateScale;
