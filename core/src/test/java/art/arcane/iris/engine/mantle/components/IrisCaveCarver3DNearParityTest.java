@@ -51,6 +51,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 
 public class IrisCaveCarver3DNearParityTest {
+    private static final long CARVE_SEED = -54_777_863_784_492_918L;
     private static final int SURFACE_CEILING_FADE_DEPTH = 12;
     private static final double SURFACE_CEILING_SOLID_EPSILON = 0.000001D;
 
@@ -297,11 +298,11 @@ public class IrisCaveCarver3DNearParityTest {
     public void warpCacheDoesNotCrossContaminateCarverInstancesOnSameThread() throws Exception {
         Engine engine = createEngine(128, 92);
         IrisCaveProfile firstProfile = createProfile(true, false);
-        firstProfile.setWarpStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.12D));
+        firstProfile.setWarpStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.1875D));
         IrisCaveProfile secondProfile = createProfile(true, false);
-        secondProfile.setWarpStyle(new IrisGeneratorStyle(NoiseStyle.CELLULAR).zoomed(0.12D));
+        secondProfile.setWarpStyle(new IrisGeneratorStyle(NoiseStyle.CELLULAR).zoomed(0.1875D));
         IrisCaveProfile controlProfile = createProfile(true, false);
-        controlProfile.setWarpStyle(new IrisGeneratorStyle(NoiseStyle.CELLULAR).zoomed(0.12D));
+        controlProfile.setWarpStyle(new IrisGeneratorStyle(NoiseStyle.CELLULAR).zoomed(0.1875D));
         IrisCaveCarver3D firstCarver = new IrisCaveCarver3D(engine, firstProfile);
         IrisCaveCarver3D secondCarver = new IrisCaveCarver3D(engine, secondProfile);
         IrisCaveCarver3D controlCarver = new IrisCaveCarver3D(engine, controlProfile);
@@ -1101,13 +1102,14 @@ public class IrisCaveCarver3DNearParityTest {
         Engine engine = mock(Engine.class);
         IrisData data = mock(IrisData.class);
         IrisDimension dimension = mock(IrisDimension.class);
-        SeedManager seedManager = new SeedManager(942_337_445L);
+        SeedManager seedManager = mock(SeedManager.class);
         EngineMetrics metrics = new EngineMetrics(16);
         IrisWorld world = IrisWorld.builder().minHeight(0).maxHeight(worldHeight).build();
 
         doReturn(data).when(engine).getData();
         doReturn(dimension).when(engine).getDimension();
         doReturn(seedManager).when(engine).getSeedManager();
+        doReturn(CARVE_SEED).when(seedManager).getCarve();
         doReturn(metrics).when(engine).getMetrics();
         doReturn(world).when(engine).getWorld();
         doReturn(sampledHeight).when(engine).getHeight(anyInt(), anyInt());
@@ -1124,10 +1126,10 @@ public class IrisCaveCarver3DNearParityTest {
         profile.setVerticalRange(new IrisRange(0D, 120D));
         profile.setVerticalEdgeFade(14);
         profile.setVerticalEdgeFadeStrength(0.21D);
-        profile.setBaseDensityStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.07D));
-        profile.setDetailDensityStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.17D));
-        profile.setWarpStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.12D));
-        profile.setSurfaceBreakStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.09D));
+        profile.setBaseDensityStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.109375D));
+        profile.setDetailDensityStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.265625D));
+        profile.setWarpStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.1875D));
+        profile.setSurfaceBreakStyle(new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.140625D));
         profile.setBaseWeight(1D);
         profile.setDetailWeight(0.48D);
         profile.setWarpStrength(warp ? 0.37D : 0D);
@@ -1146,14 +1148,14 @@ public class IrisCaveCarver3DNearParityTest {
         if (modules) {
             KList<IrisCaveFieldModule> caveModules = new KList<>();
             caveModules.add(new IrisCaveFieldModule(
-                    new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.11D),
+                    new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.171875D),
                     0.23D,
                     0.04D,
                     new IrisRange(0D, 72D),
                     false
             ));
             caveModules.add(new IrisCaveFieldModule(
-                    new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.19D),
+                    new IrisGeneratorStyle(NoiseStyle.SIMPLEX).zoomed(0.296875D),
                     0.17D,
                     -0.06D,
                     new IrisRange(24D, 120D),

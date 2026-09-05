@@ -82,7 +82,7 @@ public class FastNoiseDouble {
     }
 
     private static long fastFloor(double f) {
-        return (f >= 0 ? (long) f : (long) f - 1);
+        return (long) Math.floor(f);
     }
 
     private static long fastRound(double f) {
@@ -289,7 +289,7 @@ public class FastNoiseDouble {
     // Sets octave count for all fractal noise types
     // Default: 3
     public void setFractalOctaves(long octaves) {
-        m_octaves = octaves;
+        m_octaves = Math.max(1, Math.min(16, octaves));
         calculateFractalBounding();
     }
 
@@ -1453,7 +1453,7 @@ public class FastNoiseDouble {
         x *= m_frequency;
         y *= m_frequency;
 
-        return SingleCubic(0, x, y);
+        return SingleCubic(m_seed, x, y);
     }
 
     private double SingleCubic(long seed, double x, double y) {
@@ -1676,14 +1676,11 @@ public class FastNoiseDouble {
                 break;
         }
 
-        return switch (m_cellularReturnType) {
-            case Distance2 -> distance2 - 1;
-            case Distance2Add -> distance2 + distance - 1;
-            case Distance2Sub -> distance2 - distance - 1;
-            case Distance2Mul -> distance2 * distance - 1;
-            case Distance2Div -> distance / distance2 - 1;
-            default -> 0;
-        };
+        double boundary = 1.55D - Math.max(Math.abs(x - xr), Math.max(Math.abs(y - yr), Math.abs(z - zr)));
+        if (cellularDistance(boundary, 0D, 0D) < distance2) {
+            return refineCellular2Edge(x, y, z, xr, yr, zr, distance, distance2);
+        }
+        return cellular2EdgeResult(distance, distance2);
     }
 
     public double GetCellular(double x, double y) {
@@ -1856,6 +1853,93 @@ public class FastNoiseDouble {
                 break;
         }
 
+        double boundary = 1.55D - Math.max(Math.abs(x - xr), Math.abs(y - yr));
+        if (cellularDistance(boundary, 0D, 0D) < distance2) {
+            return refineCellular2Edge(x, y, xr, yr, distance, distance2);
+        }
+        return cellular2EdgeResult(distance, distance2);
+    }
+
+    private double refineCellular2Edge(double x, double y, long xr, long yr, double distance, double distance2) {
+        for (int dx = -2; dx <= 2; dx++) {
+            long xi = xr + dx;
+            double baseX = xi - x;
+            double boundX = Math.max(0D, Math.abs(baseX) - 0.45D);
+            if (cellularDistance(boundX, 0D, 0D) >= distance2) {
+                continue;
+            }
+            for (int dy = -2; dy <= 2; dy++) {
+                if (Math.abs(dx) < 2 && Math.abs(dy) < 2) {
+                    continue;
+                }
+                long yi = yr + dy;
+                double baseY = yi - y;
+                double boundY = Math.max(0D, Math.abs(baseY) - 0.45D);
+                if (cellularDistance(boundX, boundY, 0D) >= distance2) {
+                    continue;
+                }
+                int index = (int) hash2D(m_seed, xi, yi) & 255;
+                double candidate = cellularDistance(baseX + CELL_2D_X[index], baseY + CELL_2D_Y[index], 0D);
+                if (candidate < distance) {
+                    distance2 = distance;
+                    distance = candidate;
+                } else if (candidate < distance2) {
+                    distance2 = candidate;
+                }
+            }
+        }
+        return cellular2EdgeResult(distance, distance2);
+    }
+
+    private double refineCellular2Edge(double x, double y, double z, long xr, long yr, long zr, double distance, double distance2) {
+        int radius = m_cellularDistanceFunction == CellularDistanceFunction.Manhattan ? 3 : 2;
+        for (int dx = -radius; dx <= radius; dx++) {
+            long xi = xr + dx;
+            double baseX = xi - x;
+            double boundX = Math.max(0D, Math.abs(baseX) - 0.45D);
+            if (cellularDistance(boundX, 0D, 0D) >= distance2) {
+                continue;
+            }
+            for (int dy = -radius; dy <= radius; dy++) {
+                long yi = yr + dy;
+                double baseY = yi - y;
+                double boundY = Math.max(0D, Math.abs(baseY) - 0.45D);
+                if (cellularDistance(boundX, boundY, 0D) >= distance2) {
+                    continue;
+                }
+                for (int dz = -radius; dz <= radius; dz++) {
+                    if (Math.abs(dx) < 2 && Math.abs(dy) < 2 && Math.abs(dz) < 2) {
+                        continue;
+                    }
+                    long zi = zr + dz;
+                    double baseZ = zi - z;
+                    double boundZ = Math.max(0D, Math.abs(baseZ) - 0.45D);
+                    if (cellularDistance(boundX, boundY, boundZ) >= distance2) {
+                        continue;
+                    }
+                    int index = (int) hash3D(m_seed, xi, yi, zi) & 255;
+                    double candidate = cellularDistance(baseX + CELL_3D_X[index], baseY + CELL_3D_Y[index], baseZ + CELL_3D_Z[index]);
+                    if (candidate < distance) {
+                        distance2 = distance;
+                        distance = candidate;
+                    } else if (candidate < distance2) {
+                        distance2 = candidate;
+                    }
+                }
+            }
+        }
+        return cellular2EdgeResult(distance, distance2);
+    }
+
+    private double cellularDistance(double x, double y, double z) {
+        return switch (m_cellularDistanceFunction) {
+            case Euclidean -> x * x + y * y + z * z;
+            case Manhattan -> Math.abs(x) + Math.abs(y) + Math.abs(z);
+            case Natural -> (Math.abs(x) + Math.abs(y) + Math.abs(z)) + (x * x + y * y + z * z);
+        };
+    }
+
+    private double cellular2EdgeResult(double distance, double distance2) {
         return switch (m_cellularReturnType) {
             case Distance2 -> distance2 - 1;
             case Distance2Add -> distance2 + distance - 1;

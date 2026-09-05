@@ -21,6 +21,7 @@ package art.arcane.iris.engine.object;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.data.cache.LazyBoundedCache;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.history.GenerationKernelRegistry;
 import art.arcane.iris.engine.object.annotations.Desc;
 import art.arcane.iris.engine.object.annotations.MaxNumber;
 import art.arcane.iris.engine.object.annotations.MinNumber;
@@ -40,6 +41,7 @@ import lombok.Setter;
 import lombok.experimental.Accessors;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -65,7 +67,7 @@ public class IrisGeneratorStyle {
     @Desc("Cell zooms")
     private double cellularZoom = 1;
     @MinNumber(0.00001)
-    @Desc("The zoom of this style")
+    @Desc("Feature size multiplier. Built-in coherent noise uses a 64-block base scale; 2 doubles feature size.")
     private double zoom = 1;
     @Desc("Instead of using the style property, use a custom expression to represent this style.")
     @RegistryListResource(IrisExpression.class)
@@ -97,11 +99,15 @@ public class IrisGeneratorStyle {
     }
 
     public CNG createNoCache(RNG rng, IrisData data) {
-        return createNoCache(rng, data, false, 0, false, resolveEngine(data));
+        return createNoCache(rng, data, 1, 0, false, resolveEngine(data));
+    }
+
+    public CNG createForLayer(RNG rng, IrisData data, int octaveMultiplier) {
+        return createNoCache(rng, data, Math.clamp(octaveMultiplier, 1, 16), 0, false, resolveEngine(data));
     }
 
     public CNG createForPrebake(RNG rng, IrisData data, int fallbackCacheSize) {
-        return createNoCache(rng, data, false, Math.max(0, fallbackCacheSize), true, resolveEngine(data));
+        return createNoCache(rng, data, 1, Math.max(0, fallbackCacheSize), true, resolveEngine(data));
     }
 
 
@@ -121,16 +127,17 @@ public class IrisGeneratorStyle {
         return hash();
     }
 
-    private String cachePrefix(RNG rng, int effectiveCacheSize, long engineStamp) {
-        return "style-" + Integer.toUnsignedString(hash())
+    private String cachePrefix(RNG rng, int effectiveCacheSize, long engineStamp, int octaveMultiplier) {
+        return "noise-" + NoiseCacheIdentity.FINGERPRINT + "-style-" + Integer.toUnsignedString(hash())
                 + "-seed-" + Long.toUnsignedString(rng.getSeed())
                 + "-eng-" + Long.toUnsignedString(engineStamp)
+                + "-oct-" + octaveMultiplier
                 + "-sz-" + effectiveCacheSize
                 + "-src-";
     }
 
-    private String cacheKey(RNG rng, long sourceStamp, int effectiveCacheSize, long engineStamp) {
-        return cachePrefix(rng, effectiveCacheSize, engineStamp) + Long.toUnsignedString(sourceStamp);
+    private String cacheKey(RNG rng, long sourceStamp, int effectiveCacheSize, long engineStamp, int octaveMultiplier) {
+        return cachePrefix(rng, effectiveCacheSize, engineStamp, octaveMultiplier) + Long.toUnsignedString(sourceStamp);
     }
 
     private void clearStaleCacheEntries(IrisData data, String prefix, String key) {
@@ -157,12 +164,19 @@ public class IrisGeneratorStyle {
         }
     }
 
-    public CNG createNoCache(RNG rng, IrisData data, boolean actuallyCached) {
-        return createNoCache(rng, data, actuallyCached, 0, false, resolveEngine(data));
-    }
-
-    private CNG createNoCache(RNG rng, IrisData data, boolean actuallyCached, int fallbackCacheSize,
+    private CNG createNoCache(RNG rng, IrisData data, int octaveMultiplier, int fallbackCacheSize,
                               boolean quietCacheLog, Engine engine) {
+        requirePositiveFinite("zoom", zoom);
+        requirePositiveFinite("exponent", exponent);
+        if (!Double.isFinite(cellularFrequency) || cellularFrequency < 0D) {
+            throw new IllegalArgumentException("cellularFrequency must be finite and nonnegative");
+        }
+        if (cellularFrequency > 0D) {
+            requirePositiveFinite("cellularZoom", cellularZoom);
+        }
+        if (fracture != null) {
+            requirePositiveFinite("fracture.multiplier", fracture.getMultiplier());
+        }
         CNG cng = null;
         long sourceStamp = 0L;
         if (getExpression() != null) {
@@ -182,10 +196,11 @@ public class IrisGeneratorStyle {
             cng = (style != null ? style : NoiseStyle.FLAT).create(rng).bake();
         }
 
-        cng = cng.scale(1D / zoom).pow(exponent).bake();
+        cng = cng.oct(Math.clamp((long) cng.getOct() * octaveMultiplier, 1, 16))
+                .pow(cng.getPower() * exponent);
 
         if (fracture != null) {
-            cng.fractureWith(fracture.createNoCache(rng.nextParallelRNG(2934), data, false,
+            cng.fractureWith(fracture.createNoCache(rng.nextParallelRNG(2934), data, 1,
                     fallbackCacheSize, quietCacheLog, engine), fracture.getMultiplier());
         }
 
@@ -193,11 +208,13 @@ public class IrisGeneratorStyle {
             cng = cng.cellularize(rng.nextParallelRNG(884466), cellularFrequency).scale(1D / cellularZoom).bake();
         }
 
+        cng.zoom(zoom);
+
         int effectiveCacheSize = cacheSize > 0 ? cacheSize : Math.max(0, fallbackCacheSize);
         if (effectiveCacheSize > 0) {
             long engineStamp = engineStamp(engine);
-            String key = cacheKey(rng, sourceStamp, effectiveCacheSize, engineStamp);
-            clearStaleCacheEntries(data, cachePrefix(rng, effectiveCacheSize, engineStamp), key);
+            String key = cacheKey(rng, sourceStamp, effectiveCacheSize, engineStamp, octaveMultiplier);
+            clearStaleCacheEntries(data, cachePrefix(rng, effectiveCacheSize, engineStamp, octaveMultiplier), key);
             cng = cng.cached(effectiveCacheSize, key, data.getDataFolder(), quietCacheLog);
         }
 
@@ -215,7 +232,7 @@ public class IrisGeneratorStyle {
     public CNG create(RNG rng, IrisData data, Engine engine) {
         GeneratorCacheKey key = new GeneratorCacheKey(data, engine, rng.getSeed());
         return generatorCache.computeIfAbsent(key,
-                ignored -> createNoCache(rng, data, true, 0, false, engine));
+                ignored -> createNoCache(rng, data, 1, 0, false, engine));
     }
 
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
@@ -242,6 +259,25 @@ public class IrisGeneratorStyle {
 
     private Engine resolveEngine(IrisData data) {
         return data == null ? null : data.getEngine();
+    }
+
+    private static void requirePositiveFinite(String field, double value) {
+        if (!Double.isFinite(value) || value <= 0D || !Double.isFinite(1D / value)) {
+            throw new IllegalArgumentException(field + " must be finite and positive");
+        }
+    }
+
+    private static final class NoiseCacheIdentity {
+        private static final String FINGERPRINT = fingerprint();
+
+        private static String fingerprint() {
+            GenerationKernelRegistry registry = GenerationKernelRegistry.standard();
+            try {
+                return registry.requireSupported(registry.current()).implementationFingerprint();
+            } catch (IOException failure) {
+                throw new IllegalStateException("Cannot identify the noise cache implementation", failure);
+            }
+        }
     }
 
     private static final class GeneratorCacheKey {

@@ -2,6 +2,13 @@ package art.arcane.iris.util.project.noise;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
 import static org.junit.Assert.assertEquals;
 
 public class CloverNoiseParityTest {
@@ -39,5 +46,60 @@ public class CloverNoiseParityTest {
                         noise.noise(point[0], point[2])));
             }
         }
+    }
+
+    @Test
+    public void threeDimensionalCoordinateGridPreservesExactNoiseBits() {
+        long[] expected = {-4534805072329300766L, 938556028071277557L, -6813256383186365522L,
+                -4452859942568220233L, 5365194784097108235L};
+
+        for (int index = 0; index < SEEDS.length; index++) {
+            assertEquals("seed=" + SEEDS[index], expected[index], coordinateDigest(new CloverNoise(SEEDS[index]), 0));
+        }
+    }
+
+    @Test(timeout = 15000)
+    public void concurrentSamplingKeepsThreadScratchIndependent() throws Exception {
+        CloverNoise shared = new CloverNoise(1337L);
+        long[] expected = new long[8];
+        for (int index = 0; index < expected.length; index++) {
+            expected[index] = coordinateDigest(shared, index * 991);
+        }
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(4)) {
+            List<Future<Long>> results = new ArrayList<>(expected.length);
+            for (int index = 0; index < expected.length; index++) {
+                int start = index * 991;
+                results.add(executor.submit(() -> coordinateDigest(shared, start)));
+            }
+
+            for (int index = 0; index < expected.length; index++) {
+                assertEquals(expected[index], results.get(index).get(5, TimeUnit.SECONDS).longValue());
+            }
+        }
+    }
+
+    @Test
+    public void samplingKeepsCallerVectorsUnchanged() {
+        CloverNoise.Noise3D noise = new CloverNoise.Noise3D(1337L);
+        CloverNoise.Vector3 point = new CloverNoise.Vector3(0.25D, 0.5D, -0.75D);
+        double expected = noise.noise(point);
+        noise.noise(71D, -31D, 113D);
+
+        assertEquals(0.25D, point.getX(), 0D);
+        assertEquals(0.5D, point.getY(), 0D);
+        assertEquals(-0.75D, point.getZ(), 0D);
+        assertEquals(expected, noise.noise(point), 0D);
+    }
+
+    private static long coordinateDigest(CloverNoise noise, int start) {
+        long digest = 0L;
+        for (int index = start; index < start + 8192; index++) {
+            double x = ((index * 1580030173L) % 60000000L - 30000000L) / 64D + 0.371D;
+            double y = ((index * 91437L) % 384L - 64L) / 64D + 0.231D;
+            double z = ((index * 59260789L) % 60000000L - 30000000L) / 64D - 0.219D;
+            digest = Long.rotateLeft(digest, 7) ^ Double.doubleToRawLongBits(noise.noise(x, y, z));
+        }
+        return digest;
     }
 }

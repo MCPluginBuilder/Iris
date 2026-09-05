@@ -90,7 +90,8 @@ public class IrisNoiseGenerator {
     @Desc("The Noise Style")
     private IrisGeneratorStyle style = NoiseStyle.IRIS.style();
     @MinNumber(1)
-    @Desc("Multiple octaves for multple generators of changing zooms added together")
+    @MaxNumber(16)
+    @Desc("Multiplies the style's octave count, capped at 16. Adds finer detail while preserving the base feature scale.")
     private int octaves = 1;
     @ArrayType(min = 1, type = IrisNoiseGenerator.class)
     @Desc("Apply a child noise generator to fracture the input coordinates of this generator")
@@ -111,7 +112,7 @@ public class IrisNoiseGenerator {
 
         GeneratorKey key = new GeneratorKey(data, engine, generatorSeed);
         CNG generator = generators.computeIfAbsent(key,
-                ignored -> style.createNoCache(new RNG(generatorSeed), data).oct(octaves));
+                ignored -> style.createForLayer(new RNG(generatorSeed), data, octaves));
         if (generator != null) {
             recentGenerator.set(new CachedGenerator(key, generator));
         }
@@ -146,7 +147,7 @@ public class IrisNoiseGenerator {
         double n = cng.noiseFast2D(sampleX, sampleZ) * opacity;
         n = negative ? (-n + opacity) : n;
         n = (exponent != 1 ? n < 0 ? -Math.pow(-n, exponent) : Math.pow(n, exponent) : n) + offsetY;
-        n = parametric ? IrisInterpolation.parametric(n, 1) : n;
+        n = parametric ? IrisInterpolation.parametric(n, 2D) : n;
         n = bezier ? IrisInterpolation.bezier(n) : n;
         n = sinCentered ? IrisInterpolation.sinCenter(n) : n;
 
