@@ -1279,9 +1279,9 @@ public class NMSBinding implements INMSBinding {
                 : null;
         boolean studioBootstrap = platformGenerator != null
                 && platformGenerator.isStudioEntryBootstrapActive();
-        boolean jigsawStudio = platformGenerator != null
-                && platformGenerator.isJigsawStudioActive();
-        if (jigsawStudio) {
+        boolean authoringStudio = platformGenerator != null
+                && platformGenerator.isAuthoringStudio();
+        if (authoringStudio) {
             requireIrisGenerator(generator);
             if (currentState.possibleStructureSets().isEmpty()) {
                 currentState.ensureStructuresGenerated();

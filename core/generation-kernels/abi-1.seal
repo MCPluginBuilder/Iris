@@ -16,11 +16,11 @@ scope	core/src/main/java
 scope	lombok.config
 scope	spi/src/main/java
 exclude	core/src/main/java/art/arcane/iris/engine/kernels
-source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/CustomBiomeSource.java	a8987a308db171229d6379bae2698ad827ee58b6f86eee4164f3e594aeaf522f
+source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/CustomBiomeSource.java	d195942b064c0f3d694f824870a44883043e5c47b19099e81072a871fbe0a9a5
 source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/DatapackStructureStateFilter.java	b1ae6b3ab4e0ed1d0292681e90a875dbbf449fef29cc7af281ec01a34100fa14
 source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/ImportedFeatureStage.java	8eafc6ddd5dc3023e80fd97a718183e142c58998444502a835a8f8331a53ff5a
-source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/IrisChunkGenerator.java	145cadbccef9253ca8b29ba441c164a27d2c50e6a7c2177b18d1b999c0391ef7
-source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/NMSBinding.java	0b0823ddc0b03c7788ec33678f70acda0a26979158bbefd3809058cbf898a9b5
+source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/IrisChunkGenerator.java	bdf785a793ba615f45d4a375984ab695f5abc56d54e360623df94a6eddfa048d
+source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/NMSBinding.java	baeb4056e11f72108d920b1013eb05a66b9c08c0c8f384f0c7ee73335d5ca557
 source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/NativeStructureWorldgenAccess.java	a33a05dfcd1467a7b27a3245b819d21d9dac6024306901bcaafc43ff0f61bebc
 source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/NmsGenerationRegistry.java	8e7aa89be6166c40801edbe3c76bc7ff767e6a80874bdfc454c98ac7615da297
 source	adapters/bukkit/nms/v26_2_R1/src/main/java/art/arcane/iris/core/nms/v26_2_R1/VanillaStructureBiomes.java	bc9ef399119dd325e9c7256ffb9c9d070022f30af7c23c3711aeb2f736ba724b
@@ -462,7 +462,7 @@ source	core/src/main/java/art/arcane/iris/core/pack/PackValidationResult.java	c3
 source	core/src/main/java/art/arcane/iris/core/pack/PackValidator.java	b51b82898fe5dc618880ff0af5553e21f82b41499eb2d2dc13fe7c3c1295be14
 source	core/src/main/java/art/arcane/iris/core/pack/StructureGraphPackValidator.java	2e88ed567e1f477f1b77450932983ebf5c9e2fae866a66ad4713879f1f233d11
 source	core/src/main/java/art/arcane/iris/core/pack/StructurePackageClosure.java	6d0f68a637ef260729d5e67da6b2211d204c78fb2d07866467923740e9f9ffb6
-source	core/src/main/java/art/arcane/iris/core/pregenerator/IrisPregenerator.java	f06951398de67eef6d2ea60c607673113353991b3c0db838ea4ce33d73d35be2
+source	core/src/main/java/art/arcane/iris/core/pregenerator/IrisPregenerator.java	2965a14213a6a463ab8c9a2b2bc47ef68ba37ede248263bdcc5bb2144bac35ab
 source	core/src/main/java/art/arcane/iris/core/pregenerator/MantleHeapPressure.java	8a01dfff59d07b75f90edffef9599d9a0ae44b3a33cced65af190fd9576690fb
 source	core/src/main/java/art/arcane/iris/core/pregenerator/PregenApiPhase.java	aa6fca878aedd70c394c034cf62b6b7a0051875275682b154805121422da00d3
 source	core/src/main/java/art/arcane/iris/core/pregenerator/PregenApiSink.java	bdf3ba2e9e2ccd4b34d272635bd615de4be7a09166ed01798811c0574b1d24d2
@@ -472,7 +472,7 @@ source	core/src/main/java/art/arcane/iris/core/pregenerator/PregenPerformancePro
 source	core/src/main/java/art/arcane/iris/core/pregenerator/PregenPhaseTracker.java	d57637b5a9e7c8e09c58e71fc8a1ff23eb295435c9fcd411746d5e8176a9e015
 source	core/src/main/java/art/arcane/iris/core/pregenerator/PregenRateTracker.java	53304e35af5b0e32b86dd75bdb1d4052630150ace2751fc8ba86ca38e94ae527
 source	core/src/main/java/art/arcane/iris/core/pregenerator/PregenRates.java	d348acd7898d701e71bda83da20eb9ba09bad4f6779966ad87aa8a60522c3c8d
-source	core/src/main/java/art/arcane/iris/core/pregenerator/PregenTask.java	a52c1ff8be510f5357bc721b88e735b6bf14c389956f50e249f74f8970af2320
+source	core/src/main/java/art/arcane/iris/core/pregenerator/PregenTask.java	04c174899d60a48e4ec9ed2bf0e72e4376b1f020bac7049f52766a59207855f3
 source	core/src/main/java/art/arcane/iris/core/pregenerator/PregeneratorMethod.java	6b259a5b14fd513c441f26c053e5713a646b7aac88542dc5c4e53f6aa4c008af
 source	core/src/main/java/art/arcane/iris/core/pregenerator/cache/PregenCache.java	e6af20dfaeea6967ee0d561631f612e0b2dae7e22182773001844d3522bd79de
 source	core/src/main/java/art/arcane/iris/core/pregenerator/cache/PregenCacheImpl.java	2dafaaeb0b5bc8e65db9b0cf25ed2786cfa0f561c6712b7b5817568c239a9eb6
@@ -512,7 +512,7 @@ source	core/src/main/java/art/arcane/iris/core/runtime/InPlaceChunkRegenerator.j
 source	core/src/main/java/art/arcane/iris/core/runtime/ObjectStudioActivation.java	b3fa731a267ace9e052f1d4cbc437ecc1b6102c2c0ae030c21c9262c41069386
 source	core/src/main/java/art/arcane/iris/core/runtime/ObjectStudioLayout.java	b78868e5adefca27c3f1f9544256317b1949fe208f02ccee7dbffc61c389e129
 source	core/src/main/java/art/arcane/iris/core/runtime/PaperLikeRuntimeControlBackend.java	443047b33624db675576a189c843952854fb8852c9df979eca044e8f0e3c23e6
-source	core/src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java	b501913f1704a3e59bcf6982d6683110565c549725d00311061a7dbb7dc0ef88
+source	core/src/main/java/art/arcane/iris/core/runtime/StudioOpenCoordinator.java	e8ad851c680934278f1cefd954ecb40d48b0d4c1e1213dca9e6dc31a8c648946
 source	core/src/main/java/art/arcane/iris/core/runtime/TransientWorldCleanupSupport.java	54fe5614808ffa4cef920e6428f6a1fd70c23d01e3ab16d75fac862271dd2e97
 source	core/src/main/java/art/arcane/iris/core/runtime/WorldDeletionQueue.java	4e77be2cb6c1bde9abc38253208c4a86bae0e575d8b6ddd7defdada414248ac3
 source	core/src/main/java/art/arcane/iris/core/runtime/WorldRuntimeControlBackend.java	0827d2b8412ffdc33ab35f1abb732584f85935dac3e882e9e04994b0cfd3fcce
@@ -656,8 +656,8 @@ source	core/src/main/java/art/arcane/iris/engine/EngineTickRegistry.java	9ae20d3
 source	core/src/main/java/art/arcane/iris/engine/GenerationCacheWarmer.java	821455b42549511328dfd90e5447dffcdf8ea1311490f1b0ada2e65ca1a311d2
 source	core/src/main/java/art/arcane/iris/engine/GenerationRuntime.java	09e250e72e1ac63c38c29dc0860c951955ad71a7f9ec7a36ac27d7d27839b11c
 source	core/src/main/java/art/arcane/iris/engine/GenerationRuntimeScopeState.java	a05de937d2d8ed1b5017549f1083e5f6592d944fa5a136dcfb5e9bc33eb78f2d
-source	core/src/main/java/art/arcane/iris/engine/IrisComplex.java	257916da58a83632887123debc9f0dea9a63087de61391550774982f5c613fb6
-source	core/src/main/java/art/arcane/iris/engine/IrisEngine.java	c64aabd254a8e75d0a52c5c4b7b43f06013d6762c7a1cac4bb1c324e9447db80
+source	core/src/main/java/art/arcane/iris/engine/IrisComplex.java	5ae7ffc3ee932fd140100d48a9127db8c1216f950c8c0c20c8f27d537d4683a4
+source	core/src/main/java/art/arcane/iris/engine/IrisEngine.java	739b16fd1c283f6499328138406b4ffdbcb1be08c6bc696e4dc9f0cee372258d
 source	core/src/main/java/art/arcane/iris/engine/IrisEngineEffects.java	67cf96aed6c213dbd6d6cb81866afd29cd30b555cd4e88712395bc089e50f43c
 source	core/src/main/java/art/arcane/iris/engine/IrisEngineMantle.java	2c4251a6ad59b5435488fc3b83191c3753d5e356bc5c58832bba2c56a3a5aae9
 source	core/src/main/java/art/arcane/iris/engine/IrisWorldManager.java	5f441c4ba85045b4c273e934599e65df0122586d97cb23ddae3ed76c9471c759
@@ -823,14 +823,14 @@ source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyDiagnosticRe
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyFeatureQuery.java	60e6478e03dd339f57e7d6633c02bb6308d2de27ea86a634b26745b697121708
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyFeatureRef.java	6e02a66c7ec7c9ee4732176eea248e4ba3174c66c164da02c12dee7e229cb0ee
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyFeatureType.java	aa574734891b581bd140320cd23707d9f61bd9b3afa851909d4c8fe6e20dc1e4
-source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyFootprintCompiler.java	076eb55abe053524cd1990c62458e007092fcba69118c620592edfef0fbad4f2
-source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyForkJoin.java	25005438b669b33bad5344ad6dd08127d0e928a3d383c2bb25610acb385322f1
+source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyFootprintCompiler.java	b8e486b2c8ff0769737c21120a582acef7520d47c760ba8c8558f482093f1857
+source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyForkJoin.java	50d933ca908f7c3322e34b866fb422baa353c8c4741df2ddecb1fb4c76e803ca
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyGeometrySampler.java	77ce4ed588dd7238ae448e8997a688df8cc3a21ed4fc8f829d593b9bfbfdd7c5
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyHash.java	41771991828e67f219c36985ffc8dd3f65e9664b0a51f4e30be16b13b55e9c1d
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyNaturalTerrainSampler.java	2ddc53c8961e1db153ac36f7f5f4e71742a22316bb644187e02c52740dbcf41d
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyObservedPlannedSurface.java	eac4e7f4ba41814d01c2fc4bade4653c89e53db7bd8ef498e0c54ad22179fb15
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyOceanBoundaryRefiner.java	7f6aa7fa674a4f0293cbd42de1808347d0c101874ba0f5c870117b9ede5a562f
-source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyPlanner.java	b3c98015b4623049027effae6a2f8dccc5c82c97787304e2de1cac6338e62f51
+source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyPlanner.java	c31a0312508c178a0e8e41cae7debb87dff32aa90458a1b441d62891ea22cf95
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyPlannerSettings.java	5165f5b6faf5ab79156d93f94687c8f7249f16726a63592fb51c46c1b1ddb75c
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyPoint.java	015a50924678d09c8447e0d66fa24c93da6a23178bc819bc0b8c320b9d82e7dd
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyRenderSample.java	03587336c3d95369ba7c2dba1e17346b637c5cda75b6ce93e1aa3761bc64815c
@@ -839,7 +839,7 @@ source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyTerrainCaveV
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyTerrainSample.java	f1ea65b71befeb5d0cdb6d3c8402f0023f925fb13c16cb0c07ff1610f4079cd6
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyTerrainSampler.java	190fd761a0be72700e05f5bd26626dcb51a87e59e280e9861ad3d79d5c86c494
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyTile.java	33ee976cdba3b051d31738ab3acc6d5c4eea01c7043fa4d2ed24cb094b0cd704
-source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyTileCache.java	0f39c34037f39945f99fbf17e27327d7cbc890956aab578a19129030f28f0da1
+source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyTileCache.java	e86e564915bc0f19b678d3d6a23fae3782ea339258febe91d2a132b6917bf985
 source	core/src/main/java/art/arcane/iris/engine/hydrology/HydrologyTileKey.java	b806c0df952d005f0f0543225b18dc1990ed6f9a85f68a9489c96011b3ef5a5c
 source	core/src/main/java/art/arcane/iris/engine/hydrology/RiverCourse.java	f919c7ce0953a08a65e015d84195e6a43980d9c409bbf5d3dd9cde86a9307e7f
 source	core/src/main/java/art/arcane/iris/engine/hydrology/RiverCourseType.java	7bbb28a498f0d7705caf5e278e68922bacdec16a16fa75643e14feca721ebb40
@@ -919,7 +919,7 @@ source	core/src/main/java/art/arcane/iris/engine/mantle/components/CaveObjectPla
 source	core/src/main/java/art/arcane/iris/engine/mantle/components/FloatingIslandSampleResolver.java	b40d3996c47afc832467567c7f5b00739398c76821a7bf6e2fb5172213a83af6
 source	core/src/main/java/art/arcane/iris/engine/mantle/components/FloatingObjectPlacementTransaction.java	d3ae16cddedf58673d4ca50d4058b6d13500c1c6d85dbd7acf5a93fa72383ca1
 source	core/src/main/java/art/arcane/iris/engine/mantle/components/GoldenDebugObjectPlacer.java	fd1230b323182e5e44b1810a3ff4d2934c1d98704ae93ec8275e73c0be940634
-source	core/src/main/java/art/arcane/iris/engine/mantle/components/IrisCaveCarver3D.java	2a767b374403b6285a9b010821ac17eb1163f2296134c1493ba76fe23c271ce6
+source	core/src/main/java/art/arcane/iris/engine/mantle/components/IrisCaveCarver3D.java	bea4ecf5ce08814e5fa56f94d6b20156bb16332b67a0261eeaabd322e1df55af
 source	core/src/main/java/art/arcane/iris/engine/mantle/components/IrisStructureComponent.java	9449a3e411e818d5e6e47dcc7eff357fa6735fe6b67236bc1d45f5c7762ccdf9
 source	core/src/main/java/art/arcane/iris/engine/mantle/components/IslandObjectPlacer.java	617a452172d46289a1a9464ae32ca19996db8fc6fef31cf0819cecb3ee12b094
 source	core/src/main/java/art/arcane/iris/engine/mantle/components/MantleCarvingComponent.java	4462fbbe6d904be0eff1a1b9a8b2cb753709d60be63c135d0410b7a247a3b4fb
@@ -1009,7 +1009,7 @@ source	core/src/main/java/art/arcane/iris/engine/object/IrisDepositHeightDistrib
 source	core/src/main/java/art/arcane/iris/engine/object/IrisDepositPlacementScope.java	0b1b15482a85d473eac3b9d58be5b681b8e210846900ab5a2b4e945bf3873105
 source	core/src/main/java/art/arcane/iris/engine/object/IrisDepositShape.java	07647e01b010a338e1cf01f5372f8dfbccf34f3915742032baecacccda5293fc
 source	core/src/main/java/art/arcane/iris/engine/object/IrisDepositVariant.java	0234c4caa8c723047be7293fea0452df2221450b05ef3102bbc152170a5e5038
-source	core/src/main/java/art/arcane/iris/engine/object/IrisDimension.java	806dcdc5b7c57b766bff0e48655c1bc9381854f9ba83d08a22cca37409ae218d
+source	core/src/main/java/art/arcane/iris/engine/object/IrisDimension.java	5e9f5942a92248c216844f7840e39b0ede97afef9734bb737bfa95e2576a014d
 source	core/src/main/java/art/arcane/iris/engine/object/IrisDimensionCarvingEntry.java	a0c5971a455b2ff2e4c82c7a0387110ab4f1e0dd27238fbcd57b7a0b3b8899dc
 source	core/src/main/java/art/arcane/iris/engine/object/IrisDimensionCarvingResolver.java	51ecf9f7f108311951baa621614f33085a569ffa88f7d314daf0fcdaf39e44b2
 source	core/src/main/java/art/arcane/iris/engine/object/IrisDimensionContractException.java	6d64f24dd2ff4b759ade515a2f6bff218fa7b59a68cd856f7e82cf2ae7d0fb65
@@ -1274,7 +1274,7 @@ source	core/src/main/java/art/arcane/iris/engine/object/tree/TreeProfiles.java	d
 source	core/src/main/java/art/arcane/iris/engine/object/tree/TreeRootBuilder.java	df4248d6dd1508b4856508a2a8363b7cffae0d8db66a10495ffe9593b8127f68
 source	core/src/main/java/art/arcane/iris/engine/object/tree/TreeSupport.java	11c72c83a632d34945e3032d68ba89f0727ff3e7af3fae64988d17a8e9bf0fd5
 source	core/src/main/java/art/arcane/iris/engine/object/tree/TreeTrunkBuilder.java	856d0b46117a485df832cfadd2c31b491fde8609b43799b060110246524527d1
-source	core/src/main/java/art/arcane/iris/engine/platform/BukkitChunkGenerator.java	6b036e6e3246df6a8e850344c67b0b5b1f8cc5e36914d304b5e9eaeb3a214243
+source	core/src/main/java/art/arcane/iris/engine/platform/BukkitChunkGenerator.java	8f4521b6bb462e0a6afeaccb5112698ba1ca0cd493c0fe13cc432dcbeee0fbae
 source	core/src/main/java/art/arcane/iris/engine/platform/DummyBiomeProvider.java	560036f370d550f7916e6ed4b79df907fc0787567c27eabc49df1ef108cf5b13
 source	core/src/main/java/art/arcane/iris/engine/platform/DummyChunkGenerator.java	12ecd07d0189672a7c161734bce487f6cb6b4797a71df3692f29fa7ccc34cf32
 source	core/src/main/java/art/arcane/iris/engine/platform/EngineBukkitOps.java	bee55e2704b0e2405b631408fa42ca4c7baef8c83c0b00af8c1dc98e8f3792f0
@@ -1282,8 +1282,8 @@ source	core/src/main/java/art/arcane/iris/engine/platform/PlatformChunkGenerator
 source	core/src/main/java/art/arcane/iris/engine/platform/studio/EnginedStudioGenerator.java	5e279de24da76030fdfaf8b037bebf375fd35bd3e388fbaa2c4a24942ec1cedb
 source	core/src/main/java/art/arcane/iris/engine/platform/studio/StudioGenerator.java	a94909957b4a6c60b9ac995312a72ef4208d5fd8862c4c03c2525693e9ebe69f
 source	core/src/main/java/art/arcane/iris/engine/platform/studio/generators/BiomeBuffetGenerator.java	5d169970dcd15011a6dfb9a8ddf76b0c03de2bef09b0f7c8ffbe3ce6787194f9
-source	core/src/main/java/art/arcane/iris/engine/platform/studio/generators/JigsawStudioGenerator.java	65b7b09536bcc9a92b8588f06f0d1e94d1301fd19be8e8e26a17b79ff67e3e86
-source	core/src/main/java/art/arcane/iris/engine/platform/studio/generators/ObjectStudioGenerator.java	93d9b05fbbcb579ac898d83aadc4bddc084aa05ffaebd84f72c3e51b5f4115b3
+source	core/src/main/java/art/arcane/iris/engine/platform/studio/generators/JigsawStudioGenerator.java	8b7e18180158951ebb7c09fdea310d31721b56f2ffb2056a36f2a05f07d9ceec
+source	core/src/main/java/art/arcane/iris/engine/platform/studio/generators/ObjectStudioGenerator.java	581a56e0b482a44b14f403b8ffd5dc9f40c8a119eb09def3684615ef6601870d
 source	core/src/main/java/art/arcane/iris/platform/bukkit/BukkitBiome.java	4d6cbcac0788b593616e063ed102dbbd93db57f9354f8b5294f19b8660748889
 source	core/src/main/java/art/arcane/iris/platform/bukkit/BukkitBiomeWriter.java	8c37ba79a8299a4b05f5e561380b03a54a10cc2f32f7d79b25ffd544211a7d54
 source	core/src/main/java/art/arcane/iris/platform/bukkit/BukkitBlockResolution.java	a032f34aa55fb67d8f8435689f75ae2323edcb80204c93716a8b5fd8cf86b784
@@ -1415,10 +1415,10 @@ source	core/src/main/java/art/arcane/iris/util/project/interpolation/Interpolati
 source	core/src/main/java/art/arcane/iris/util/project/interpolation/InterpolationMethod.java	8948ead4aeb36e734b32dd7c247c0546c59e41d7792bf913053ee4f5154793e2
 source	core/src/main/java/art/arcane/iris/util/project/interpolation/InterpolationMethod3D.java	4d5831fc15fe506432ec0f747ccd8cadc1f4976c561812d18a53fea3af121e2e
 source	core/src/main/java/art/arcane/iris/util/project/interpolation/InterpolationType.java	50266ebcd1552f781fee3409f01ff24259f6a33dd7c1e9876075b7462f5bca2e
-source	core/src/main/java/art/arcane/iris/util/project/interpolation/IrisInterpolation.java	b217803f57df1bcff429bbc9319598294ec3f1c68bab3e34b7bc4fd722136aef
+source	core/src/main/java/art/arcane/iris/util/project/interpolation/IrisInterpolation.java	cafad8d3698cf733f6432a1f1d40db7494e89cb82e3d781f7cfcb2437f920d72
 source	core/src/main/java/art/arcane/iris/util/project/interpolation/NoiseBounds.java	484d465f6e7ee86c567570a3d044bf871d716728b936ea1909fcc5b6fb8834d8
 source	core/src/main/java/art/arcane/iris/util/project/interpolation/NoiseBoundsProvider.java	5da0eaf2db701a21db2fd3009660449b5c2ee306ac3bfaf0522b15f82890008a
-source	core/src/main/java/art/arcane/iris/util/project/interpolation/NoiseBoundsSampleCache2D.java	7a8928a4e3649c7120c5da17e11eab45bd1f39ed9ebfa4b3a58ff42c5a0f60c5
+source	core/src/main/java/art/arcane/iris/util/project/interpolation/NoiseBoundsSampleCache2D.java	a114e3c7997f81a1cdbc31a1d861a45475f46369461b77d54fc80cf9dbe05395
 source	core/src/main/java/art/arcane/iris/util/project/interpolation/NoiseSampleCache2D.java	2a7c13310ec82c1211b73e4925bd0262fab32fc7e474ab4c41c9f803e18e107b
 source	core/src/main/java/art/arcane/iris/util/project/matter/IrisMatterContext.java	b8eca540d775aac3ff015b12e2d1c56967443c186ea8e28678c210ce5a67c0be
 source	core/src/main/java/art/arcane/iris/util/project/matter/IrisMatterSupport.java	0ed6c5fceaed9c5f88a6f431e5264707f402a63fc95307b1fee175fea6d50354

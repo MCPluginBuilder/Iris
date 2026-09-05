@@ -62,6 +62,12 @@ public final class JigsawStudioGenerator extends EnginedStudioGenerator {
     private final ConcurrentMap<RenderKey, RenderedBay> renderedBays = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, PlatformBlockState> jigsawStates = new ConcurrentHashMap<>();
 
+    public static boolean isLightFloor(int blockX, int blockZ) {
+        int tileX = Math.floorDiv(blockX, CHECKER_SIZE);
+        int tileZ = Math.floorDiv(blockZ, CHECKER_SIZE);
+        return ((tileX + tileZ) & 1) == 0;
+    }
+
     public JigsawStudioGenerator(
             Engine engine,
             JigsawStudioActivation.Request request,
@@ -262,9 +268,7 @@ public final class JigsawStudioGenerator extends EnginedStudioGenerator {
             for (int localZ = 0; localZ < 16; localZ++) {
                 int worldX = chunkWorldX + localX;
                 int worldZ = chunkWorldZ + localZ;
-                int tileX = Math.floorDiv(worldX, CHECKER_SIZE);
-                int tileZ = Math.floorDiv(worldZ, CHECKER_SIZE);
-                PlatformBlockState block = ((tileX + tileZ) & 1) == 0 ? lightFloor : darkFloor;
+                PlatformBlockState block = isLightFloor(worldX, worldZ) ? lightFloor : darkFloor;
                 terrainChunk.setBlock(localX, floorY, localZ, block);
             }
         }

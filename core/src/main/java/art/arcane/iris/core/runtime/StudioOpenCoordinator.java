@@ -952,7 +952,7 @@ public final class StudioOpenCoordinator {
         }
 
         public boolean prepareGeneratorState() {
-            return this != JIGSAW;
+            return this == STANDARD || this == FORCED_STANDARD;
         }
 
         public IrisCreator.DatapackPreparation datapackPreparation() {

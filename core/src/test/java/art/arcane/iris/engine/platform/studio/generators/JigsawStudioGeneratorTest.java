@@ -59,6 +59,15 @@ import static org.mockito.Mockito.when;
 
 public class JigsawStudioGeneratorTest {
     @Test
+    public void checkerboardFloorUsesTheSameFourBlockTilesAtNegativeCoordinates() {
+        assertTrue(JigsawStudioGenerator.isLightFloor(0, 0));
+        assertTrue(JigsawStudioGenerator.isLightFloor(3, 3));
+        assertFalse(JigsawStudioGenerator.isLightFloor(4, 0));
+        assertFalse(JigsawStudioGenerator.isLightFloor(-1, 0));
+        assertTrue(JigsawStudioGenerator.isLightFloor(-1, -1));
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     public void connectorBlocksAreHiddenByDefaultAndCanBeShownPerWorkcell() {
         IrisData source = mock(IrisData.class);

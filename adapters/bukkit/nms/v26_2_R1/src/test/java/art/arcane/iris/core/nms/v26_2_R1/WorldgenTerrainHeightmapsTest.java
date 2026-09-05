@@ -65,6 +65,21 @@ public class WorldgenTerrainHeightmapsTest {
     }
 
     @Test
+    public void authoringHeightmapsReadPlacedObjectsAndFluidsWithoutTerrainResolvers() {
+        ProtoChunk chunk = terrainChunk(new ChunkPos(0, 0));
+
+        IrisChunkGenerator.primeAuthoringHeightmaps(chunk);
+
+        assertEquals(LAND_CANOPY_TOP, chunk.getHeight(Heightmap.Types.WORLD_SURFACE_WG, LAND_X, LAND_Z));
+        assertEquals(LAND_CANOPY_TOP, chunk.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, LAND_X, LAND_Z));
+        assertEquals(LAND_CANOPY_TOP, chunk.getHeight(Heightmap.Types.MOTION_BLOCKING, LAND_X, LAND_Z));
+        assertEquals(LAND_TERRAIN_TOP + 6,
+                chunk.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, LAND_X, LAND_Z));
+        assertEquals(OCEAN_FLUID_TOP, chunk.getHeight(Heightmap.Types.WORLD_SURFACE_WG, OCEAN_X, OCEAN_Z));
+        assertEquals(OCEAN_FLOOR_TOP, chunk.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, OCEAN_X, OCEAN_Z));
+    }
+
+    @Test
     public void primeTerrainWritesEngineSurfaceAndOceanFloorHeights() {
         ProtoChunk chunk = terrainChunk(new ChunkPos(0, 0));
 

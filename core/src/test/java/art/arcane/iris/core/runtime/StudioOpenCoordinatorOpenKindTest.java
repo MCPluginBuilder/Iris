@@ -56,7 +56,7 @@ public class StudioOpenCoordinatorOpenKindTest {
 
         assertTrue(kind.openWorkspace());
         assertFalse(kind.teleportThroughStandardEntry());
-        assertTrue(kind.prepareGeneratorState());
+        assertFalse(kind.prepareGeneratorState());
     }
 
     @Test

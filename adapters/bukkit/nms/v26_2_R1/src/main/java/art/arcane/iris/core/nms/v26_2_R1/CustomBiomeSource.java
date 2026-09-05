@@ -17,6 +17,7 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisBiomeCustom;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
+import art.arcane.iris.engine.platform.BukkitChunkGenerator;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.math.RNG;
@@ -64,6 +65,7 @@ public class CustomBiomeSource extends BiomeSource {
 
     private final long seed;
     private final Engine engine;
+    private final BukkitChunkGenerator platformGenerator;
     private final Registry<Biome> biomeCustomRegistry;
     private final Registry<Biome> biomeRegistry;
     private final AtomicCache<RegistryAccess> registryAccess = new AtomicCache<>();
@@ -76,6 +78,9 @@ public class CustomBiomeSource extends BiomeSource {
 
     public CustomBiomeSource(long seed, Engine engine, World world) {
         this.engine = engine;
+        this.platformGenerator = world.getGenerator() instanceof BukkitChunkGenerator generator
+                ? generator
+                : null;
         this.seed = seed;
         this.biomeCustomRegistry = registry().lookup(Registries.BIOME).orElse(null);
         this.biomeRegistry = ((RegistryAccess) getFor(RegistryAccess.Frozen.class, ((CraftServer) Bukkit.getServer()).getHandle().getServer())).lookup(Registries.BIOME).orElse(null);
@@ -353,6 +358,9 @@ public class CustomBiomeSource extends BiomeSource {
             if (!isRuntimeAvailable()) {
                 return null;
             }
+            if (platformGenerator != null && platformGenerator.usesFlatStudioTerrain()) {
+                return fallbackBiome;
+            }
             runtimeBiomeState();
             int quartX = QuartPos.fromBlock(blockX);
             int quartZ = QuartPos.fromBlock(blockZ);
@@ -405,6 +413,9 @@ public class CustomBiomeSource extends BiomeSource {
     }
 
     private Holder<Biome> getStructureNoiseBiomeWithActiveGenerationLease(int x, int y, int z) {
+        if (platformGenerator != null && platformGenerator.usesFlatStudioTerrain()) {
+            return fallbackBiome;
+        }
         if (isGuaranteedSurfaceBiome(y)) {
             return getSurfaceStructureBiomeHolder(x, z);
         }
@@ -731,6 +742,9 @@ public class CustomBiomeSource extends BiomeSource {
             IrisDimensionCarvingResolver.State resolverState,
             boolean cacheable
     ) {
+        if (platformGenerator != null && platformGenerator.usesFlatStudioTerrain()) {
+            return fallbackBiome;
+        }
         RuntimeNoiseKey cacheKey = new RuntimeNoiseKey(
                 engine.getCacheID(), packNoiseKey(x, y, z));
         if (cacheable) {

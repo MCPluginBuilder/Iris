@@ -13,6 +13,7 @@ import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
 import art.arcane.iris.engine.platform.BukkitChunkGenerator;
+import art.arcane.iris.engine.platform.studio.generators.JigsawStudioGenerator;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
@@ -123,6 +124,13 @@ import java.util.function.IntBinaryOperator;
 import java.util.function.Predicate;
 
 public class IrisChunkGenerator extends CustomChunkGenerator {
+    private static final Set<Heightmap.Types> AUTHORING_HEIGHTMAPS = Set.of(
+            Heightmap.Types.WORLD_SURFACE_WG,
+            Heightmap.Types.OCEAN_FLOOR_WG,
+            Heightmap.Types.WORLD_SURFACE,
+            Heightmap.Types.OCEAN_FLOOR,
+            Heightmap.Types.MOTION_BLOCKING,
+            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
     private static final WrappedField<ChunkGenerator, BiomeSource> BIOME_SOURCE;
     private static final WrappedReturningMethod<Heightmap, Object> SET_HEIGHT;
     private static final Runnable NO_OP = () -> {
@@ -854,7 +862,15 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
     }
 
     private void primeWorldgenHeightmaps(ChunkAccess chunkAccess) {
+        if (platformGenerator != null && platformGenerator.usesFlatStudioTerrain()) {
+            primeAuthoringHeightmaps(chunkAccess);
+            return;
+        }
         WorldgenTerrainHeightmaps.primeTerrain(chunkAccess, worldgenSurfaceHeight(), worldgenFloorHeight());
+    }
+
+    static void primeAuthoringHeightmaps(ChunkAccess chunkAccess) {
+        Heightmap.primeHeightmaps(chunkAccess, AUTHORING_HEIGHTMAPS);
     }
 
     private IntBinaryOperator worldgenSurfaceHeight() {
@@ -934,15 +950,20 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
              GenerationSessionLease lease = requireGenerationLease("bukkit_nms_biome_decoration");
             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
             if (allowsRoutedDiscreteGeneration(ichunkaccess, ChunkStatus.FEATURES)) {
-                // Bind-time equivalent for Bukkit: the table is built on the first decorated chunk, which is where a
-                // feature-order cycle is reported once and degraded to features-off.
-                importedFeatures.prepare(generatoraccessseed);
+                boolean flatStudioTerrain = platformGenerator != null && platformGenerator.usesFlatStudioTerrain();
+                if (!flatStudioTerrain) {
+                    // Bind-time equivalent for Bukkit: the table is built on the first decorated chunk, which is where a
+                    // feature-order cycle is reported once and degraded to features-off.
+                    importedFeatures.prepare(generatoraccessseed);
+                }
                 addVanillaDecorations(generatoraccessseed, ichunkaccess, structuremanager);
-                placeVanillaStructures(generatoraccessseed, ichunkaccess, structuremanager);
-                // Vanilla's placed-feature pass, on THIS thread. The delegate is still called with
-                // addVanillaDecorations=false below, so the vanilla half never runs twice. Inert unless the
-                // dimension set importedFeatures.enabled.
-                importedFeatures.run(generatoraccessseed, ichunkaccess, this);
+                if (!flatStudioTerrain) {
+                    placeVanillaStructures(generatoraccessseed, ichunkaccess, structuremanager);
+                    // Vanilla's placed-feature pass, on THIS thread. The delegate is still called with
+                    // addVanillaDecorations=false below, so the vanilla half never runs twice. Inert unless the
+                    // dimension set importedFeatures.enabled.
+                    importedFeatures.run(generatoraccessseed, ichunkaccess, this);
+                }
                 delegate.applyBiomeDecoration(generatoraccessseed, ichunkaccess, structuremanager, false);
             }
             claimGeneratedSemantics(route, "bukkit_nms_biome_decoration");
@@ -1219,6 +1240,9 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
             BlockPos blockPos = sectionPos.origin();
 
             primeWorldgenHeightmaps(chunkAccess);
+            if (platformGenerator != null && platformGenerator.usesFlatStudioTerrain()) {
+                return;
+            }
 
             Heightmap motion = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING);
             Heightmap motionNoLeaves = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
@@ -1310,6 +1334,9 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public int getBaseHeight(int i, int j, Heightmap.Types heightmap_type, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
+        if (platformGenerator != null && platformGenerator.usesFlatStudioTerrain()) {
+            return platformGenerator.getAuthoringBaseHeight();
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope route = openHistoryCoordinateScope(
                      i, j, "bukkit_nms_base_height");
              GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_height");
@@ -1327,6 +1354,19 @@ public class IrisChunkGenerator extends CustomChunkGenerator {
 
     @Override
     public NoiseColumn getBaseColumn(int i, int j, LevelHeightAccessor levelheightaccessor, RandomState randomstate) {
+        if (platformGenerator != null && platformGenerator.usesFlatStudioTerrain()) {
+            BlockState[] column = new BlockState[levelheightaccessor.getHeight()];
+            int floorIndex = platformGenerator.getAuthoringFloorY() - levelheightaccessor.getMinY();
+            BlockState floor = platformGenerator.isJigsawStudioActive() && JigsawStudioGenerator.isLightFloor(i, j)
+                    ? Blocks.SMOOTH_STONE.defaultBlockState()
+                    : Blocks.POLISHED_DEEPSLATE.defaultBlockState();
+            for (int index = 0; index < column.length; index++) {
+                column[index] = index == floorIndex
+                        ? floor
+                        : Blocks.AIR.defaultBlockState();
+            }
+            return new NoiseColumn(levelheightaccessor.getMinY(), column);
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope route = openHistoryCoordinateScope(
                      i, j, "bukkit_nms_base_column");
              GenerationSessionLease lease = engine.acquireGenerationLease("bukkit_nms_base_column");
