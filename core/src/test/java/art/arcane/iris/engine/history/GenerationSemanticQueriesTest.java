@@ -63,7 +63,7 @@ public final class GenerationSemanticQueriesTest {
                         assertTrue(filter.accept(3, 0));
                         return nearer;
                     });
-            assertSame(nearer, GenerationSemanticQueries.nearestStructure(engine, "OLD-TOWER", 0, 0, 20));
+            assertSame(nearer, GenerationSemanticQueries.nearestStructure(engine, "old-tower", 0, 0, 20));
 
             structures.when(() -> IrisStructureLocator.locate(
                     eq(engine), eq("old-tower"), eq(0), eq(0), eq(20), any()))
@@ -82,6 +82,32 @@ public final class GenerationSemanticQueriesTest {
                     .thenReturn(new IrisStructureLocator.LocateResult(IrisStructureLocator.LocateStatus.NOT_FOUND, 0, 0, 0));
             assertEquals(foundStructure(100, 73, 5),
                     GenerationSemanticQueries.nearestStructure(engine, "old-tower", 0, 0, 20));
+        }
+    }
+
+    @Test
+    public void structureQueryPreservesTheRecordedPackIdentifier() {
+        IrisEngine engine = mock(IrisEngine.class);
+        GenerationHistory history = mock(GenerationHistory.class);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(engine.getGenerationHistoryRuntimeRouter()).thenReturn(Optional.of(router));
+        when(router.history()).thenReturn(history);
+        GenerationSemanticIndex.Match recorded = new GenerationSemanticIndex.Match(
+                GenerationSemanticIndex.SemanticKind.STRUCTURE, "Structures/Tower+",
+                new GenerationSemanticIndex.ChunkReference(1, 0, 1L),
+                Optional.of(new ChunkGenerationSemantics.BlockPosition(20, 73, 5)));
+        when(history.findRecorded(any())).thenAnswer(invocation -> {
+            GenerationSemanticIndex.Query query = invocation.getArgument(0);
+            assertEquals("Structures/Tower+", query.key());
+            return Optional.of(recorded);
+        });
+        try (MockedStatic<IrisStructureLocator> structures = mockStatic(IrisStructureLocator.class)) {
+            structures.when(() -> IrisStructureLocator.locate(
+                    eq(engine), eq("Structures/Tower+"), eq(0), eq(0), eq(20), any()))
+                    .thenReturn(new IrisStructureLocator.LocateResult(
+                            IrisStructureLocator.LocateStatus.NOT_FOUND, 0, 0, 0));
+            assertEquals(foundStructure(20, 73, 5),
+                    GenerationSemanticQueries.nearestStructure(engine, "Structures/Tower+", 0, 0, 20));
         }
     }
 

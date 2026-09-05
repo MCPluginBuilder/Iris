@@ -5,6 +5,7 @@ import art.arcane.iris.engine.hydrology.cave.CaveVoxel;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
+import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterCavern;
 import org.junit.Test;
@@ -28,6 +29,7 @@ public class MantleHydrologyCaveVoxelViewTest {
     @SuppressWarnings("unchecked")
     public void authoritativeChunkFlagControlsWhetherCarvingInputIsRequired() {
         Mantle<Matter> mantle = mock(Mantle.class);
+        doReturn(mock(MantleChunk.class)).when(mantle).getChunk(anyInt(), anyInt());
         when(mantle.hasFlag(2, -3, ReservedFlag.CARVED)).thenReturn(true);
 
         assertFalse(MantleHydrologyCaveVoxelView.requiresCarvingInput(mantle, 2, -3));
@@ -41,6 +43,7 @@ public class MantleHydrologyCaveVoxelViewTest {
     @SuppressWarnings("unchecked")
     public void mapsCarvedAndStoredMatterAndLoadsEachChunkOnce() {
         Mantle<Matter> mantle = mock(Mantle.class);
+        doReturn(mock(MantleChunk.class)).when(mantle).getChunk(anyInt(), anyInt());
         MatterCavern air = new MatterCavern(true, "", (byte) 0);
         MatterCavern water = new MatterCavern(true, "", (byte) 1);
         MatterCavern lava = new MatterCavern(true, "", (byte) 2);
@@ -85,6 +88,7 @@ public class MantleHydrologyCaveVoxelViewTest {
     @SuppressWarnings("unchecked")
     public void carvedVerticalShaftIsOpenToSurface() {
         Mantle<Matter> mantle = mock(Mantle.class);
+        doReturn(mock(MantleChunk.class)).when(mantle).getChunk(anyInt(), anyInt());
         MatterCavern air = new MatterCavern(true, "", (byte) 0);
         doAnswer(invocation -> {
             int x = invocation.getArgument(0);

@@ -23,6 +23,9 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.history.TerrainBoundarySignature;
+import art.arcane.iris.engine.history.BoundaryColumnGeometry;
+import java.util.Optional;
 import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.mantle.ComponentFlag;
 import art.arcane.iris.engine.mantle.EngineMantle;
@@ -771,17 +774,28 @@ public class MantleObjectComponent extends IrisMantleComponent {
                     : writer.getDataIfPresent(candidateX, candidateY, candidateZ, MatterCavern.class);
             if (candidateY < 0
                     || caveAnchorBiomeConflicts(candidateX, candidateY, candidateZ, expectedCaveBiomeKey)
-                    || !acceptsCaveAnchorFluid(
-                            underwater,
-                            hydrology == null ? cavern : hydrology.asCavern(),
-                            hydrology,
-                            candidateY,
-                            getDimension().getCaveLavaHeight())) {
+                    || !acceptsCaveAnchorAt(candidateX, candidateY, candidateZ, underwater, cavern, hydrology)) {
                 continue;
             }
             return new CavePlacementAnchor(candidateX, candidateY, candidateZ);
         }
         return null;
+    }
+
+    private boolean acceptsCaveAnchorAt(int x, int y, int z, boolean underwater,
+                                        MatterCavern cavern, HydrologyCaveCell hydrology) {
+        Optional<TerrainBoundarySignature> resolved = getEngineMantle().getComplex().resolvedTerrainColumn(x, z);
+        if (resolved.isPresent()) {
+            return acceptsResolvedCaveAnchor(underwater,
+                    resolved.get().geometry().voxelAt(y + getEngineMantle().getEngine().getMinHeight()));
+        }
+        return acceptsCaveAnchorFluid(underwater, hydrology == null ? cavern : hydrology.asCavern(),
+                hydrology, y, getDimension().getCaveLavaHeight());
+    }
+
+    static boolean acceptsResolvedCaveAnchor(boolean underwater, BoundaryColumnGeometry.Voxel voxel) {
+        return !voxel.protectedContent() && (voxel.phase() == BoundaryColumnGeometry.Phase.AIR
+                || underwater && voxel.phase() == BoundaryColumnGeometry.Phase.FLUID);
     }
 
     static boolean acceptsCaveAnchorFluid(boolean underwater, MatterCavern cavern, int y, int lavaHeight) {

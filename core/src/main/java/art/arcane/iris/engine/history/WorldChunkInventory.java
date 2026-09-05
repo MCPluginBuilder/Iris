@@ -6,6 +6,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -59,6 +60,31 @@ public final class WorldChunkInventory {
 
     public static WorldChunkInventory scan(Path worldDirectory) throws IOException {
         return scanRegionDirectory(worldDirectory.resolve("region"));
+    }
+
+    public WorldChunkInventory filter(ChunkPredicate predicate) throws IOException {
+        Objects.requireNonNull(predicate, "chunk predicate");
+        Long2ObjectOpenHashMap<BitSet> selected = new Long2ObjectOpenHashMap<>(regionMasks.size());
+        for (long regionKey : regionKeys) {
+            int baseX = MCAUtil.regionToChunk(ChunkGenerationOwnership.chunkX(regionKey));
+            int baseZ = MCAUtil.regionToChunk(ChunkGenerationOwnership.chunkZ(regionKey));
+            BitSet source = regionMasks.get(regionKey);
+            BitSet accepted = new BitSet(REGION_SIDE * REGION_SIDE);
+            for (int index = source.nextSetBit(0); index >= 0; index = source.nextSetBit(index + 1)) {
+                if (predicate.test(baseX + (index & 31), baseZ + (index >> 5))) {
+                    accepted.set(index);
+                }
+            }
+            if (!accepted.isEmpty()) {
+                selected.put(regionKey, accepted);
+            }
+        }
+        return new WorldChunkInventory(selected);
+    }
+
+    @FunctionalInterface
+    public interface ChunkPredicate {
+        boolean test(int chunkX, int chunkZ) throws IOException;
     }
 
     public static boolean isDurablyAllocated(Path worldDirectory, int chunkX, int chunkZ) throws IOException {
@@ -175,30 +201,62 @@ public final class WorldChunkInventory {
     private static BitSet scanAllocationTable(Path file) throws IOException {
         try (RandomAccessFile input = new RandomAccessFile(file.toFile(), "r")) {
             long length = input.length();
-            if (length < HEADER_BYTES || length % SECTOR_BYTES != 0L) {
+            if (length == 0L) {
+                return new BitSet(REGION_SIDE * REGION_SIDE);
+            }
+            if (length < HEADER_BYTES) {
                 throw new IOException("Truncated world region file: " + file);
             }
-            long sectorCapacity = length / SECTOR_BYTES;
+            byte[] header = new byte[SECTOR_BYTES];
+            input.readFully(header);
+            ByteBuffer locations = ByteBuffer.wrap(header);
+            length = input.length();
+            if (length < HEADER_BYTES) {
+                throw new IOException("Truncated world region file: " + file);
+            }
+            long sectorCapacity = length / SECTOR_BYTES + (length % SECTOR_BYTES == 0L ? 0L : 1L);
             BitSet claimedSectors = new BitSet(Math.toIntExact(sectorCapacity));
             claimedSectors.set(0, HEADER_SECTORS);
             BitSet mask = new BitSet(REGION_SIDE * REGION_SIDE);
             for (int localZ = 0; localZ < REGION_SIDE; localZ++) {
                 for (int localX = 0; localX < REGION_SIDE; localX++) {
                     int index = MCAFile.getChunkIndex(localX, localZ);
-                    input.seek((long) index * Integer.BYTES);
-                    int location = input.readInt();
+                    int location = locations.getInt(index * Integer.BYTES);
                     if (location == 0) {
                         continue;
                     }
                     int sectorOffset = location >>> Byte.SIZE;
                     int sectorCount = location & 0xFF;
                     validateAllocation(file, sectorOffset, sectorCount, sectorCapacity, claimedSectors);
+                    if (((long) sectorOffset + sectorCount) * SECTOR_BYTES > length) {
+                        validateUnpaddedAllocation(file, input, sectorOffset, sectorCount, length);
+                    }
                     mask.set(index);
                 }
             }
             return mask;
         } catch (ArithmeticException error) {
             throw new IOException("World region file is too large to scan safely: " + file, error);
+        }
+    }
+
+    private static void validateUnpaddedAllocation(
+            Path file,
+            RandomAccessFile input,
+            int sectorOffset,
+            int sectorCount,
+            long fileLength
+    ) throws IOException {
+        long chunkStart = (long) sectorOffset * SECTOR_BYTES;
+        if (chunkStart + Integer.BYTES >= fileLength) {
+            throw new IOException("Truncated chunk payload in world region file: " + file);
+        }
+        input.seek(chunkStart);
+        int payloadLength = input.readInt();
+        long storedLength = Integer.BYTES + (long) payloadLength;
+        if (payloadLength < 1 || storedLength > (long) sectorCount * SECTOR_BYTES
+                || chunkStart + storedLength > fileLength) {
+            throw new IOException("Truncated chunk payload in world region file: " + file);
         }
     }
 

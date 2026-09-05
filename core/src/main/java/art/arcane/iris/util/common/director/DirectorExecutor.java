@@ -20,11 +20,16 @@ package art.arcane.iris.util.common.director;
 
 import art.arcane.volmlib.util.director.DirectorExecutorBase;
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 import org.bukkit.entity.Player;
+
+import java.io.File;
+import java.util.Arrays;
 
 public interface DirectorExecutor extends DirectorExecutorBase {
     default VolmitSender sender() {
@@ -42,11 +47,32 @@ public interface DirectorExecutor extends DirectorExecutorBase {
     }
 
     default IrisData data() {
-        var access = access();
-        if (access != null) {
-            return access.getData();
+        return authoringData(engine());
+    }
+
+    static IrisData authoringData(Engine engine) {
+        if (engine == null) {
+            return null;
         }
-        return null;
+        if (engine.isStudio()) {
+            return IrisData.get(engine.getPackSource().toFile());
+        }
+        if (engine.getDimension() == null) {
+            return null;
+        }
+        String dimensionKey = engine.getDimension().getLoadKey();
+        IrisData matching = null;
+        for (File pack : PackDirectoryResolver.listVisiblePackDirectories(IrisPlatforms.get().packsFolder())) {
+            IrisData candidate = IrisData.get(pack);
+            if (!Arrays.asList(candidate.getDimensionLoader().getPossibleKeys()).contains(dimensionKey)) {
+                continue;
+            }
+            if (matching != null) {
+                return null;
+            }
+            matching = candidate;
+        }
+        return matching;
     }
 
     default Engine engine() {

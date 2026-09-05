@@ -90,8 +90,8 @@ public class GenerationHistoryStoreTest {
         store.activatePending(pending.activationId());
 
         try (Stream<Path> entries = Files.list(directory)) {
-            List<String> names = entries.map(path -> path.getFileName().toString()).toList();
-            assertEquals(List.of(GenerationHistoryStore.MANIFEST_FILE_NAME), names);
+            List<String> names = entries.map(path -> path.getFileName().toString()).sorted().toList();
+            assertEquals(List.of("epochs", GenerationHistoryStore.MANIFEST_FILE_NAME), names);
         }
         GenerationHistoryStore reopened = GenerationHistoryStore.open(directory, CLOCK);
         assertEquals(store.manifest(), reopened.manifest());
@@ -139,12 +139,10 @@ public class GenerationHistoryStoreTest {
     public void failsClosedOnForgedEpochIdentityAndUnknownFields() throws Exception {
         Path forgedDirectory = temporaryFolder.getRoot().toPath().resolve("forged");
         GenerationHistoryStore.initialize(forgedDirectory, epoch(PACK_A), CLOCK);
-        JsonObject forged = readJson(forgedDirectory);
-        forged.getAsJsonArray("epochs")
-                .get(0)
-                .getAsJsonObject()
-                .addProperty("epochId", PACK_B);
-        writeJson(forgedDirectory, forged);
+        Path metadata = forgedDirectory.resolve("epochs").resolve(epoch(PACK_A).epochId()).resolve("epoch.json");
+        JsonObject forged = JsonParser.parseString(Files.readString(metadata)).getAsJsonObject();
+        forged.addProperty("epochId", PACK_B);
+        Files.writeString(metadata, forged.toString());
 
         assertThrows(IOException.class, () -> GenerationHistoryStore.open(forgedDirectory, CLOCK));
 
@@ -272,6 +270,42 @@ public class GenerationHistoryStoreTest {
 
         assertThrows(IOException.class, () -> store.preparePendingActivation(epoch(PACK_B), 512));
         assertThrows(IllegalStateException.class, store::activeEpoch);
+    }
+
+    @Test
+    public void manifestKeepsOnlyEpochReferencesAndMetadataSurvivesReopen() throws Exception {
+        Path directory = temporaryFolder.getRoot().toPath().resolve("epoch-index");
+        GenerationEpoch first = epoch(PACK_A);
+        GenerationHistoryStore store = GenerationHistoryStore.initialize(directory, first, CLOCK);
+        store.preparePendingActivation(epoch(PACK_B), 256);
+        JsonObject index = readJson(directory);
+        assertTrue(index.getAsJsonArray("epochs").get(0).isJsonPrimitive());
+        assertFalse(Files.readString(directory.resolve("manifest.json")).contains("registryContract"));
+        assertTrue(Files.isRegularFile(directory.resolve("epochs").resolve(first.epochId()).resolve("epoch.json")));
+        assertEquals(store.manifest(), GenerationHistoryStore.open(directory, CLOCK).manifest());
+    }
+
+    @Test
+    public void failedEpochPublicationLeavesTheCommittedManifestUsable() throws Exception {
+        Path directory = temporaryFolder.getRoot().toPath().resolve("metadata-failure");
+        GenerationHistoryStore store = GenerationHistoryStore.initialize(directory, epoch(PACK_A), CLOCK);
+        byte[] original = Files.readAllBytes(directory.resolve("manifest.json"));
+        GenerationEpoch replacement = epoch(PACK_B);
+        Files.writeString(directory.resolve("epochs").resolve(replacement.epochId()), "blocked");
+        assertThrows(IOException.class, () -> store.preparePendingActivation(replacement, 256));
+        assertArrayEquals(original, Files.readAllBytes(directory.resolve("manifest.json")));
+        assertEquals(epoch(PACK_A), store.activeEpoch());
+        assertFalse(store.pendingEpoch().isPresent());
+        assertEquals(store.manifest(), GenerationHistoryStore.open(directory, CLOCK).manifest());
+    }
+
+    @Test
+    public void rejectsMissingReferencedEpochMetadata() throws Exception {
+        Path directory = temporaryFolder.getRoot().toPath().resolve("missing-metadata");
+        GenerationEpoch first = epoch(PACK_A);
+        GenerationHistoryStore.initialize(directory, first, CLOCK);
+        Files.delete(directory.resolve("epochs").resolve(first.epochId()).resolve("epoch.json"));
+        assertThrows(IOException.class, () -> GenerationHistoryStore.open(directory, CLOCK));
     }
 
     private static boolean initializeAfterBarrier(

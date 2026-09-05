@@ -1,6 +1,8 @@
 package art.arcane.iris.util.project.matter.slices;
 
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
 import art.arcane.iris.util.project.matter.IrisMatterSupport;
 import art.arcane.iris.util.project.matter.PreObjectMatterCell;
 import art.arcane.volmlib.util.matter.IrisMatter;
@@ -58,7 +60,8 @@ public class PreObjectMatterTest {
         MatterCavern cavern = new MatterCavern(true, "iris:flooded", (byte) 1);
         PreObjectMatterCell expected = PreObjectMatterCell.block(null)
                 .captureString("object-owner")
-                .captureCavern(cavern);
+                .captureCavern(cavern)
+                .captureHydrology(new HydrologyCaveCell(HydrologyCaveAction.WET_SOURCE, "river", "flooded"));
         Matter matter = new IrisMatter(16, 16, 16);
         matter.<PreObjectMatterCell>slice(PreObjectMatterCell.class).set(2, 3, 4, expected);
 
@@ -120,7 +123,7 @@ public class PreObjectMatterTest {
 
         assertThrows(IOException.class, () -> matter.readNode(input(0)));
         assertThrows(IOException.class, () -> matter.readNode(input(1 << 1)));
-        assertThrows(IOException.class, () -> matter.readNode(input(1 << 6)));
+        assertThrows(IOException.class, () -> matter.readNode(input(1 << 7)));
     }
 
     @Test

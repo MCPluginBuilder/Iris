@@ -346,15 +346,10 @@ public final class GenerationEpoch {
             return dimensionKey.equals(other.dimensionKey)
                     && dimensionTypeKey.equals(other.dimensionTypeKey)
                     && environment.equals(other.environment)
-                    && generationMode.equals(other.generationMode)
-                    && internalFluidHeight == other.internalFluidHeight
                     && minHeight == other.minHeight
                     && height == other.height
                     && logicalHeight == other.logicalHeight
                     && Double.compare(coordinateScale, other.coordinateScale) == 0
-                    && upperTerrainEnabled == other.upperTerrainEnabled
-                    && upperDimensionKey.equals(other.upperDimensionKey)
-                    && upperDimensionGap == other.upperDimensionGap
                     && dimensionTypeFingerprintSchema == other.dimensionTypeFingerprintSchema
                     && dimensionTypeFingerprint.equals(other.dimensionTypeFingerprint);
         }

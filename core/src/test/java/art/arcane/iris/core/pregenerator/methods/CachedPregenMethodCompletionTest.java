@@ -4,10 +4,12 @@ import art.arcane.iris.core.pregenerator.PregenListener;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
 import art.arcane.iris.core.pregenerator.cache.PregenCache;
+import art.arcane.iris.core.pregenerator.cache.PregenSavedChunkStatus;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.math.Position2;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.InOrder;
 import org.bukkit.World;
 
 import java.io.File;
@@ -15,12 +17,17 @@ import java.lang.reflect.Constructor;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class CachedPregenMethodCompletionTest {
     private File directory;
@@ -29,6 +36,7 @@ public class CachedPregenMethodCompletionTest {
     private PregenTask task;
     private CachedPregenMethod method;
     private RecordingListener listener;
+    private Set<String> savedFull;
 
     @Before
     public void setUp() throws Exception {
@@ -40,7 +48,9 @@ public class CachedPregenMethodCompletionTest {
                 .radiusX(256)
                 .radiusZ(256)
                 .build();
-        method = new CachedPregenMethod(underlying, cache, task);
+        savedFull = new HashSet<>();
+        method = new CachedPregenMethod(new CachedPregenMethod.Configuration(underlying, cache, task,
+                new PregenSavedChunkStatus((x, z) -> savedFull.contains(x + "," + z))));
         listener = new RecordingListener();
     }
 
@@ -73,6 +83,7 @@ public class CachedPregenMethodCompletionTest {
         underlying.capturedListener.get().onChunkGenerated(1, 2, false);
         assertEquals(1, underlying.generateChunkCalls.get());
 
+        savedFull.add("1,2");
         method.generateChunk(1, 2, listener);
 
         assertEquals(1, underlying.generateChunkCalls.get());
@@ -83,6 +94,11 @@ public class CachedPregenMethodCompletionTest {
     @Test
     public void generateRegionReplayRespectsTaskBounds() {
         cache.cacheRegion(0, 0);
+        for (int x = 0; x < 32; x++) {
+            for (int z = 0; z < 32; z++) {
+                savedFull.add(x + "," + z);
+            }
+        }
         List<long[]> expected = new ArrayList<>();
         task.iterateChunks(0, 0, (x, z) -> expected.add(new long[]{x, z}));
         assertTrue(expected.size() < 1024);
@@ -104,7 +120,8 @@ public class CachedPregenMethodCompletionTest {
                 .getDeclaredConstructor(World.class, PregeneratorMethod.class);
         hybridConstructor.setAccessible(true);
         HybridPregenMethod hybrid = hybridConstructor.newInstance(null, selector);
-        CachedPregenMethod wrapped = new CachedPregenMethod(hybrid, cache, task);
+        CachedPregenMethod wrapped = new CachedPregenMethod(new CachedPregenMethod.Configuration(hybrid, cache, task,
+                new PregenSavedChunkStatus((x, z) -> false)));
 
         wrapped.onPregenStart(123, -456);
 
@@ -113,7 +130,57 @@ public class CachedPregenMethodCompletionTest {
         assertEquals(-456, underlying.centerBlockZ.get());
     }
 
+    @Test
+    public void closePersistsCacheAfterTheNativeBackendCloses() {
+        PregenCache trackedCache = mock(PregenCache.class);
+        when(trackedCache.sync()).thenReturn(trackedCache);
+        PregeneratorMethod trackedMethod = mock(PregeneratorMethod.class);
+        CachedPregenMethod wrapped = new CachedPregenMethod(new CachedPregenMethod.Configuration(
+                trackedMethod, trackedCache, task, new PregenSavedChunkStatus((x, z) -> false)));
+        wrapped.close();
+        InOrder order = inOrder(trackedMethod, trackedCache);
+        order.verify(trackedCache).sync();
+        order.verify(trackedMethod).close();
+        order.verify(trackedCache).write();
+        order.verifyNoMoreInteractions();
+    }
+
+    @Test
+    public void staleChunkBitRequiresNativeCompletionAgain() {
+        cache.cacheChunk(126, 103);
+        method.generateChunk(126, 103, listener);
+        assertEquals(1, underlying.generateChunkCalls.get());
+        assertEquals(0, listener.generated.get());
+        underlying.capturedListener.get().onChunkGenerated(126, 103, false);
+        assertEquals(1, listener.generated.get());
+        assertEquals(0, listener.generatedCached.get());
+    }
+
+    @Test
+    public void staleRegionBitCannotSkipPartialNativeChunks() {
+        cache.cacheRegion(0, 0);
+        assertFalse(method.supportsRegions(0, 0, listener));
+        method.generateRegion(0, 0, listener);
+        AtomicInteger expected = new AtomicInteger();
+        task.iterateChunks(0, 0, (x, z) -> expected.incrementAndGet());
+        assertEquals(expected.get(), underlying.generateChunkCalls.get());
+        assertEquals(0, underlying.generateRegionCalls.get());
+        assertEquals(0, listener.generated.get());
+    }
+
+    @Test
+    public void regionSubmissionDoesNotPublishWholeRegionCompletion() {
+        underlying.regionSupport = true;
+        method.generateRegion(0, 0, listener);
+        assertFalse(cache.isRegionCached(0, 0));
+        assertFalse(cache.isChunkCached(1, 2));
+        underlying.capturedListener.get().onChunkGenerated(1, 2, false);
+        assertTrue(cache.isChunkCached(1, 2));
+        assertFalse(cache.isChunkCached(31, 31));
+    }
+
     private static final class CapturingMethod implements PregeneratorMethod {
+        private boolean regionSupport;
         private final AtomicInteger generateChunkCalls = new AtomicInteger();
         private final AtomicInteger generateRegionCalls = new AtomicInteger();
         private final AtomicInteger pregenStartCalls = new AtomicInteger();
@@ -135,7 +202,7 @@ public class CachedPregenMethodCompletionTest {
 
         @Override
         public boolean supportsRegions(int x, int z, PregenListener listener) {
-            return false;
+            return regionSupport;
         }
 
         @Override
@@ -146,6 +213,7 @@ public class CachedPregenMethodCompletionTest {
         @Override
         public void generateRegion(int x, int z, PregenListener listener) {
             generateRegionCalls.incrementAndGet();
+            capturedListener.set(listener);
         }
 
         @Override

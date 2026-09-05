@@ -110,6 +110,11 @@ final class PackStructurePlacementValidator {
                         continue;
                     }
                     if (hasNativeStructures) {
+                        Object anchor = placement.opt("anchor");
+                        if (anchor != null && anchor != JSONObject.NULL && !"LEGACY".equals(anchor)) {
+                            blockingErrors.add(placementPath
+                                    + ".anchor must be omitted, null, or LEGACY for nativeStructures.");
+                        }
                         validateNativeStructures(
                                 placementPath, nativeStructures,
                                 registries.structures(), registries.jigsaws(),

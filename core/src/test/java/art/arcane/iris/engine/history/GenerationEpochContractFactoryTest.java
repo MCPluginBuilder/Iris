@@ -117,7 +117,7 @@ public class GenerationEpochContractFactoryTest {
         assertNotEquals(first, changedPack);
         assertEquals(true, first.hasSameLayout(changedPack));
         dimension.setUpperDimensionGap(33);
-        assertEquals(false, first.hasSameLayout(GenerationEpochContractFactory.create(
+        assertEquals(true, first.hasSameLayout(GenerationEpochContractFactory.create(
                 dimension, "overworld", "iris:overworld")));
 
         when(loader.load("ceiling", false)).thenReturn(null);

@@ -2,10 +2,10 @@ package art.arcane.iris.engine.history;
 
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.framework.GenerationSessionManager;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.spi.PlatformBlockState;
-import art.arcane.iris.util.nbt.common.mca.MCAFile;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.matter.Matter;
 import org.junit.Rule;
@@ -15,10 +15,8 @@ import org.mockito.MockedStatic;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,9 +32,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -50,8 +49,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public final class GenerationHistoryRuntimeRouterTest {
-    private static final int SECTOR_BYTES = 4_096;
-
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -65,7 +62,7 @@ public final class GenerationHistoryRuntimeRouterTest {
     }
 
     @Test
-    public void promotionSamplesEveryBoundaryColumnThroughItsOwningRuntime() throws Exception {
+    public void promotionSamplesSavedBoundaryWithoutOpeningHistoricalRuntimeScopes() throws Exception {
         Path world = temporaryFolder.newFolder("router-promotion-world").toPath();
         Path packA = createPack("router-promotion-a", "alpha");
         Path packB = createPack("router-promotion-b", "beta");
@@ -84,13 +81,12 @@ public final class GenerationHistoryRuntimeRouterTest {
                 history,
                 (routedEngine, blockX, blockZ) -> {
                     assertSame(engine, routedEngine);
-                    assertSame(first, scoped.get());
+                    assertNull(scoped.get());
                     samples[0]++;
                     return signature(blockX, blockZ);
                 },
                 256,
-                runtimes,
-                GenerationHistoryRuntimeRouter.DEFAULT_RUNTIME_CACHE_CAPACITY
+                runtimes
         );
 
         GenerationActivation activated = history.activeActivation();
@@ -100,7 +96,7 @@ public final class GenerationHistoryRuntimeRouterTest {
         assertEquals(history.boundary(2L).exposedBlockColumns().size(), samples[0]);
         verify(engine).setDefaultGenerationRuntime(second);
         try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(0, 0)) {
-            assertSame(first, scoped.get());
+            assertSame(second, scoped.get());
         }
         try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(1, 0)) {
             assertSame(second, scoped.get());
@@ -109,7 +105,7 @@ public final class GenerationHistoryRuntimeRouterTest {
     }
 
     @Test
-    public void repeatedEpochActivationKeepsADistinctMantleAndBinding() throws Exception {
+    public void repeatedPackActivationUsesOnlyItsCurrentMantleAndBinding() throws Exception {
         Path world = temporaryFolder.newFolder("router-repeat-world").toPath();
         Path packA = createPack("router-repeat-a", "alpha");
         Path packB = createPack("router-repeat-b", "beta");
@@ -123,35 +119,27 @@ public final class GenerationHistoryRuntimeRouterTest {
         GenerationActivation third = promoteWithSignatures(history);
         IrisEngine engine = mock(IrisEngine.class);
         FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
-        IrisEngine.GenerationRuntimeBinding repeated = runtimes.binding(history, third);
-        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(repeated);
+        IrisEngine.GenerationRuntimeBinding current = runtimes.binding(history, third);
+        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(current);
         AtomicReference<IrisEngine.GenerationRuntimeBinding> scoped = installScopeTracking(engine);
-        GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
-                engine,
-                history,
-                (ignored, blockX, blockZ) -> signature(blockX, blockZ),
-                runtimes
-        );
-        IrisEngine.GenerationRuntimeBinding first;
-        try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(0, 0)) {
-            first = scoped.get();
+        try (GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
+                engine, history, (ignored, x, z) -> signature(x, z), runtimes)) {
+            for (int chunkX = 0; chunkX < 3; chunkX++) {
+                try (GenerationHistoryRuntimeRouter.RuntimeStage stage = router.openStage(chunkX, 0)) {
+                    assertSame(current, scoped.get());
+                    assertEquals(3L, stage.activation().activationId());
+                }
+            }
+            assertEquals(history.manifest().activation(1L).orElseThrow().epochId(), third.epochId());
+            assertEquals(Set.of(3L), runtimes.bindings.keySet());
+            assertEquals(history.paths().activationMantleRoot(3L), current.mantleStorageDirectory());
+            assertEquals(1L, history.resolveActivation(0, 0).activationId());
+            assertEquals(2L, history.resolveActivation(1, 0).activationId());
         }
-        try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(2, 0)) {
-            assertSame(repeated, scoped.get());
-        }
-
-        assertEquals(3L, third.activationId());
-        assertEquals(history.manifest().activation(1L).orElseThrow().epochId(), third.epochId());
-        assertNotSame(first, repeated);
-        assertNotSame(runtimes.bindings.get(1L), runtimes.bindings.get(3L));
-        assertEquals(history.paths().activationMantleRoot(1L), runtimes.mantles.get(1L));
-        assertEquals(history.paths().activationMantleRoot(3L), runtimes.mantles.get(3L));
-        assertNotEquals(runtimes.mantles.get(1L), runtimes.mantles.get(3L));
-        router.close();
     }
 
     @Test
-    public void preloadKeepsHistoricalActivationBindingsLazy() throws Exception {
+    public void preloadAndRoutesDoNotConstructHistoricalBindings() throws Exception {
         Path world = temporaryFolder.newFolder("router-lazy-world").toPath();
         Path packA = createPack("router-lazy-a", "alpha");
         Path packB = createPack("router-lazy-b", "beta");
@@ -180,110 +168,92 @@ public final class GenerationHistoryRuntimeRouterTest {
 
         assertEquals(Set.of(3L), runtimes.bindings.keySet());
         try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(0, 0)) {
-            assertEquals(Set.of(1L, 3L), runtimes.bindings.keySet());
+            assertEquals(Set.of(3L), runtimes.bindings.keySet());
         }
         try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(1, 0)) {
-            assertEquals(Set.of(1L, 2L, 3L), runtimes.bindings.keySet());
+            assertEquals(Set.of(3L), runtimes.bindings.keySet());
         }
         router.close();
     }
 
     @Test
-    public void leastRecentlyUsedIdleRuntimeIsEvictedAndReloaded() throws Exception {
-        Path world = temporaryFolder.newFolder("router-eviction-world").toPath();
-        GenerationHistory history = createThreeActivationHistory(world, "router-eviction");
+    public void historicalRoutesWorkAfterArchivedPacksAreReleased() throws Exception {
+        Path world = temporaryFolder.newFolder("router-archived-world").toPath();
+        GenerationHistory history = createThreeActivationHistory(world, "router-archived");
+        new GenerationPackRepository(world).releaseArchivedPacks(history.manifest());
+        assertFalse(Files.exists(history.paths().packRoot(history.manifest().activation(1L).orElseThrow().epochId())));
         IrisEngine engine = mock(IrisEngine.class);
         FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
-        IrisEngine.GenerationRuntimeBinding active = runtimes.binding(history, history.activeActivation());
-        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(active);
-        installScopeTracking(engine);
-        GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
-                engine,
-                history,
-                (ignored, blockX, blockZ) -> signature(blockX, blockZ),
-                runtimes,
-                2
-        );
-
-        try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(0, 0)) {
+        IrisEngine.GenerationRuntimeBinding current = runtimes.binding(history, history.activeActivation());
+        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(current);
+        try (GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
+                engine, history, (ignored, x, z) -> signature(x, z), runtimes)) {
+            for (int chunkX = 0; chunkX < 3; chunkX++) {
+                try (GenerationHistoryRuntimeRouter.RuntimeRoute route = router.openRoute(chunkX, 0)) {
+                    assertEquals(3L, route.activation().activationId());
+                }
+            }
+            assertEquals(Set.of(3L), runtimes.bindings.keySet());
+            assertEquals(0, runtimes.loadCount(1L));
+            assertEquals(0, runtimes.loadCount(2L));
         }
-        IrisEngine.GenerationRuntimeBinding firstLoad = runtimes.bindings.get(1L);
-        try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(1, 0)) {
-        }
-
-        verify(engine).closeDetachedGenerationRuntime(firstLoad);
-        assertEquals(1, runtimes.loadCount(1L));
-        try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(0, 0)) {
-        }
-        assertEquals(2, runtimes.loadCount(1L));
-        router.close();
+        assertEquals(history.manifest(), GenerationHistory.open(world).manifest());
     }
 
     @Test
-    public void reacquisitionWaitsUntilPreviousActivationMantleRetires() throws Exception {
-        Path world = temporaryFolder.newFolder("router-retirement-reload-world").toPath();
-        GenerationHistory history = createThreeActivationHistory(world, "router-retirement-reload");
+    public void closeWaitsForAnInFlightPromotionLoad() throws Exception {
+        Path world = temporaryFolder.newFolder("router-promotion-close-world").toPath();
+        GenerationHistory history = createHistory(world, createPack("router-promotion-close-a", "alpha"));
         IrisEngine engine = mock(IrisEngine.class);
+        when(engine.isStudio()).thenReturn(true);
         FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
-        IrisEngine.GenerationRuntimeBinding active = runtimes.binding(history, history.activeActivation());
-        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(active);
+        IrisEngine.GenerationRuntimeBinding initial = runtimes.binding(history, history.activeActivation());
+        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(initial);
+        stage(history, createPack("router-promotion-close-b", "beta"));
+        runtimes.blockLoad(2L);
         GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
-                engine, history, (ignored, x, z) -> signature(x, z), runtimes, 1);
-        GenerationHistoryRuntimeRouter.RuntimeRoute original = router.openRoute(0, 0);
-        IrisEngine.GenerationRuntimeBinding first = runtimes.bindings.get(1L);
-        CountDownLatch retirementStarted = new CountDownLatch(1);
-        CountDownLatch releaseRetirement = new CountDownLatch(1);
-        CountDownLatch reloadStarted = new CountDownLatch(1);
-        doAnswer(invocation -> {
-            retirementStarted.countDown();
-            assertTrue(releaseRetirement.await(5L, TimeUnit.SECONDS));
-            return null;
-        }).when(engine).closeDetachedGenerationRuntime(first);
+                engine, history, (ignored, x, z) -> signature(x, z), runtimes);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            CompletableFuture<Void> retiring = CompletableFuture.runAsync(original::close, executor);
-            assertTrue(retirementStarted.await(5L, TimeUnit.SECONDS));
-            CompletableFuture<GenerationHistoryRuntimeRouter.RuntimeRoute> reloading =
-                    CompletableFuture.supplyAsync(() -> {
-                        reloadStarted.countDown();
-                        return openRouteUnchecked(router, 0, 0);
-                    }, executor);
-            assertTrue(reloadStarted.await(5L, TimeUnit.SECONDS));
-            assertThrows(TimeoutException.class, () -> reloading.get(100L, TimeUnit.MILLISECONDS));
-            assertEquals(1, runtimes.loadCount(1L));
-
-            releaseRetirement.countDown();
-            retiring.get(5L, TimeUnit.SECONDS);
-            try (GenerationHistoryRuntimeRouter.RuntimeRoute reloaded = reloading.get(5L, TimeUnit.SECONDS)) {
-                assertEquals(1L, reloaded.activation().activationId());
-                assertEquals(2, runtimes.loadCount(1L));
-            }
+            CompletableFuture<Void> promoting = CompletableFuture.runAsync(() -> {
+                try (GenerationHistoryRuntimeRouter.StudioCutover cutover = router.beginStudioCutover(5_000L)) {
+                    cutover.promotePending();
+                } catch (IOException failure) {
+                    throw new IllegalStateException(failure);
+                }
+            }, executor);
+            assertTrue(runtimes.loadStarted.await(5L, TimeUnit.SECONDS));
+            CompletableFuture<Void> closing = CompletableFuture.runAsync(router::close, executor);
+            awaitClosed(router);
+            assertThrows(TimeoutException.class, () -> closing.get(100L, TimeUnit.MILLISECONDS));
+            runtimes.releaseLoad.countDown();
+            promoting.get(5L, TimeUnit.SECONDS);
+            closing.get(5L, TimeUnit.SECONDS);
+            assertEquals(1, runtimes.loadCount(2L));
+            verify(engine).detachGenerationHistoryRuntimeRouter(router);
         } finally {
-            releaseRetirement.countDown();
+            runtimes.releaseLoad.countDown();
             executor.shutdownNow();
-            router.close();
         }
     }
 
     @Test
-    public void failedRetirementRejectsReopeningTheSameActivationMantle() throws Exception {
+    public void failedOutgoingRuntimeRetirementReportsTheCommittedCutoverFailure() throws Exception {
         Path world = temporaryFolder.newFolder("router-retirement-failure-world").toPath();
-        GenerationHistory history = createThreeActivationHistory(world, "router-retirement-failure");
+        GenerationHistory history = createHistory(world, createPack("router-retirement-failure-a", "alpha"));
         IrisEngine engine = mock(IrisEngine.class);
         FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
-        IrisEngine.GenerationRuntimeBinding active = runtimes.binding(history, history.activeActivation());
-        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(active);
-        GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
-                engine, history, (ignored, x, z) -> signature(x, z), runtimes, 1);
-        GenerationHistoryRuntimeRouter.RuntimeRoute original = router.openRoute(0, 0);
+        IrisEngine.GenerationRuntimeBinding outgoing = runtimes.binding(history, history.activeActivation());
+        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(outgoing);
+        stage(history, createPack("router-retirement-failure-b", "beta"));
         doAnswer(invocation -> {
             throw new IllegalStateException("Mantle did not close");
-        }).when(engine).closeDetachedGenerationRuntime(runtimes.bindings.get(1L));
-
-        assertThrows(IllegalStateException.class, original::close);
-        assertThrows(IOException.class, () -> router.openRoute(0, 0));
-        assertEquals(1, runtimes.loadCount(1L));
-        router.close();
+        }).when(engine).closeDetachedGenerationRuntime(outgoing);
+        assertThrows(IllegalStateException.class, () -> GenerationHistoryRuntimeRouter.attachAndPromotePending(
+                engine, history, (ignored, x, z) -> signature(x, z), 256, runtimes));
+        assertEquals(2L, history.activeActivation().activationId());
+        verify(engine).setDefaultGenerationRuntime(runtimes.bindings.get(2L));
+        assertEquals(0, runtimes.loadCount(1L));
     }
 
     @Test
@@ -299,22 +269,20 @@ public final class GenerationHistoryRuntimeRouterTest {
                 engine,
                 history,
                 (ignored, blockX, blockZ) -> signature(blockX, blockZ),
-                runtimes,
-                1
+                runtimes
         );
         GenerationHistoryRuntimeRouter.RuntimeRoute route = router.openRoute(0, 0);
-        IrisEngine.GenerationRuntimeBinding historical = runtimes.bindings.get(1L);
 
         try (GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope outer = route.openRuntimeScope();
              GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope inner = route.openRuntimeScope()) {
             assertThrows(IllegalStateException.class, route::close);
-            verify(engine, never()).closeDetachedGenerationRuntime(historical);
+            verify(engine, never()).closeDetachedGenerationRuntime(active);
         }
-        verify(engine, never()).closeDetachedGenerationRuntime(historical);
+        verify(engine, never()).closeDetachedGenerationRuntime(active);
 
         route.close();
 
-        verify(engine).closeDetachedGenerationRuntime(historical);
+        verify(engine, never()).closeDetachedGenerationRuntime(active);
         router.close();
     }
 
@@ -348,7 +316,7 @@ public final class GenerationHistoryRuntimeRouterTest {
     }
 
     @Test
-    public void concurrentRoutesDeduplicateHistoricalRuntimeLoad() throws Exception {
+    public void concurrentHistoricalRoutesShareTheCurrentRuntimeWithoutLoadingOldFactories() throws Exception {
         Path world = temporaryFolder.newFolder("router-deduplicated-load-world").toPath();
         GenerationHistory history = createThreeActivationHistory(world, "router-deduplicated-load");
         IrisEngine engine = mock(IrisEngine.class);
@@ -356,13 +324,11 @@ public final class GenerationHistoryRuntimeRouterTest {
         IrisEngine.GenerationRuntimeBinding active = runtimes.binding(history, history.activeActivation());
         when(engine.getActiveGenerationRuntimeBinding()).thenReturn(active);
         installScopeTracking(engine);
-        runtimes.blockLoad(1L);
         GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
                 engine,
                 history,
                 (ignored, blockX, blockZ) -> signature(blockX, blockZ),
-                runtimes,
-                2
+                runtimes
         );
         ExecutorService executor = Executors.newFixedThreadPool(2);
         CountDownLatch ready = new CountDownLatch(2);
@@ -374,12 +340,12 @@ public final class GenerationHistoryRuntimeRouterTest {
                     router, executor, ready, start, 0, 0);
             assertTrue(ready.await(5L, TimeUnit.SECONDS));
             start.countDown();
-            assertTrue(runtimes.loadStarted.await(5L, TimeUnit.SECONDS));
-            runtimes.releaseLoad.countDown();
             GenerationHistoryRuntimeRouter.RuntimeRoute firstRoute = first.get(5L, TimeUnit.SECONDS);
             GenerationHistoryRuntimeRouter.RuntimeRoute secondRoute = second.get(5L, TimeUnit.SECONDS);
 
-            assertEquals(1, runtimes.loadCount(1L));
+            assertEquals(0, runtimes.loadCount(1L));
+            assertEquals(3L, firstRoute.activation().activationId());
+            assertEquals(3L, secondRoute.activation().activationId());
             firstRoute.close();
             secondRoute.close();
         } finally {
@@ -389,80 +355,50 @@ public final class GenerationHistoryRuntimeRouterTest {
     }
 
     @Test
-    public void closeRejectsNewRoutesAndAwaitsLoadAndLease() throws Exception {
+    public void closeRejectsNewRoutesAndAwaitsExistingLeases() throws Exception {
         Path world = temporaryFolder.newFolder("router-close-await-world").toPath();
         GenerationHistory history = createThreeActivationHistory(world, "router-close-await");
         IrisEngine engine = mock(IrisEngine.class);
         FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
         IrisEngine.GenerationRuntimeBinding active = runtimes.binding(history, history.activeActivation());
         when(engine.getActiveGenerationRuntimeBinding()).thenReturn(active);
-        installScopeTracking(engine);
-        runtimes.blockLoad(1L);
         GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
-                engine,
-                history,
-                (ignored, blockX, blockZ) -> signature(blockX, blockZ),
-                runtimes,
-                4
-        );
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+                engine, history, (ignored, x, z) -> signature(x, z), runtimes);
+        GenerationHistoryRuntimeRouter.RuntimeRoute route = router.openRoute(0, 0);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
-            CompletableFuture<GenerationHistoryRuntimeRouter.RuntimeRoute> routeFuture = CompletableFuture.supplyAsync(
-                    () -> openRouteUnchecked(router, 0, 0),
-                    executor
-            );
-            assertTrue(runtimes.loadStarted.await(5L, TimeUnit.SECONDS));
-            CountDownLatch closeInvoked = new CountDownLatch(1);
-            CompletableFuture<Void> closeFuture = CompletableFuture.runAsync(() -> {
-                closeInvoked.countDown();
-                router.close();
-            }, executor);
-            assertTrue(closeInvoked.await(5L, TimeUnit.SECONDS));
+            CompletableFuture<Void> closing = CompletableFuture.runAsync(router::close, executor);
             awaitClosed(router);
-
             assertThrows(IllegalStateException.class, () -> router.openRoute(2, 0));
-            runtimes.releaseLoad.countDown();
-            GenerationHistoryRuntimeRouter.RuntimeRoute route = routeFuture.get(5L, TimeUnit.SECONDS);
-            assertThrows(TimeoutException.class, () -> closeFuture.get(100L, TimeUnit.MILLISECONDS));
+            assertThrows(TimeoutException.class, () -> closing.get(100L, TimeUnit.MILLISECONDS));
             route.close();
-            closeFuture.get(5L, TimeUnit.SECONDS);
+            closing.get(5L, TimeUnit.SECONDS);
         } finally {
+            route.close();
             executor.shutdownNow();
         }
-
         verify(engine).detachGenerationHistoryRuntimeRouter(router);
-        verify(engine).closeDetachedGenerationRuntime(runtimes.bindings.get(1L));
         verify(engine, never()).closeDetachedGenerationRuntime(active);
     }
 
     @Test
-    public void closeRetiresEveryCachedHistoricalRuntimeButKeepsDefault() throws Exception {
-        Path world = temporaryFolder.newFolder("router-close-cached-world").toPath();
-        GenerationHistory history = createThreeActivationHistory(world, "router-close-cached");
+    public void closeLeavesTheSingleDefaultRuntimeOwnedByTheEngine() throws Exception {
+        Path world = temporaryFolder.newFolder("router-close-current-world").toPath();
+        GenerationHistory history = createThreeActivationHistory(world, "router-close-current");
         IrisEngine engine = mock(IrisEngine.class);
         FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
-        IrisEngine.GenerationRuntimeBinding active = runtimes.binding(history, history.activeActivation());
-        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(active);
+        IrisEngine.GenerationRuntimeBinding initial = runtimes.binding(history, history.activeActivation());
+        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(initial);
         installScopeTracking(engine);
-        GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
-                engine,
-                history,
-                (ignored, blockX, blockZ) -> signature(blockX, blockZ),
-                runtimes,
-                4
-        );
-        try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(0, 0)) {
+        try (GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
+                engine, history, (ignored, x, z) -> signature(x, z), runtimes)) {
+            try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(0, 0)) {
+            }
+            try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(1, 0)) {
+            }
         }
-        try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(1, 0)) {
-        }
-        IrisEngine.GenerationRuntimeBinding first = runtimes.bindings.get(1L);
-        IrisEngine.GenerationRuntimeBinding second = runtimes.bindings.get(2L);
-
-        router.close();
-
-        verify(engine).closeDetachedGenerationRuntime(first);
-        verify(engine).closeDetachedGenerationRuntime(second);
-        verify(engine, never()).closeDetachedGenerationRuntime(active);
+        assertEquals(Set.of(3L), runtimes.bindings.keySet());
+        verify(engine, never()).closeDetachedGenerationRuntime(any());
     }
 
     @Test
@@ -484,8 +420,7 @@ public final class GenerationHistoryRuntimeRouterTest {
                 history,
                 (ignored, blockX, blockZ) -> signature(blockX, blockZ),
                 256,
-                runtimes,
-                1
+                runtimes
         );
 
         assertEquals(2L, history.activeActivation().activationId());
@@ -716,6 +651,8 @@ public final class GenerationHistoryRuntimeRouterTest {
         GenerationKernelRegistry.Version versionTwo = new GenerationKernelRegistry.Version(2, 1, 1);
         GenerationKernelRegistry kernels = kernels(versionTwo);
         GenerationHistory history = createHistory(world, pack, versionOne, kernels);
+        history = GenerationHistory.open(world, new GenerationKernelRegistry(versionTwo,
+                List.of(kernels.requireSupported(versionTwo))));
         IrisEngine engine = mock(IrisEngine.class);
         FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
         IrisEngine.GenerationRuntimeBinding first = runtimes.binding(history, history.activeActivation());
@@ -741,7 +678,163 @@ public final class GenerationHistoryRuntimeRouterTest {
     }
 
     @Test
-    public void attachPromotesPendingPackThenRestagesItForTheCurrentKernel() throws Exception {
+    public void changedBuildRevisionWithTheSameAbiAutomaticallyCreatesANewActivation() throws Exception {
+        Path world = temporaryFolder.newFolder("router-build-revision-world").toPath();
+        Path pack = createPack("router-build-revision-pack", "alpha");
+        GenerationKernelRegistry.Version version = new GenerationKernelRegistry.Version(1, 1, 1);
+        GenerationHistory original = createHistory(world, pack, version, kernels(version));
+        GenerationKernelRegistry upgraded = new GenerationKernelRegistry(version, List.of(
+                new GenerationKernelRegistry.Kernel(1, "9".repeat(64), Map.of(
+                        new GenerationKernelRegistry.AlgorithmVersion(1, 1),
+                        (engine, plan) -> { throw new AssertionError("Mock runtime factory owns this test."); }))));
+        GenerationHistory history = GenerationHistory.open(world, upgraded);
+        IrisEngine engine = mock(IrisEngine.class);
+        FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
+        IrisEngine.GenerationRuntimeBinding initial = runtimes.binding(history, history.activeActivation());
+        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(initial);
+        try (GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attachAndPromotePending(
+                engine, history, (ignored, x, z) -> signature(x, z), 256, runtimes)) {
+            assertEquals(2L, history.activeActivation().activationId());
+            assertEquals(version, history.activeEpoch().kernelVersion());
+            assertEquals("9".repeat(64), history.activeEpoch().kernelImplementationFingerprint());
+            assertEquals(original.activeEpoch().packFingerprint(), history.activeEpoch().packFingerprint());
+            assertEquals(0, runtimes.loadCount(1L));
+            try (GenerationHistoryRuntimeRouter.RuntimeRoute route = router.openRoute(0, 0)) {
+                assertEquals(2L, route.activation().activationId());
+            }
+        }
+    }
+
+    @Test
+    public void liveStudioPromotionPreservesChunksAndRoutesExpansionAcrossRepeatedUpdates() throws Exception {
+        Path world = temporaryFolder.newFolder("live-studio-world").toPath();
+        Path packA = createPack("live-studio-a", "flat-lowland");
+        Path packB = createPack("live-studio-b", "massive-mountains");
+        Path packC = createPack("live-studio-c", "deep-ocean");
+        GenerationHistory history = createHistory(world, packA);
+        Path region = Files.createDirectories(world.resolve("region")).resolve("r.0.0.mca");
+        writeRegion(region, new int[][]{{0, 0}});
+        byte[] original = Files.readAllBytes(region);
+        IrisEngine engine = mock(IrisEngine.class);
+        when(engine.isStudio()).thenReturn(true);
+        FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
+        IrisEngine.GenerationRuntimeBinding first = runtimes.binding(history, history.activeActivation());
+        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(first);
+        AtomicReference<IrisEngine.GenerationRuntimeBinding> scoped = installScopeTracking(engine);
+        try (GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
+                engine, history, (ignored, x, z) -> signature(x, z), runtimes)) {
+            try (GenerationHistoryRuntimeRouter.RuntimeStage stage = router.openStage(0, 0)) {
+                assertEquals(1L, stage.activation().activationId());
+            }
+            stage(history, packB);
+            try (GenerationHistoryRuntimeRouter.StudioCutover cutover = router.beginStudioCutover(5_000L)) {
+                assertEquals(2L, cutover.promotePending().activationId());
+            }
+            assertArrayEquals(original, Files.readAllBytes(region));
+            try (GenerationHistoryRuntimeRouter.RuntimeStage stage = router.openStage(0, 0)) {
+                assertSame(runtimes.bindings.get(2L), scoped.get());
+                assertEquals(2L, stage.activation().activationId());
+            }
+            try (GenerationHistoryRuntimeRouter.RuntimeStage stage = router.openStage(1, 0)) {
+                assertSame(runtimes.bindings.get(2L), scoped.get());
+                assertEquals(2L, stage.activation().activationId());
+            }
+            writeRegion(region, new int[][]{{0, 0}, {1, 0}});
+            byte[] expanded = Files.readAllBytes(region);
+            stage(history, packC);
+            try (GenerationHistoryRuntimeRouter.StudioCutover cutover = router.beginStudioCutover(5_000L)) {
+                assertEquals(3L, cutover.promotePending().activationId());
+            }
+            assertArrayEquals(expanded, Files.readAllBytes(region));
+            assertEquals(1L, history.resolveActivation(0, 0).activationId());
+            assertEquals(2L, history.resolveActivation(1, 0).activationId());
+            assertEquals(3L, history.resolveActivation(2, 0).activationId());
+        }
+        GenerationHistory reopened = GenerationHistory.open(world);
+        assertEquals(1L, reopened.resolveActivation(0, 0).activationId());
+        assertEquals(2L, reopened.resolveActivation(1, 0).activationId());
+        assertEquals(3L, reopened.resolveActivation(2, 0).activationId());
+    }
+
+    @Test
+    public void liveStudioCutoverDrainsExistingRoutesAndBlocksNewRoutesUntilPublicationCompletes() throws Exception {
+        Path world = temporaryFolder.newFolder("studio-drain-world").toPath();
+        Path pack = createPack("studio-drain-pack", "alpha");
+        GenerationHistory history = createHistory(world, pack);
+        IrisEngine engine = mock(IrisEngine.class);
+        when(engine.isStudio()).thenReturn(true);
+        FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
+        IrisEngine.GenerationRuntimeBinding initialBinding = runtimes.binding(history, history.activeActivation());
+        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(initialBinding);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch cutoverRequested = new CountDownLatch(1);
+        CountDownLatch cutoverAcquired = new CountDownLatch(1);
+        CountDownLatch releaseCutover = new CountDownLatch(1);
+        try (GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
+                engine, history, (ignored, x, z) -> signature(x, z), runtimes)) {
+            GenerationHistoryRuntimeRouter.RuntimeRoute initial = router.openRoute(0, 0);
+            try {
+                CompletableFuture<Void> cutover = CompletableFuture.runAsync(() -> {
+                    cutoverRequested.countDown();
+                    try (GenerationHistoryRuntimeRouter.StudioCutover ignored = router.beginStudioCutover(5_000L)) {
+                        cutoverAcquired.countDown();
+                        if (!releaseCutover.await(5, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException("Timed out waiting to release the Studio cutover.");
+                        }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(interrupted);
+                    }
+                }, executor);
+                assertTrue(cutoverRequested.await(5, TimeUnit.SECONDS));
+                assertFalse(cutoverAcquired.await(100, TimeUnit.MILLISECONDS));
+                initial.close();
+                assertTrue(cutoverAcquired.await(5, TimeUnit.SECONDS));
+                CompletableFuture<GenerationHistoryRuntimeRouter.RuntimeRoute> waiting =
+                        CompletableFuture.supplyAsync(() -> openRouteUnchecked(router, 1, 0), executor);
+                assertThrows(TimeoutException.class, () -> waiting.get(100, TimeUnit.MILLISECONDS));
+                releaseCutover.countDown();
+                cutover.get(5, TimeUnit.SECONDS);
+                try (GenerationHistoryRuntimeRouter.RuntimeRoute route = waiting.get(5, TimeUnit.SECONDS)) {
+                    assertEquals(1L, route.activation().activationId());
+                }
+            } finally {
+                initial.close();
+                releaseCutover.countDown();
+            }
+        } finally {
+            releaseCutover.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    public void liveCutoverRejectsProductionWorldsAndNestedGenerationScopes() throws Exception {
+        Path world = temporaryFolder.newFolder("studio-guard-world").toPath();
+        Path pack = createPack("studio-guard-pack", "alpha");
+        GenerationHistory history = createHistory(world, pack);
+        IrisEngine engine = mock(IrisEngine.class);
+        FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
+        IrisEngine.GenerationRuntimeBinding initialBinding = runtimes.binding(history, history.activeActivation());
+        when(engine.getActiveGenerationRuntimeBinding()).thenReturn(initialBinding);
+        installScopeTracking(engine);
+        try (GenerationHistoryRuntimeRouter router = GenerationHistoryRuntimeRouter.attach(
+                engine, history, (ignored, x, z) -> signature(x, z), runtimes)) {
+            assertThrows(IllegalStateException.class, () -> router.beginStudioCutover(5_000L));
+            when(engine.isStudio()).thenReturn(true);
+            try (GenerationHistoryRuntimeRouter.RuntimeStage ignored = router.openStage(0, 0)) {
+                assertThrows(IllegalStateException.class, () -> router.beginStudioCutover(5_000L));
+            }
+            try (GenerationHistoryRuntimeRouter.StudioCutover cutover = router.beginStudioCutover(5_000L)) {
+                assertThrows(IllegalStateException.class, () -> router.beginStudioCutover(5_000L));
+                assertEquals(1L, cutover.promotePending().activationId());
+            }
+        }
+    }
+
+    @Test
+    public void pendingOldRevisionPromotesWithoutLoadingItsArchivedImplementation() throws Exception {
         Path world = temporaryFolder.newFolder("router-pending-kernel-world").toPath();
         Path packA = createPack("router-pending-kernel-a", "alpha");
         Path packB = createPack("router-pending-kernel-b", "beta");
@@ -775,7 +868,7 @@ public final class GenerationHistoryRuntimeRouterTest {
         assertEquals(versionTwo, history.activeEpoch().kernelVersion());
         assertEquals(GenerationPackFingerprint.compute(packB, GenerationPackFingerprint.CURRENT_VERSION),
                 history.activeEpoch().packFingerprint());
-        verify(engine).setDefaultGenerationRuntime(runtimes.bindings.get(2L));
+        assertEquals(0, runtimes.loadCount(2L));
         verify(engine).setDefaultGenerationRuntime(runtimes.bindings.get(3L));
         router.close();
     }
@@ -957,18 +1050,11 @@ public final class GenerationHistoryRuntimeRouterTest {
                         new TerrainBoundarySignature.VerticalLayout(-64, 64, 2),
                         new TerrainBoundarySignature.BiomeEncoding(List.of("iris:test"), new short[]{0, 0})
                 )
-        );
+        , BoundaryColumnGeometry.empty());
     }
 
     private static void writeRegion(Path file, int[][] chunks) throws IOException {
-        try (RandomAccessFile output = new RandomAccessFile(file.toFile(), "rw")) {
-            output.setLength((long) (2 + chunks.length) * SECTOR_BYTES);
-            for (int index = 0; index < chunks.length; index++) {
-                int chunkIndex = MCAFile.getChunkIndex(chunks[index][0], chunks[index][1]);
-                output.seek((long) chunkIndex * Integer.BYTES);
-                output.writeInt((2 + index) << Byte.SIZE | 1);
-            }
-        }
+        SavedTerrainTestRegion.write(file, chunks);
     }
 
     private static final class FakeRuntimeFactory
@@ -989,6 +1075,9 @@ public final class GenerationHistoryRuntimeRouterTest {
                 GenerationEpoch epoch,
                 IrisEngine.GenerationRuntimeBinding binding
         ) {
+            if (engine.getGenerationSessions() == null) {
+                when(engine.getGenerationSessions()).thenReturn(new GenerationSessionManager(true));
+            }
         }
 
         @Override
@@ -998,6 +1087,10 @@ public final class GenerationHistoryRuntimeRouterTest {
                 GenerationActivation activation,
                 GenerationEpoch epoch
         ) throws IOException {
+            if (!epoch.kernelVersion().equals(history.currentKernelVersion())
+                    || !history.usesCurrentGenerator()) {
+                throw new AssertionError("Archived generator implementations must never load.");
+            }
             synchronized (loadCounts) {
                 loadCounts.computeIfAbsent(activation.activationId(), ignored -> new AtomicInteger()).incrementAndGet();
             }

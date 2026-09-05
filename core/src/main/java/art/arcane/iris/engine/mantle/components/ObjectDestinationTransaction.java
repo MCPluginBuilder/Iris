@@ -140,12 +140,16 @@ final class ObjectDestinationTransaction implements ObjectPassPlacer {
 
     @Override
     public boolean isCarved(int x, int y, int z) {
-        HydrologyCaveCell hydrology = getDataIfPresent(x, y, z, HydrologyCaveCell.class);
-        if (hydrology != null) {
+        Object block = overlay.get(new DataKey(x, y, z, PlatformBlockState.class));
+        if (block instanceof PlatformBlockState state && !state.isAir() && !state.isFluid()) {
+            return false;
+        }
+        Object hydrologyValue = overlay.get(new DataKey(x, y, z, HydrologyCaveCell.class));
+        if (hydrologyValue instanceof HydrologyCaveCell hydrology) {
             return hydrology.carves();
         }
-        MatterCavern cavern = getDataIfPresent(x, y, z, MatterCavern.class);
-        return cavern != null || writer.isPrerequisiteCarved(x, y, z);
+        Object cavern = overlay.get(new DataKey(x, y, z, MatterCavern.class));
+        return cavern == null ? writer.isPrerequisiteCarved(x, y, z) : cavern != CLEARED;
     }
 
     @Override
@@ -225,6 +229,11 @@ final class ObjectDestinationTransaction implements ObjectPassPlacer {
             carved = carved.clone();
         }
         for (int y = 0; y < cappedHeight; y++) {
+            Object block = overlay.get(new DataKey(x, y, z, PlatformBlockState.class));
+            if (block instanceof PlatformBlockState state && !state.isAir() && !state.isFluid()) {
+                carved[y] = 0;
+                continue;
+            }
             DataKey hydrologyKey = new DataKey(x, y, z, HydrologyCaveCell.class);
             Object hydrologyValue = overlay.get(hydrologyKey);
             if (hydrologyValue instanceof HydrologyCaveCell hydrology) {

@@ -44,11 +44,13 @@ import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.iris.util.project.noise.CNG;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.math.RNG;
-import art.arcane.volmlib.util.matter.MatterBiomeInject;
 import art.arcane.volmlib.util.matter.slices.BiomeInjectMatter;
 import art.arcane.volmlib.util.scheduling.PrecisionStopwatch;
 import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.PlatformBiome;
+import art.arcane.iris.engine.history.TransitionGenerationPlan;
+import java.util.Optional;
 
 import java.util.IdentityHashMap;
 
@@ -294,7 +296,8 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
                             sample,
                             chunkHeight,
                             data,
-                            context.getDimensionStackLayout(xf, zf)
+                            context.getDimensionStackLayout(xf, zf),
+                            context
                     );
                 }
             }
@@ -388,10 +391,11 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
             FloatingIslandSample sample,
             int chunkHeight,
             IrisData data,
-            DimensionStackLayout stackLayout
+            DimensionStackLayout stackLayout,
+            ChunkContext context
     ) {
         try {
-            IdentityHashMap<IrisFloatingChildBiomes, MatterBiomeInject> matterByEntry = new IdentityHashMap<>();
+            IdentityHashMap<IrisFloatingChildBiomes, PlatformBiome> matterByEntry = new IdentityHashMap<>();
             for (int k = 0; k <= sample.topIdx; k++) {
                 if (!sample.solidMask[k]) {
                     continue;
@@ -404,16 +408,27 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
                     continue;
                 }
                 IrisFloatingChildBiomes entry = sample.entryAt(k);
-                MatterBiomeInject matter = matterByEntry.get(entry);
+                PlatformBiome matter = matterByEntry.get(entry);
                 if (matter == null) {
                     IrisBiome target = entry == null ? parent : entry.getRealBiome(parent, data);
                     if (target == null) {
                         continue;
                     }
-                    matter = createSkyBiomeMatter(target, wx, wz);
+                    matter = createSkyBiome(target, wx, wz);
                     matterByEntry.put(entry, matter);
                 }
-                getEngine().getMantle().getMantle().set(wx, y, wz, matter);
+                PlatformBiome selected = matter;
+                TransitionGenerationPlan transition = context.getComplex().getTransitionGenerationPlan();
+                if (transition != null) {
+                    Optional<String> historical = transition.historicalPhysicalBiomeKeyAt(wx, y + getEngine().getMinHeight(), wz);
+                    if (historical.isPresent()) {
+                        selected = IrisPlatforms.get().registries().biome(historical.get());
+                    }
+                }
+                context.setNaturalBiome(wx & 15, y, wz & 15, selected);
+                if (!context.isSpeculativeTerrain()) {
+                    getEngine().getMantle().getMantle().set(wx, y, wz, BiomeInjectMatter.get(selected.key()));
+                }
             }
         } catch (Throwable e) {
             IrisLogging.reportError(e);
@@ -424,16 +439,16 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
         return stackLayout == null || !stackLayout.isHostFeatureProtectedY(y);
     }
 
-    private MatterBiomeInject createSkyBiomeMatter(IrisBiome target, int wx, int wz) {
+    private PlatformBiome createSkyBiome(IrisBiome target, int wx, int wz) {
         if (target.isCustom()) {
             IrisBiomeCustom custom = target.getCustomBiome(rng, getEngine(), wx, 0, wz);
             String resourceKey = getEngine().getData().customBiomeResourceKey(
                     getEngine().getDimension(),
                     custom
             );
-            return BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(resourceKey));
+            return IrisPlatforms.get().registries().biome(resourceKey);
         }
 
-        return BiomeInjectMatter.get(IrisPlatforms.get().biomeWriter().biomeIdFor(target.getSkyBiomeKey(rng, getEngine(), wx, 0, wz)));
+        return IrisPlatforms.get().registries().biome(target.getSkyBiomeKey(rng, getEngine(), wx, 0, wz));
     }
 }

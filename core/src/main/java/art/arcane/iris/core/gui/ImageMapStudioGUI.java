@@ -143,7 +143,7 @@ public final class ImageMapStudioGUI {
 
     private ImageMapStudioGUI(Engine engine) {
         this.engine = Objects.requireNonNull(engine, "Image Map Studio engine");
-        this.packFolder = engine.getData().getDataFolder();
+        this.packFolder = engine.getPackSource().toFile();
         this.dimensionKey = engine.getDimension().getLoadKey();
         this.boundary = engine.getDimension().getWorldBoundary() == null
                 ? null
@@ -163,7 +163,6 @@ public final class ImageMapStudioGUI {
     }
 
     static void reloadActiveEngine(Engine engine) {
-        engine.getData().getImageMapLoader().clearCache();
         engine.hotloadSilently();
     }
 
@@ -431,9 +430,14 @@ public final class ImageMapStudioGUI {
     }
 
     private void refreshPresets() {
-        String[] keys = engine.getData().getImageMapLoader().getPossibleKeys();
-        Arrays.sort(keys);
-        presetPicker.setModel(new DefaultComboBoxModel<>(keys));
+        IrisData data = IrisData.openRuntime(packFolder);
+        try {
+            String[] keys = data.getImageMapLoader().getPossibleKeys();
+            Arrays.sort(keys);
+            presetPicker.setModel(new DefaultComboBoxModel<>(keys));
+        } finally {
+            data.close();
+        }
     }
 
     private void loadPreset(String key) {

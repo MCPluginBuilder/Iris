@@ -53,9 +53,9 @@ public final class TerrainBoundarySignatureStore {
 
     private static final String SHARD_FILE_SUFFIX = ".irtm";
     private static final int MAGIC = 0x49525453;
-    private static final int SCHEMA_VERSION = 3;
+    private static final int SCHEMA_VERSION = 4;
     private static final int SHARD_MAGIC = 0x4952544D;
-    private static final int SHARD_SCHEMA_VERSION = 2;
+    private static final int SHARD_SCHEMA_VERSION = 3;
     private static final int IDENTITY_BYTES = 32;
     private static final int CATALOG_FIXED_BODY_BYTES = 56;
     private static final int CATALOG_ENTRY_BYTES = 44;
@@ -76,7 +76,7 @@ public final class TerrainBoundarySignatureStore {
             + CHECKSUM_BYTES;
     private static final byte[] IDENTITY_DOMAIN = {
             0x49, 0x72, 0x69, 0x73, 0x54, 0x65, 0x72, 0x72,
-            0x61, 0x69, 0x6E, 0x53, 0x69, 0x67, 0x03
+            0x61, 0x69, 0x6E, 0x53, 0x69, 0x67, 0x04
     };
 
     private final Path dimensionRoot;
@@ -376,7 +376,8 @@ public final class TerrainBoundarySignatureStore {
                 new TerrainBoundarySignature.Samples(
                         signature.samples().layout(),
                         new TerrainBoundarySignature.BiomeEncoding(palette, paletteIndices)
-                )
+                ),
+                BoundaryColumnGeometry.fromVoxels(signature.geometry().minimumY(), signature.geometry().voxels())
         );
         validateSignature(canonical);
         return canonical;
@@ -388,6 +389,10 @@ public final class TerrainBoundarySignatureStore {
         }
         if (signature.samples().biomes().palette().size() > MAX_PALETTE_COUNT) {
             throw new IllegalArgumentException("Terrain boundary biome palette exceeds compact index capacity");
+        }
+        for (BoundaryColumnGeometry.Voxel voxel : signature.geometry().palette()) {
+            encodeBiome(voxel.stateKey());
+            encodeBiome(voxel.fluidStateKey());
         }
         for (String biome : signature.samples().biomes().palette()) {
             encodeBiome(Objects.requireNonNull(biome, "Terrain boundary biome"));
@@ -614,7 +619,8 @@ public final class TerrainBoundarySignatureStore {
                             signature.fluidHeight(),
                             signature.upperCeilingDepth()
                     ),
-                    signature.samples()
+                    signature.samples(),
+                    signature.geometry()
             ));
         }
         return List.copyOf(relocated);
@@ -713,7 +719,7 @@ public final class TerrainBoundarySignatureStore {
         TerrainBoundarySignature sample(int blockX, int blockZ) throws IOException;
 
         @Override
-        default void close() {
+        default void close() throws IOException {
         }
     }
 
@@ -1275,6 +1281,77 @@ public final class TerrainBoundarySignatureStore {
             for (short paletteIndex : biomes.paletteIndices()) {
                 output.writeShort(paletteIndex);
             }
+            writeGeometry(output, signature.geometry());
+        }
+
+        private static void writeGeometry(DataOutputStream output, BoundaryColumnGeometry geometry)
+                throws IOException {
+            output.writeInt(geometry.minimumY());
+            output.writeInt(geometry.palette().size());
+            for (BoundaryColumnGeometry.Voxel voxel : geometry.palette()) {
+                writeGeometryKey(output, voxel.stateKey());
+                output.writeByte(voxel.phase().ordinal());
+                writeGeometryKey(output, voxel.fluidStateKey());
+                output.writeBoolean(voxel.protectedContent());
+            }
+            int[] runEnds = geometry.runEnds();
+            short[] indices = geometry.paletteIndices();
+            output.writeInt(runEnds.length);
+            for (int run = 0; run < runEnds.length; run++) {
+                output.writeInt(runEnds[run]);
+                output.writeShort(indices[run]);
+            }
+        }
+
+        private static BoundaryColumnGeometry readGeometry(Path source, DataInputStream input)
+                throws IOException {
+            int minimumY = input.readInt();
+            int paletteCount = input.readInt();
+            if (paletteCount < 0 || paletteCount > MAX_PALETTE_COUNT) {
+                throw invalid(source, "invalid geometry palette count " + paletteCount);
+            }
+            ArrayList<BoundaryColumnGeometry.Voxel> palette = new ArrayList<>(paletteCount);
+            BoundaryColumnGeometry.Phase[] phases = BoundaryColumnGeometry.Phase.values();
+            for (int index = 0; index < paletteCount; index++) {
+                String stateKey = readGeometryKey(source, input);
+                int phase = input.readUnsignedByte();
+                if (phase >= phases.length) {
+                    throw invalid(source, "invalid geometry phase " + phase);
+                }
+                String fluidKey = readGeometryKey(source, input);
+                int protectedFlag = input.readUnsignedByte();
+                if (protectedFlag > 1) {
+                    throw invalid(source, "invalid geometry protection flag " + protectedFlag);
+                }
+                palette.add(new BoundaryColumnGeometry.Voxel(stateKey, phases[phase], fluidKey,
+                        protectedFlag == 1));
+            }
+            int runCount = input.readInt();
+            if (runCount < 0 || runCount > BoundaryColumnGeometry.MAXIMUM_HEIGHT
+                    || (long) runCount * (Integer.BYTES + Short.BYTES) > input.available()) {
+                throw invalid(source, "invalid geometry run count " + runCount);
+            }
+            int[] runEnds = new int[runCount];
+            short[] indices = new short[runCount];
+            for (int run = 0; run < runCount; run++) {
+                runEnds[run] = input.readInt();
+                indices[run] = input.readShort();
+            }
+            return new BoundaryColumnGeometry(minimumY, palette, runEnds, indices);
+        }
+
+        private static void writeGeometryKey(DataOutputStream output, String key) throws IOException {
+            byte[] encoded = encodeBiome(key);
+            output.writeInt(encoded.length);
+            output.write(encoded);
+        }
+
+        private static String readGeometryKey(Path source, DataInputStream input) throws IOException {
+            int encodedLength = input.readInt();
+            if (encodedLength < 0 || encodedLength > MAX_BIOME_BYTES || encodedLength > input.available()) {
+                throw invalid(source, "invalid geometry state key length " + encodedLength);
+            }
+            return decodeBiome(source, input.readNBytes(encodedLength));
         }
 
         private static TerrainBoundarySignature readSignature(
@@ -1344,7 +1421,8 @@ public final class TerrainBoundarySignatureStore {
                     new TerrainBoundarySignature.Samples(
                             new TerrainBoundarySignature.VerticalLayout(minimumY, sampleStep, sampleCount),
                             new TerrainBoundarySignature.BiomeEncoding(palette, paletteIndices)
-                    )
+                    ),
+                    readGeometry(source, input)
             );
         }
     }

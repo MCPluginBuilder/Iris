@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalInt;
 
 import static org.junit.Assert.assertEquals;
@@ -30,9 +31,9 @@ public class TransitionGenerationPlanTest {
                 new TerrainBoundarySignature.VerticalLayout(-64, 4, 0),
                 new TerrainBoundarySignature.BiomeEncoding(List.of(), new short[0]));
         TerrainBoundarySignature present = new TerrainBoundarySignature(
-                new TerrainBoundarySignature.Column(15, 0, 64, 64, OptionalInt.empty(), OptionalInt.of(100)), samples);
+                new TerrainBoundarySignature.Column(15, 0, 64, 64, OptionalInt.empty(), OptionalInt.of(100)), samples, BoundaryColumnGeometry.empty());
         TerrainBoundarySignature absent = new TerrainBoundarySignature(
-                new TerrainBoundarySignature.Column(15, 2, 64, 64, OptionalInt.empty(), OptionalInt.empty()), samples);
+                new TerrainBoundarySignature.Column(15, 2, 64, 64, OptionalInt.empty(), OptionalInt.empty()), samples, BoundaryColumnGeometry.empty());
         TransitionBoundarySampler sampler = new TransitionBoundarySampler(32, store.publish(2L, List.of(present, absent)));
 
         assertEquals(100D, sampler.sample(16, 0).historicalUpperCeilingDepth(), 0D);
@@ -91,7 +92,7 @@ public class TransitionGenerationPlanTest {
     }
 
     @Test
-    public void samplesFrozenTerrainAndSeparatelyTapersHydrology() throws Exception {
+    public void samplesTerrainAndHydrologyWithinTheSameFiniteWidth() throws Exception {
         GenerationBoundary boundary = GenerationBoundary.freeze("terrain", List.of(
                 new GenerationBoundary.ChunkCoordinate(0, 0)
         ));
@@ -106,15 +107,15 @@ public class TransitionGenerationPlanTest {
         assertNotNull(edge.nearestSignature());
         assertEquals(1D, edge.distanceToHistoricalTerrain(), 0D);
         assertEquals(64D, edge.historicalSurfaceHeight(), 0D);
-        assertEquals(0D, edge.hydrologyWeight(), 0D);
+        assertEquals(edge.newEpochWeight(), edge.hydrologyWeight(), 0D);
         assertTrue(edge.newEpochWeight() > 0D);
         assertTrue(edge.newEpochWeight() < 0.001D);
 
         assertEquals(1D, plan.newEpochWeightAt(47, 8), 0D);
-        assertEquals(0D, plan.hydrologyWeightAt(47, 8), 0D);
-        assertEquals(0.5D, plan.hydrologyWeightAt(63, 8), 0D);
+        assertEquals(1D, plan.hydrologyWeightAt(47, 8), 0D);
+        assertEquals(1D, plan.hydrologyWeightAt(63, 8), 0D);
         assertEquals(1D, plan.hydrologyWeightAt(79, 8), 0D);
-        assertFalse(plan.allowsNewFootprint(31, 8, 48, 8));
+        assertTrue(plan.allowsNewFootprint(31, 8, 48, 8));
         assertTrue(plan.allowsNewFootprint(47, 8, 63, 8));
     }
 
@@ -152,7 +153,7 @@ public class TransitionGenerationPlanTest {
     }
 
     @Test
-    public void rejectsFootprintsWhoseInteriorCrossesHistoryOrTheTerrainBand() throws Exception {
+    public void rejectsFootprintsCrossingHistoryAndAllowsTheTerrainBand() throws Exception {
         GenerationBoundary boundary = GenerationBoundary.freeze("footprints", List.of(
                 new GenerationBoundary.ChunkCoordinate(0, 0)
         ));
@@ -164,7 +165,7 @@ public class TransitionGenerationPlanTest {
         );
 
         assertFalse(plan.allowsNewFootprint(-20, -20, 40, 40));
-        assertFalse(plan.allowsNewFootprint(16, -20, 16, 35));
+        assertTrue(plan.allowsNewFootprint(16, -20, 16, 35));
         assertTrue(plan.allowsNewFootprint(31, 8, 31, 8));
     }
 
@@ -188,6 +189,20 @@ public class TransitionGenerationPlanTest {
         assertEquals("iris:middle", plan.historicalPhysicalBiomeKeyAt(16, 14, 8).orElseThrow());
         assertEquals("iris:high", plan.historicalPhysicalBiomeKeyAt(16, 18, 8).orElseThrow());
         assertTrue(plan.historicalPhysicalBiomeKeyAt(31, 14, 8).isEmpty());
+        for (int blockX = -2; blockX <= 34; blockX++) {
+            for (int blockZ : new int[]{-2, 8, 17}) {
+                TransitionGenerationPlan.TerrainSample sample = plan.terrainSampleAt(blockX, blockZ);
+                for (int blockY = -16; blockY <= 48; blockY++) {
+                    double weight = GenerationBlend.newEpochWeight(
+                            Math.max(0D, sample.distanceToHistoricalTerrain() - 1D), Math.max(1, plan.widthBlocks() - 1));
+                    Optional<String> expected = sample.newEpochWeight() != 1D
+                            && GenerationBlend.usesHistoricalMaterial(blockX, blockY, blockZ, weight)
+                            ? sample.historicalPhysicalBiomeKeyAt(blockY) : Optional.empty();
+                    assertEquals(expected, plan.historicalPhysicalBiomeKeyAt(blockX, blockY, blockZ, sample));
+                    assertEquals(expected, plan.historicalPhysicalBiomeKeyAt(blockX, blockY, blockZ));
+                }
+            }
+        }
     }
 
     @Test
@@ -230,7 +245,7 @@ public class TransitionGenerationPlanTest {
                 for (int localX = 0; localX < 16; localX++) {
                     for (int localZ = 0; localZ < 16; localZ++) {
                         assertMatchesExhaustive(signatures, sampler, chunk.chunkX() * 16 + localX,
-                                chunk.chunkZ() * 16 + localZ, width * 2);
+                                chunk.chunkZ() * 16 + localZ, width);
                     }
                 }
             }
@@ -244,7 +259,7 @@ public class TransitionGenerationPlanTest {
                 heightSignature(0, -64, 80), heightSignature(0, 64, 100),
                 heightSignature(65, 0, 500)
         );
-        TransitionBoundarySampler sampler = new TransitionBoundarySampler(32, snapshot("radius-ties", signatures));
+        TransitionBoundarySampler sampler = new TransitionBoundarySampler(64, snapshot("radius-ties", signatures));
 
         assertMatchesExhaustive(signatures, sampler, 0, 0, 64);
         assertEquals(70D, sampler.sample(0, 0).historicalSurfaceHeight(), 0D);
@@ -267,7 +282,7 @@ public class TransitionGenerationPlanTest {
         TransitionBoundarySampler sampler = new TransitionBoundarySampler(16_384, snapshot);
         for (int x = 0; x < 16; x++) {
             for (int z = 0; z < 16; z++) {
-                assertMatchesExhaustive(signatures, sampler, x, z, 32_768);
+                assertMatchesExhaustive(signatures, sampler, x, z, 16_384);
             }
         }
         assertEquals(1L, sampler.candidateBuildCount());
@@ -459,7 +474,7 @@ public class TransitionGenerationPlanTest {
                         new TerrainBoundarySignature.VerticalLayout(0, 1, 1),
                         new TerrainBoundarySignature.BiomeEncoding(List.of("iris:test"), new short[]{0})
                 )
-        );
+        , BoundaryColumnGeometry.empty());
     }
 
     private static TerrainBoundarySignature biomeSignature(int blockX, int blockZ) {
@@ -471,7 +486,7 @@ public class TransitionGenerationPlanTest {
                                 List.of("iris:low", "iris:middle", "iris:high"),
                                 new short[]{0, 1, 2})
                 )
-        );
+        , BoundaryColumnGeometry.empty());
     }
 
     private static TerrainBoundarySignature heightSignature(int blockX, int blockZ, int height) {
@@ -481,6 +496,6 @@ public class TransitionGenerationPlanTest {
                         new TerrainBoundarySignature.VerticalLayout(0, 1, 1),
                         new TerrainBoundarySignature.BiomeEncoding(List.of("iris:test"), new short[]{0})
                 )
-        );
+        , BoundaryColumnGeometry.empty());
     }
 }

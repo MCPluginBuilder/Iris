@@ -20,8 +20,6 @@ package art.arcane.iris.engine;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
-import art.arcane.iris.engine.history.GenerationBlend;
-import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.image.IrisImageMapRuntime;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -33,16 +31,12 @@ import art.arcane.iris.util.project.stream.ProceduralStream;
 public class UpperDimensionContext implements DataProvider {
     private final DimensionTerrainContext terrainContext;
     private final ProceduralStream<Double> lowerHeightStream;
-    private final ProceduralStream<Double> unblendedLowerHeightStream;
-    private final TransitionGenerationPlan transitionPlan;
     private final CeilingLayout ceilingLayout;
 
     private UpperDimensionContext(DimensionTerrainContext terrainContext, Engine engine) {
         this.terrainContext = terrainContext;
         IrisComplex complex = engine.getComplex();
         lowerHeightStream = complex.getHeightStream();
-        unblendedLowerHeightStream = complex.getUnblendedNaturalHeightStream();
-        transitionPlan = complex.getTransitionGenerationPlan();
         ceilingLayout = new CeilingLayout(engine.getHeight(), engine.getDimension().getUpperDimensionGap());
     }
 
@@ -103,31 +97,11 @@ public class UpperDimensionContext implements DataProvider {
                 0D,
                 Math.min(ceilingLayout.height() - 1D, terrainContext.getNormalTerrainHeight(x, z))
         );
-        if (transitionPlan != null) {
-            TransitionGenerationPlan.TerrainSample sample = transitionPlan.terrainSampleAt(x, z);
-            if (sample.newEpochWeight() < 1D && sample.hasHistoricalSignature()) {
-                int targetLowerSurfaceY = (int) Math.min(
-                        ceilingLayout.height(),
-                        Math.round(unblendedLowerHeightStream.getDouble(x, z))
-                );
-                int targetSurfaceY = effectiveSurfaceY(depth, ceilingLayout, targetLowerSurfaceY);
-                double targetDepth = Math.max(0D, ceilingLayout.height() - 1D - targetSurfaceY);
-                depth = blendCeilingDepth(targetDepth, sample);
-            }
-        }
         int lowerSurfaceY = (int) Math.min(
                 ceilingLayout.height(),
                 Math.round(lowerHeightStream.getDouble(x, z))
         );
         return effectiveSurfaceY(depth, ceilingLayout, lowerSurfaceY);
-    }
-
-    static double blendCeilingDepth(double newDepth, TransitionGenerationPlan.TerrainSample sample) {
-        if (sample.newEpochWeight() == 1D || !sample.hasHistoricalSignature()) {
-            return newDepth;
-        }
-        return GenerationBlend.interpolate(
-                sample.historicalUpperCeilingDepth(), newDepth, sample.newEpochWeight());
     }
 
     static int effectiveSurfaceY(double depth, CeilingLayout layout, int lowerSurfaceY) {

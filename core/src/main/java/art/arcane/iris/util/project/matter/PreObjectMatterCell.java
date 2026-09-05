@@ -1,6 +1,7 @@
 package art.arcane.iris.util.project.matter;
 
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.volmlib.util.matter.MatterCavern;
 
 public record PreObjectMatterCell(
@@ -9,7 +10,9 @@ public record PreObjectMatterCell(
         boolean stringCaptured,
         String string,
         boolean cavernCaptured,
-        MatterCavern cavern
+        MatterCavern cavern,
+        boolean hydrologyCaptured,
+        HydrologyCaveCell hydrology
 ) {
     public PreObjectMatterCell {
         if (!blockCaptured && block != null) {
@@ -21,45 +24,60 @@ public record PreObjectMatterCell(
         if (!cavernCaptured && cavern != null) {
             throw new IllegalArgumentException("An uncaptured cavern cannot have a value");
         }
-        if (!blockCaptured && !stringCaptured && !cavernCaptured) {
+        if (!hydrologyCaptured && hydrology != null) {
+            throw new IllegalArgumentException("An uncaptured hydrology cell cannot have a value");
+        }
+        if (!blockCaptured && !stringCaptured && !cavernCaptured && !hydrologyCaptured) {
             throw new IllegalArgumentException("A pre-object cell must capture at least one value");
         }
     }
 
     public static PreObjectMatterCell block(PlatformBlockState value) {
-        return new PreObjectMatterCell(true, value, false, null, false, null);
+        return new PreObjectMatterCell(true, value, false, null, false, null, false, null);
     }
 
     public static PreObjectMatterCell string(String value) {
-        return new PreObjectMatterCell(false, null, true, value, false, null);
+        return new PreObjectMatterCell(false, null, true, value, false, null, false, null);
     }
 
     public static PreObjectMatterCell cavern(MatterCavern value) {
-        return new PreObjectMatterCell(false, null, false, null, true, value);
+        return new PreObjectMatterCell(false, null, false, null, true, value, false, null);
     }
 
     public PreObjectMatterCell captureBlock(PlatformBlockState value) {
         if (blockCaptured) {
             return this;
         }
-        return new PreObjectMatterCell(true, value, stringCaptured, string, cavernCaptured, cavern);
+        return new PreObjectMatterCell(true, value, stringCaptured, string, cavernCaptured, cavern, hydrologyCaptured, hydrology);
     }
 
     public PreObjectMatterCell captureString(String value) {
         if (stringCaptured) {
             return this;
         }
-        return new PreObjectMatterCell(blockCaptured, block, true, value, cavernCaptured, cavern);
+        return new PreObjectMatterCell(blockCaptured, block, true, value, cavernCaptured, cavern, hydrologyCaptured, hydrology);
     }
 
     public PreObjectMatterCell captureCavern(MatterCavern value) {
         if (cavernCaptured) {
             return this;
         }
-        return new PreObjectMatterCell(blockCaptured, block, stringCaptured, string, true, value);
+        return new PreObjectMatterCell(blockCaptured, block, stringCaptured, string, true, value, hydrologyCaptured, hydrology);
+    }
+
+    public static PreObjectMatterCell hydrology(HydrologyCaveCell value) {
+        return new PreObjectMatterCell(false, null, false, null, false, null, true, value);
+    }
+
+    public PreObjectMatterCell captureHydrology(HydrologyCaveCell value) {
+        return hydrologyCaptured ? this : new PreObjectMatterCell(blockCaptured, block,
+                stringCaptured, string, cavernCaptured, cavern, true, value);
     }
 
     public boolean captures(Class<?> type) {
+        if (type == HydrologyCaveCell.class) {
+            return hydrologyCaptured;
+        }
         if (type == PlatformBlockState.class) {
             return blockCaptured;
         }
@@ -83,6 +101,6 @@ public record PreObjectMatterCell(
         if (type == String.class) {
             return (T) string;
         }
-        return (T) cavern;
+        return type == HydrologyCaveCell.class ? (T) hydrology : (T) cavern;
     }
 }

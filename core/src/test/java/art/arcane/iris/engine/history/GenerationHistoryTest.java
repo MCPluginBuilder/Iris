@@ -1,12 +1,10 @@
 package art.arcane.iris.engine.history;
 
-import art.arcane.iris.util.nbt.common.mca.MCAFile;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
@@ -19,13 +17,12 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public final class GenerationHistoryTest {
-    private static final int SECTOR_BYTES = 4_096;
-
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -106,18 +103,16 @@ public final class GenerationHistoryTest {
     }
 
     @Test
-    public void openRejectsUnsupportedGeneratorAndRngVersions() throws Exception {
+    public void historicalExecutionVersionsDoNotPreventOpeningSavedTerrain() throws Exception {
         Path abiWorld = temporaryFolder.newFolder("abi-world").toPath();
         Path abiPack = createPack("abi-pack", "alpha");
         initializeRawHistory(abiWorld, abiPack, 2, GenerationKernelRegistry.standard().current().rngVersion());
-        IOException abiFailure = assertThrows(IOException.class, () -> GenerationHistory.open(abiWorld));
-        assertTrue(abiFailure.getMessage().contains("generation ABI"));
+        assertEquals(2, GenerationHistory.open(abiWorld).activeEpoch().generatorAbi());
 
         Path rngWorld = temporaryFolder.newFolder("rng-world").toPath();
         Path rngPack = createPack("rng-pack", "alpha");
         initializeRawHistory(rngWorld, rngPack, GenerationKernelRegistry.standard().current().generatorAbi(), 2);
-        IOException rngFailure = assertThrows(IOException.class, () -> GenerationHistory.open(rngWorld));
-        assertTrue(rngFailure.getMessage().contains("RNG/seed derivation version"));
+        assertEquals(2, GenerationHistory.open(rngWorld).activeEpoch().rngVersion());
     }
 
     @Test
@@ -426,7 +421,7 @@ public final class GenerationHistoryTest {
     }
 
     @Test
-    public void retainedAbiRegistryReopensEveryHistoricalEpoch() throws Exception {
+    public void savedHistoryOpensWithoutRetainingItsExecutableKernel() throws Exception {
         Path world = temporaryFolder.newFolder("retained-abi-world").toPath();
         Path packA = createPack("retained-abi-pack-a", "alpha");
         Path packB = createPack("retained-abi-pack-b", "beta");
@@ -478,10 +473,49 @@ public final class GenerationHistoryTest {
         );
         history.promotePending(List.of());
 
-        assertThrows(IOException.class, () -> GenerationHistory.open(world));
+        assertEquals(2, GenerationHistory.open(world).activeEpoch().generatorAbi());
         GenerationHistory reopened = GenerationHistory.open(world, kernels);
         assertEquals(2, reopened.activeEpoch().generatorAbi());
         assertEquals(1, reopened.manifest().activation(1L).orElseThrow().activationId());
+    }
+
+    @Test
+    public void changedBuildExpandsFromSavedTerrainWithoutTheOldFactory() throws Exception {
+        Path world = temporaryFolder.newFolder("build-upgrade-world").toPath();
+        Path pack = createPack("build-upgrade-pack", "alpha");
+        GenerationKernelRegistry.Version oldVersion = new GenerationKernelRegistry.Version(101, 1, 1);
+        GenerationKernelRegistry.Version newVersion = new GenerationKernelRegistry.Version(102, 1, 1);
+        GenerationKernelRegistry firstBuild = singleKernel(oldVersion, "a");
+        GenerationKernelRegistry secondBuild = singleKernel(newVersion, "b");
+        GenerationHistory.create(world, pack, fingerprint(pack), 42L,
+                contract(), GenerationRegistryContract.empty(), oldVersion, firstBuild);
+        Path region = Files.createDirectories(world.resolve("region")).resolve("r.0.0.mca");
+        SavedTerrainTestRegion.write(region, new int[][]{{0, 0}});
+        byte[] savedBlocks = Files.readAllBytes(region);
+
+        GenerationHistory upgraded = GenerationHistory.open(world, secondBuild);
+        assertFalse(upgraded.usesCurrentGenerator());
+        upgraded.prepareCurrentGenerator(32);
+        assertTrue(upgraded.usesCurrentGenerator());
+        assertEquals(2L, upgraded.activeActivation().activationId());
+        assertEquals(oldVersion, upgraded.resolveEpoch(0, 0).kernelVersion());
+        try (GenerationHistory.GenerationStage generation = upgraded.openStage(1, 0)) {
+            assertEquals(newVersion, generation.epoch().kernelVersion());
+        }
+        assertTrue(upgraded.terrainSignatures(2L).size() > 0);
+        assertArrayEquals(savedBlocks, Files.readAllBytes(region));
+        GenerationHistory reopened = GenerationHistory.open(world, secondBuild);
+        assertTrue(reopened.usesCurrentGenerator());
+        assertEquals(2L, reopened.activeActivation().activationId());
+    }
+
+    private static GenerationKernelRegistry singleKernel(GenerationKernelRegistry.Version version, String fingerprint) {
+        return new GenerationKernelRegistry(version, List.of(new GenerationKernelRegistry.Kernel(
+                version.generatorAbi(), fingerprint.repeat(64),
+                Map.of(new GenerationKernelRegistry.AlgorithmVersion(version.rngVersion(), version.seedDerivationVersion()),
+                        (engine, transition) -> {
+                            throw new AssertionError("Saved terrain capture invoked a generator factory");
+                        }))));
     }
 
     @Test
@@ -548,7 +582,7 @@ public final class GenerationHistoryTest {
     }
 
     @Test
-    public void pendingCutoverRejectsOwnershipForUngeneratedChunks() throws Exception {
+    public void pendingCutoverDiscardsOutgoingOwnershipForUnstoredChunks() throws Exception {
         Path world = temporaryFolder.newFolder("pending-forged-world").toPath();
         Path packA = createPack("pending-forged-pack-a", "alpha");
         Path packB = createPack("pending-forged-pack-b", "beta");
@@ -558,11 +592,16 @@ public final class GenerationHistoryTest {
         assertTrue(forged.assign(9, 9, 1L));
         forged.persist();
 
-        assertThrows(IOException.class, () -> GenerationHistory.open(world));
+        GenerationHistory recovered = GenerationHistory.open(world);
+        assertEquals(1, recovered.explicitChunkCount());
+        recovered.promotePending(List.of());
+        assertEquals(0, recovered.explicitChunkCount());
+        assertEquals(2L, recovered.resolveActivation(9, 9).activationId());
+        assertEquals(0, GenerationHistory.open(world).explicitChunkCount());
     }
 
     @Test
-    public void sealedGenerationClaimSurvivesCrashBeforeChunkAllocationAndJoinsCutoverOwnership() throws Exception {
+    public void sealedGenerationClaimWithoutStoredTerrainIsDiscardedAfterCrash() throws Exception {
         Path world = temporaryFolder.newFolder("semantic-claim-cutover-world").toPath();
         Path packA = createPack("semantic-claim-cutover-pack-a", "alpha");
         Path packB = createPack("semantic-claim-cutover-pack-b", "beta");
@@ -592,14 +631,76 @@ public final class GenerationHistoryTest {
             }
         }
         GenerationHistory recovered = GenerationHistory.open(recoveredWorld);
-        recovered.promotePending(signaturesForChunks(new int[][]{{9, 9}}));
+        recovered.promotePending(List.of());
 
-        assertEquals(1L, recovered.resolveActivation(9, 9).activationId());
+        assertEquals(2L, recovered.resolveActivation(9, 9).activationId());
         assertEquals(2L, recovered.resolveActivation(10, 9).activationId());
-        assertEquals(1, recovered.explicitChunkCount());
+        assertEquals(0, recovered.explicitChunkCount());
         GenerationHistory reopened = GenerationHistory.open(recoveredWorld);
-        assertEquals(Optional.of(claim), reopened.semantics(9, 9));
-        assertEquals(1L, reopened.resolveActivation(9, 9).activationId());
+        assertTrue(reopened.semantics(9, 9).isEmpty());
+        assertEquals(2L, reopened.resolveActivation(9, 9).activationId());
+        try (GenerationHistory.GenerationStage replacement = reopened.openStage(9, 9)) {
+            assertTrue(reopened.claimGeneratedSemantics(replacement,
+                    ChunkGenerationSemantics.builder(9, 9, 2L).addObject("replacement").seal().build()));
+        }
+    }
+
+    @Test
+    public void coldRecoveryUsesNativeNoiseStatusAsTheMinimumStoredTerrain() throws Exception {
+        Path world = temporaryFolder.newFolder("native-status-recovery-world").toPath();
+        createHistory(world, createPack("native-status-recovery-pack", "alpha"));
+        Path regions = Files.createDirectories(world.resolve("region"));
+        SavedTerrainTestRegion.write(regions.resolve("r.0.0.mca"), new int[][]{{0, 0}}, "minecraft:noise");
+        SavedTerrainTestRegion.write(regions.resolve("r.1.0.mca"), new int[][]{{32, 0}}, "minecraft:biomes");
+        GenerationSemanticIndex index = GenerationSemanticIndex.loadRequired(world);
+        index.claimAndPersist(ChunkGenerationSemantics.builder(0, 0, 1L).addObject("saved-noise").seal().build());
+        index.claimAndPersist(ChunkGenerationSemantics.builder(32, 0, 1L).addObject("unsaved-terrain").seal().build());
+
+        GenerationHistory recovered = GenerationHistory.open(world);
+        recovered.prepareCurrentGenerator(64);
+
+        assertTrue(recovered.semantics(0, 0).isPresent());
+        assertTrue(recovered.semantics(32, 0).isEmpty());
+        assertEquals("minecraft:biomes", SavedTerrainChunk.readStatus(world, 32, 0));
+        assertEquals(0, recovered.explicitChunkCount());
+        GenerationHistory reopened = GenerationHistory.open(world);
+        assertTrue(reopened.semantics(0, 0).isPresent());
+        assertTrue(reopened.semantics(32, 0).isEmpty());
+    }
+
+    @Test
+    public void coldRecoveryKeepsStoredClaimsAndHistoricalMetadataButReleasesOldPacks() throws Exception {
+        Path world = temporaryFolder.newFolder("cold-recovery-world").toPath();
+        Path packA = createPack("cold-recovery-a", "alpha");
+        Path packB = createPack("cold-recovery-b", "beta");
+        GenerationHistory initial = createHistory(world, packA);
+        String oldEpoch = initial.activeEpoch().epochId();
+        Path region = Files.createDirectories(world.resolve("region")).resolve("r.0.0.mca");
+        writeRegion(region, new int[][]{{0, 0}});
+        GenerationSemanticIndex initialIndex = GenerationSemanticIndex.loadRequired(world);
+        initialIndex.claimAndPersist(ChunkGenerationSemantics.builder(0, 0, 1L).addObject("historical").seal().build());
+        GenerationHistory first = GenerationHistory.open(world);
+        stage(first, packB);
+        first.promotePending(signaturesForChunks(new int[][]{{0, 0}}));
+        GenerationSemanticIndex index = GenerationSemanticIndex.loadRequired(world);
+        index.claimAndPersist(ChunkGenerationSemantics.builder(1, 0, 2L).addObject("saved").seal().build());
+        index.claimAndPersist(ChunkGenerationSemantics.builder(2, 0, 2L).addObject("orphan").seal().build());
+        writeRegion(region, new int[][]{{1, 0}});
+
+        GenerationHistory recovered = GenerationHistory.open(world);
+        recovered.prepareCurrentGenerator(64);
+
+        assertEquals(2L, recovered.activeActivation().activationId());
+        assertEquals(1, recovered.explicitChunkCount());
+        assertTrue(recovered.semantics(0, 0).isPresent());
+        assertTrue(recovered.semantics(1, 0).isPresent());
+        assertTrue(recovered.semantics(2, 0).isEmpty());
+        assertFalse(Files.exists(recovered.paths().packRoot(oldEpoch)));
+        assertTrue(Files.isDirectory(recovered.activePackRoot()));
+        assertTrue(Files.isDirectory(packA));
+        GenerationHistory reopened = GenerationHistory.open(world);
+        assertEquals(1L, reopened.resolveActivation(0, 0).activationId());
+        assertTrue(reopened.semantics(2, 0).isEmpty());
     }
 
     @Test
@@ -773,17 +874,10 @@ public final class GenerationHistoryTest {
                                 new short[]{0, 0}
                         )
                 )
-        );
+        , BoundaryColumnGeometry.empty());
     }
 
     private static void writeRegion(Path file, int[][] chunks) throws IOException {
-        try (RandomAccessFile output = new RandomAccessFile(file.toFile(), "rw")) {
-            output.setLength((long) (2 + chunks.length) * SECTOR_BYTES);
-            for (int index = 0; index < chunks.length; index++) {
-                int chunkIndex = MCAFile.getChunkIndex(chunks[index][0], chunks[index][1]);
-                output.seek((long) chunkIndex * Integer.BYTES);
-                output.writeInt((2 + index) << Byte.SIZE | 1);
-            }
-        }
+        SavedTerrainTestRegion.write(file, chunks);
     }
 }

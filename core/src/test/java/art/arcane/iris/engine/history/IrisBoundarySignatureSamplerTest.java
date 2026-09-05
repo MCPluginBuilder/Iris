@@ -1,95 +1,76 @@
 package art.arcane.iris.engine.history;
 
-import art.arcane.iris.engine.DimensionStackContext;
-import art.arcane.iris.engine.DimensionStackLayout;
-import art.arcane.iris.engine.DimensionTerrainContext;
-import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.IrisEngine;
-import art.arcane.iris.engine.UpperDimensionContext;
-import art.arcane.iris.engine.object.IrisBiome;
-import art.arcane.iris.engine.object.IrisWorld;
-import art.arcane.iris.util.project.stream.ProceduralStream;
-import art.arcane.volmlib.util.math.RNG;
+import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import org.junit.Test;
 
-import java.util.Optional;
-import java.util.OptionalInt;
+import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyDouble;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.same;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class IrisBoundarySignatureSamplerTest {
     @Test
-    public void recordsTheEffectiveCeilingInInternalCoordinatesAndBiomesInWorldCoordinates() throws Exception {
-        IrisEngine engine = engine();
-        UpperDimensionContext upper = mock(UpperDimensionContext.class);
-        when(engine.getUpperContext()).thenReturn(upper);
-        when(upper.getEffectiveSurfaceY(-17, 8)).thenReturn(200);
-
-        TerrainBoundarySignature signature = IrisBoundarySignatureSampler.INSTANCE.sample(engine, -17, 8);
-
-        assertEquals(OptionalInt.of(55), signature.upperCeilingDepth());
-        assertEquals(64, signature.oceanFloorHeight());
-        assertEquals(-64, signature.sampleY(0));
-        assertEquals(188, signature.sampleY(63));
-        verify(upper).getEffectiveSurfaceY(-17, 8);
-    }
-
-    @Test
-    public void recordsAbsentUpperMassWithAndWithoutAnUpperContext() throws Exception {
-        IrisEngine engine = engine();
-        assertTrue(IrisBoundarySignatureSampler.INSTANCE.sample(engine, -17, 8).upperCeilingDepth().isEmpty());
-        UpperDimensionContext upper = mock(UpperDimensionContext.class);
-        when(engine.getUpperContext()).thenReturn(upper);
-        when(upper.getEffectiveSurfaceY(-17, 8)).thenReturn(256);
-        assertTrue(IrisBoundarySignatureSampler.INSTANCE.sample(engine, -17, 8).upperCeilingDepth().isEmpty());
-    }
-
-    @Test
-    public void recordsTheOwningStackLayerBiomeAtEachVerticalSample() throws Exception {
-        IrisEngine engine = engine();
-        IrisComplex complex = engine.getComplex();
-        when(complex.historicalPhysicalBiomeKeyAt(anyInt(), anyInt(), anyInt()))
-                .thenReturn(Optional.empty());
-        DimensionStackContext stackContext = mock(DimensionStackContext.class);
-        DimensionStackLayout layout = mock(DimensionStackLayout.class);
-        DimensionStackLayout.Layer layer = mock(DimensionStackLayout.Layer.class);
-        DimensionTerrainContext terrainContext = mock(DimensionTerrainContext.class);
-        IrisBiome biome = mock(IrisBiome.class);
-        when(engine.getDimensionStackContext()).thenReturn(stackContext);
-        when(stackContext.getLayout(-17, 8)).thenReturn(layout);
-        when(layout.layerAt(anyInt())).thenReturn(layer);
-        when(layer.terrainContext()).thenReturn(terrainContext);
-        when(layer.biome()).thenReturn(biome);
-        when(biome.getSkyBiomeKey(any(RNG.class), same(engine), anyDouble(), anyDouble(), anyDouble()))
-                .thenReturn("minecraft:forest");
-
-        TerrainBoundarySignature signature = IrisBoundarySignatureSampler.INSTANCE.sample(engine, -17, 8);
-
-        assertEquals("minecraft:forest", signature.biomeAtSample(0));
-        assertEquals("minecraft:forest", signature.biomeAtSample(63));
-    }
-
-    private static IrisEngine engine() {
+    public void capturesActualPlatformChunkOnceAndCheckpointsAfterSampling() throws Exception {
         IrisEngine engine = mock(IrisEngine.class);
-        IrisComplex complex = mock(IrisComplex.class);
-        when(engine.getComplex()).thenReturn(complex);
-        IrisWorld world = mock(IrisWorld.class);
-        when(world.getRawWorldSeed()).thenReturn(1337L);
-        when(engine.getWorld()).thenReturn(world);
-        when(engine.getHeight()).thenReturn(256);
-        when(engine.getMinHeight()).thenReturn(-64);
-        when(complex.getHeightStream()).thenReturn(ProceduralStream.ofDouble((x, z) -> 64D));
-        when(complex.getRiverWaterSurfaceStream()).thenReturn(ProceduralStream.ofDouble((x, z) -> 64D));
-        when(complex.historicalPhysicalBiomeKeyAt(anyInt(), anyInt(), anyInt()))
-                .thenReturn(Optional.of("minecraft:plains"));
-        return engine;
+        EnginePlatformHooks hooks = mock(EnginePlatformHooks.class);
+        when(engine.getPlatformHooks()).thenReturn(hooks);
+        SavedTerrainChunk terrain = terrain();
+        when(hooks.captureSavedTerrainChunk(engine, -2, 0)).thenReturn(CompletableFuture.completedFuture(terrain));
+        when(hooks.flushSavedTerrainCapture(engine)).thenReturn(CompletableFuture.completedFuture(null));
+        try (TerrainBoundarySignatureStore.SignatureSampler capture = IrisBoundarySignatureSampler.INSTANCE.open(engine)) {
+            assertSame(terrain.column(-17, 8), capture.sample(-17, 8));
+            assertEquals("example:physical", capture.sample(-32, 8).biomeAtSample(0));
+            verify(hooks, never()).flushSavedTerrainCapture(engine);
+        }
+        verify(hooks).captureSavedTerrainChunk(engine, -2, 0);
+        verify(hooks).flushSavedTerrainCapture(engine);
+        verify(engine, never()).getComplex();
+    }
+
+    @Test
+    public void platformCaptureAndSaveFailuresReachTheCaller() throws Exception {
+        IrisEngine engine = mock(IrisEngine.class);
+        EnginePlatformHooks hooks = mock(EnginePlatformHooks.class);
+        when(engine.getPlatformHooks()).thenReturn(hooks);
+        when(hooks.captureSavedTerrainChunk(engine, -2, 0))
+                .thenReturn(CompletableFuture.failedFuture(new IOException("capture failure")));
+        when(hooks.flushSavedTerrainCapture(engine))
+                .thenReturn(CompletableFuture.failedFuture(new IOException("save failure")));
+        TerrainBoundarySignatureStore.SignatureSampler capture = IrisBoundarySignatureSampler.INSTANCE.open(engine);
+        assertThrows(IOException.class, () -> capture.sample(-17, 8));
+        assertThrows(IOException.class, capture::close);
+        verify(hooks).flushSavedTerrainCapture(engine);
+    }
+
+    @Test
+    public void neverWaitsOnThePlatformTickThread() throws Exception {
+        IrisEngine engine = mock(IrisEngine.class);
+        EnginePlatformHooks hooks = mock(EnginePlatformHooks.class);
+        when(engine.getPlatformHooks()).thenReturn(hooks);
+        when(hooks.isMainThread()).thenReturn(true);
+        assertThrows(IOException.class, () -> IrisBoundarySignatureSampler.INSTANCE.open(engine));
+        assertThrows(IOException.class, () -> IrisBoundarySignatureSampler.checkpoint(engine));
+        verify(hooks, never()).flushSavedTerrainCapture(engine);
+    }
+
+    private static SavedTerrainChunk terrain() throws IOException {
+        return SavedTerrainChunk.captureBoundary(-2, 0, -16, 16, "minecraft:noise", new SavedTerrainChunk.VoxelSource() {
+            @Override
+            public BoundaryColumnGeometry.Voxel voxel(int localX, int y, int localZ) {
+                return new BoundaryColumnGeometry.Voxel("minecraft:stone", BoundaryColumnGeometry.Phase.SOLID, "", false);
+            }
+
+            @Override
+            public String biome(int localX, int y, int localZ) {
+                return "example:physical";
+            }
+        });
     }
 }

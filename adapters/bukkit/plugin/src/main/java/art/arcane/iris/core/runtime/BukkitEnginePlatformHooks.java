@@ -23,6 +23,7 @@ import art.arcane.iris.core.ServerConfigurator;
 import art.arcane.iris.core.datapack.DatapackIngestService;
 import art.arcane.iris.core.events.IrisEngineHotloadEvent;
 import art.arcane.iris.core.gui.PregeneratorJob;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.project.IrisProject;
 import art.arcane.iris.core.project.IrisCodeWorkspace;
@@ -30,6 +31,9 @@ import art.arcane.iris.core.service.IrisApiEventSVC;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.history.SavedTerrainChunk;
+
+import java.util.concurrent.CompletableFuture;
 import art.arcane.iris.engine.framework.EngineMode;
 import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.NativeStructureVolume;
@@ -48,18 +52,33 @@ import org.bukkit.WorldBorder;
 
 public final class BukkitEnginePlatformHooks implements EnginePlatformHooks {
     @Override
+    public CompletableFuture<Void> flushSavedTerrainCapture(Engine engine) {
+        return INMS.get().flushSavedTerrainCapture(BukkitWorldBinding.world(engine.getWorld()));
+    }
+
+    @Override
+    public CompletableFuture<SavedTerrainChunk> captureSavedTerrainChunk(Engine engine, int chunkX, int chunkZ) {
+        return BukkitSavedTerrainCapture.capture(engine, chunkX, chunkZ);
+    }
+
+    @Override
     public KList<NativeStructureVolume> nativeStructureVolumes(Engine engine, int minX, int minZ, int maxX, int maxZ) {
         return INMS.get().nativeStructureVolumes(engine, minX, minZ, maxX, maxZ);
     }
 
     @Override
     public void refreshWorkspace(Engine engine) {
-        new IrisCodeWorkspace(new IrisProject(engine.getData().getDataFolder())).updateWorkspace();
+        new IrisCodeWorkspace(new IrisProject(engine.getPackSource().toFile())).updateWorkspace();
     }
 
     @Override
     public void refreshDatapackWorkspace(Engine engine) {
-        DatapackIngestService.refreshWorkspace(engine.getData());
+        IrisData data = IrisData.openRuntime(engine.getPackSource().toFile());
+        try {
+            DatapackIngestService.refreshWorkspace(data);
+        } finally {
+            data.close();
+        }
     }
 
     @Override

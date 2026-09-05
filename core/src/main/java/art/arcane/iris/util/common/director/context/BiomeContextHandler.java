@@ -19,9 +19,12 @@
 package art.arcane.iris.util.common.director.context;
 
 import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.util.common.director.DirectorContextHandler;
+import art.arcane.iris.util.common.director.DirectorExecutor;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 
 public class BiomeContextHandler implements DirectorContextHandler<IrisBiome> {
@@ -33,7 +36,13 @@ public class BiomeContextHandler implements DirectorContextHandler<IrisBiome> {
         if (sender.isPlayer()
                 && IrisToolbelt.isIrisWorld(sender.player().getWorld())
                 && IrisToolbelt.access(sender.player().getWorld()).getEngine() != null) {
-            return EngineBukkitOps.getBiomeOrMantle(IrisToolbelt.access(sender.player().getWorld()).getEngine(), sender.player().getLocation());
+            Engine engine = IrisToolbelt.access(sender.player().getWorld()).getEngine();
+            IrisData source = DirectorExecutor.authoringData(engine);
+            if (source == null) {
+                return null;
+            }
+            IrisBiome biome = EngineBukkitOps.getBiomeOrMantle(engine, sender.player().getLocation());
+            return biome == null ? null : source.getBiomeLoader().load(biome.getLoadKey());
         }
 
         return null;

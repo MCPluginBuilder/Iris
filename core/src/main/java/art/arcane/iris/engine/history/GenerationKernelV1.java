@@ -20,7 +20,7 @@ import java.nio.file.Path;
 
 final class GenerationKernelV1 implements GenerationKernelRegistry.RuntimeFactory {
     static final String IMPLEMENTATION_FINGERPRINT =
-            GenerationKernelSourceSeal.requireFingerprint(1, GenerationKernelV1.class);
+            GenerationBuildRevision.requireFingerprint(1, GenerationKernelV1.class);
 
     @Override
     public SeedManager createSeedManager(long worldSeed) {
@@ -125,7 +125,7 @@ final class GenerationKernelV1 implements GenerationKernelRegistry.RuntimeFactor
             return;
         }
         IrisDimensionStackActuator dimensionStack = new IrisDimensionStackActuator(engine);
-        mode.registerStage((x, z, blocks, biomes, multicore, chunkContext) ->
+        mode.registerTerrainStage((x, z, blocks, biomes, multicore, chunkContext) ->
                 dimensionStack.actuate(x, z, blocks, multicore, chunkContext));
         IrisCustomModifier stackCustom = new IrisCustomModifier(engine);
         mode.registerStage((x, z, blocks, biomes, multicore, chunkContext) ->

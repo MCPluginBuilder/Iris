@@ -36,6 +36,29 @@ public final class BukkitChunkGeneratorGenerationHistoryContractTest {
     }
 
     @Test
+    public void studioLoadsItsSnapshotBeforeAnyMutablePackFallback() throws IOException {
+        String target = method(source(), "public EngineTarget getTarget()");
+        String historyTarget = method(source(), "private EngineTarget loadActiveGenerationHistoryTarget()");
+
+        assertBefore(target, "if (generationHistory != null)", "IrisData.openRuntime(dataLocation)");
+        assertBefore(target, "return loadActiveGenerationHistoryTarget();", "IrisData.openRuntime(dataLocation)");
+        assertBefore(historyTarget, "generationHistory.activePackRoot()", "IrisData.openRuntime(packRoot.toFile())");
+    }
+
+    @Test
+    public void studioWatchAndHotloadReadAuthoringSourceWithoutChangingTheRuntimeSnapshot() throws IOException {
+        String source = source();
+        String constructor = method(source, "public BukkitChunkGenerator(");
+        String createEngine = method(source, "private IrisEngine createEngine(EngineTarget engineTarget)");
+
+        assertTrue(constructor.contains("new ReactiveFolder(\n                dataLocation,"));
+        assertTrue(constructor.contains("new KList<>(\".iob\", \".json\", \".png\")"));
+        assertTrue(createEngine.contains("if (studio)"));
+        assertBefore(createEngine, "new IrisEngine(", "configureStudioGenerationSource(dataLocation.toPath())");
+        assertBefore(createEngine, "configureStudioGenerationSource(dataLocation.toPath())", "return createdEngine;");
+    }
+
+    @Test
     public void publicBukkitTerrainClaimsSemanticsOnlyAfterSuccessfulApplication() throws IOException {
         String generateNoise = method(
                 source(),

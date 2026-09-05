@@ -20,6 +20,9 @@ package art.arcane.iris.engine.object;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.history.TerrainBoundarySignature;
+
+import java.util.Optional;
 import art.arcane.iris.spi.PlatformBlockState;
 import org.jetbrains.annotations.Nullable;
 
@@ -56,6 +59,11 @@ public interface IObjectPlacer {
             return getFluidHeight();
         }
         int coordinateShift = getFluidHeight() - engine.getDimension().getFluidHeight();
+        Optional<TerrainBoundarySignature> resolved = engine.getComplex().resolvedTerrainColumn(x, z);
+        if (resolved.isPresent()) {
+            return resolved.get().fluidHeight().isPresent()
+                    ? coordinateShift + resolved.get().fluidHeight().getAsInt() : -1;
+        }
         return coordinateShift + (int) Math.round(
                 engine.getComplex().getRiverWaterSurfaceStream().get(x, z)
         );

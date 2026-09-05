@@ -632,13 +632,16 @@ public final class GenerationBoundaryStore {
         }
 
         @Override
-        public synchronized boolean contains(int chunkX, int chunkZ) throws IOException {
+        public boolean contains(int chunkX, int chunkZ) throws IOException {
             long regionKey = packRegion(chunkX >> 5, chunkZ >> 5);
             String hash = shardHashes.get(regionKey);
             if (hash == null) {
                 return false;
             }
-            byte[] mask = load(regionKey, hash);
+            byte[] mask;
+            synchronized (this) {
+                mask = load(regionKey, hash);
+            }
             int localIndex = (Math.floorMod(chunkZ, REGION_SIDE) << 5)
                     | Math.floorMod(chunkX, REGION_SIDE);
             return (mask[localIndex >>> 3] & (1 << (localIndex & 7))) != 0;

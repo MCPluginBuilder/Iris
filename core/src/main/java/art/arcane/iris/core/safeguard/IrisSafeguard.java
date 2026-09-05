@@ -1,5 +1,6 @@
 package art.arcane.iris.core.safeguard;
 
+import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.core.safeguard.task.Diagnostic;
 import art.arcane.iris.core.safeguard.task.Task;
 import art.arcane.iris.core.safeguard.task.Tasks;
@@ -24,6 +25,7 @@ public final class IrisSafeguard {
     }
 
     public static void execute() {
+        IrisStartupValidation.beginRuntimeValidation();
         List<Task> tasks = Tasks.getTasks();
         LinkedHashMap<Task, ValueWithDiagnostics<Mode>> resultValues = new LinkedHashMap<>(tasks.size());
         LinkedHashMap<String, String> contextValues = new LinkedHashMap<>(tasks.size());
@@ -36,9 +38,13 @@ public final class IrisSafeguard {
             try {
                 result = task.run();
             } catch (Throwable e) {
+                boolean injectionFailure = "injection".equals(task.getId());
+                if (injectionFailure) {
+                    IrisStartupValidation.markRuntimeInvalid("Iris runtime injection failed. Resolve the startup errors and restart the server.");
+                }
                 IrisLogging.reportError(e);
                 result = new ValueWithDiagnostics<>(
-                        Mode.WARNING,
+                        injectionFailure ? Mode.UNSTABLE : Mode.WARNING,
                         new Diagnostic(Diagnostic.Logger.ERROR, "Error while running task " + task.getId(), e)
                 );
             }

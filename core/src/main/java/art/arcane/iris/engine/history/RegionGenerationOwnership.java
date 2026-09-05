@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.zip.CRC32;
+import java.util.Set;
 
 final class RegionGenerationOwnership {
     static final int CHUNKS_PER_SIDE = 32;
@@ -200,6 +201,27 @@ final class RegionGenerationOwnership {
         assignmentCount++;
         dirty = true;
         return true;
+    }
+
+    synchronized int discardUnstoredClaims(WorldChunkInventory stored, Set<Long> activationIds) {
+        int removed = 0;
+        for (int localZ = 0; localZ < CHUNKS_PER_SIDE; localZ++) {
+            for (int localX = 0; localX < CHUNKS_PER_SIDE; localX++) {
+                int index = chunkIndex(localX, localZ);
+                if (activations[index] == 0L || !activationIds.contains(activations[index])) {
+                    continue;
+                }
+                int chunkX = (regionX << 5) + localX;
+                int chunkZ = (regionZ << 5) + localZ;
+                if (!stored.contains(chunkX, chunkZ)) {
+                    activations[index] = 0L;
+                    assignmentCount--;
+                    removed++;
+                }
+            }
+        }
+        dirty |= removed > 0;
+        return removed;
     }
 
     synchronized boolean persist(Path directory) throws IOException {

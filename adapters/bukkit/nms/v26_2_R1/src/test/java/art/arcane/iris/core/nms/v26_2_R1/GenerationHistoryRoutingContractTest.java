@@ -43,6 +43,9 @@ public final class GenerationHistoryRoutingContractTest {
         assertBefore(noise, "openHistoryRoute(", "requireGenerationLease(");
         assertTrue(count(noise, "openHistoryRuntimeScope(route)") >= 2);
         assertBefore(noise, ".thenApply(filled ->", "pipeline.whenComplete(");
+        assertBefore(noise, "pipeline.whenComplete(", "lease.detachThread()");
+        assertBefore(noise, "lease.detachThread()", "route.detachThread()");
+        assertBefore(noise, "route.detachThread()", "return completion;");
         assertTrue(noise.contains("closeNoisePipelineResources(\n                        failure, lease, route, stage)"));
     }
 

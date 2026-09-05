@@ -1,5 +1,6 @@
 package art.arcane.iris.engine.history;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
@@ -27,7 +28,7 @@ final class TransitionBoundarySampler {
             throw new IllegalArgumentException("Terrain transition width must be positive");
         }
         this.terrainWidth = terrainWidth;
-        this.searchWidth = Math.multiplyExact(terrainWidth, 2);
+        this.searchWidth = terrainWidth;
         this.signatures = Objects.requireNonNull(signatures, "Terrain boundary signatures");
         this.chunkCandidates = new LinkedHashMap<>(MAXIMUM_CACHED_CHUNKS, 0.75F, true);
         this.cache = ThreadLocal.withInitial(ChunkCache::new);
@@ -54,6 +55,34 @@ final class TransitionBoundarySampler {
         );
         chunkCache.samples[index] = sampled;
         return sampled;
+    }
+
+    BoundaryGeometryInfluence geometryAt(int blockX, int blockZ) {
+        CandidateIndex candidates = candidatesForChunk(
+                Math.floorDiv(blockX, GenerationBoundary.CHUNK_SIZE),
+                Math.floorDiv(blockZ, GenerationBoundary.CHUNK_SIZE));
+        Nearest nearest = candidates.nearest(blockX, blockZ, square(terrainWidth));
+        if (nearest.count == 0 || nearest.distancesSquared[0] >= square(terrainWidth)) {
+            return BoundaryGeometryInfluence.none();
+        }
+        double distance = Math.sqrt(nearest.distancesSquared[0]);
+        double weight = GenerationBlend.newEpochWeight(Math.max(0D, distance - 1D),
+                Math.max(1, terrainWidth - 1));
+        int count = nearest.distancesSquared[0] <= 1D ? 1 : nearest.count;
+        double total = 0D;
+        for (int index = 0; index < count; index++) {
+            total += 1D / Math.max(1D, nearest.distancesSquared[index]);
+        }
+        ArrayList<BoundaryGeometryInfluence.Contribution> contributions = new ArrayList<>(count);
+        for (int index = 0; index < count; index++) {
+            contributions.add(new BoundaryGeometryInfluence.Contribution(
+                    nearest.signatures[index].geometry(),
+                    (1D / Math.max(1D, nearest.distancesSquared[index])) / total));
+        }
+        int openingDepth = Math.min(8, Math.max(1, terrainWidth / 4));
+        double openingWeight = GenerationBlend.newEpochWeight(Math.max(0D, distance - openingDepth),
+                Math.max(1, terrainWidth - openingDepth));
+        return new BoundaryGeometryInfluence(weight, openingWeight, contributions);
     }
 
     boolean intersectsTerrainBand(int minimumX, int minimumZ, int maximumX, int maximumZ) {
@@ -89,11 +118,7 @@ final class TransitionBoundarySampler {
                 Math.min(distance, terrainWidth),
                 terrainWidth
         );
-        double hydrologyDistance = Math.max(0D, distance - terrainWidth);
-        double hydrologyWeight = GenerationBlend.newEpochWeight(
-                Math.min(hydrologyDistance, terrainWidth),
-                terrainWidth
-        );
+        double hydrologyWeight = newEpochWeight;
         return new TransitionGenerationPlan.TerrainSample(
                 Math.min(distance, searchWidth),
                 newEpochWeight,

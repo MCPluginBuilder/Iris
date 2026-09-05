@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.framework;
 
 
+
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.framework.render.RenderType;
 import art.arcane.iris.engine.framework.render.Renderer;
@@ -75,6 +76,9 @@ import art.arcane.iris.util.project.stream.ProceduralStream;
 import org.jetbrains.annotations.Nullable;
 
 import java.awt.Color;
+import java.nio.file.Path;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -166,12 +170,7 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
         if (context != null && context.getEngine() == this && context.getGenerationSessionId() != 0L) {
             return generationSessions.continueSession(operation, context.getGenerationSessionId());
         }
-        if (isClosing() || isClosed()) {
-            throw new GenerationSessionException("Generation session rejected new work for " + operation
-                    + " while the Iris engine is closing.", isClosed());
-        }
-
-        return generationSessions.acquire(operation);
+        return generationSessions.acquireForEngine(this, operation);
     }
 
     default long getGenerationSessionId() {
@@ -237,6 +236,8 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
     default IrisData getData() {
         return getTarget().getData();
     }
+
+    Path getPackSource();
 
     default IrisWorld getWorld() {
         return getTarget().getWorld();
@@ -448,6 +449,10 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default int getHeight(int x, int z, boolean ignoreFluid) {
+        OptionalInt resolved = getComplex().resolvedTerrainHeight(x, z, ignoreFluid);
+        if (resolved.isPresent()) {
+            return resolved.getAsInt();
+        }
         DimensionStackContext dimensionStackContext = getDimensionStackContext();
         if (dimensionStackContext != null) {
             return ignoreFluid

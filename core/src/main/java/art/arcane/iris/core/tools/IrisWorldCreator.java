@@ -33,6 +33,7 @@ import org.bukkit.generator.ChunkGenerator;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Objects;
 
 public class IrisWorldCreator {
     private String name;
@@ -41,6 +42,7 @@ public class IrisWorldCreator {
     private IrisDimension dimension;
     private long seed = 1337;
     private boolean persistent;
+    private File studioPackSource;
 
     public IrisWorldCreator() {
 
@@ -83,6 +85,11 @@ public class IrisWorldCreator {
         return this;
     }
 
+    public IrisWorldCreator studioPackSource(File source) {
+        this.studioPackSource = Objects.requireNonNull(source, "Studio authoring source");
+        return this;
+    }
+
     public WorldCreator create() {
         IrisDimension dim = dimension == null ? IrisData.loadAnyDimension(dimensionName, null) : dimension;
         NamespacedKey worldKey = IrisWorldStorage.keyFromName(name);
@@ -102,13 +109,13 @@ public class IrisWorldCreator {
                 .seed(seed)
                 .worldFolder(worldFolder)
                 .build();
-        GenerationHistory generationHistory = persistent
+        GenerationHistory generationHistory = persistent || studio
                 ? requireGenerationHistory(w.worldFolder(), seed)
                 : null;
-        File packRoot = generationHistory != null
+        File packRoot = studio
+                ? Objects.requireNonNull(studioPackSource, "Studio authoring source")
+                : generationHistory != null
                 ? requireActivePack(generationHistory)
-                : studio
-                ? dim.getLoader().getDataFolder()
                 : new File(w.worldFolder(), "iris/pack");
         ChunkGenerator g = new BukkitChunkGenerator(
                 w,

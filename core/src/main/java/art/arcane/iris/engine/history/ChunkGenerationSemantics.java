@@ -6,11 +6,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.regex.Pattern;
 
 public final class ChunkGenerationSemantics {
     static final int MAX_KEY_BYTES = 1_024;
@@ -18,12 +16,15 @@ public final class ChunkGenerationSemantics {
     static final int MAX_RIVER_FEATURES = 16_384;
     static final int MAX_STRUCTURES = 4_096;
 
-    private static final Pattern RESOURCE_KEY_PATTERN = Pattern.compile("[a-z0-9_][a-z0-9._:/#@-]*");
     private static final Comparator<StructureOccurrence> STRUCTURE_COMPARATOR = Comparator
             .comparing(StructureOccurrence::key)
             .thenComparingInt(occurrence -> occurrence.position().x())
             .thenComparingInt(occurrence -> occurrence.position().z())
             .thenComparingInt(occurrence -> occurrence.position().y());
+    private static final Comparator<PointOfInterest> POI_COMPARATOR = Comparator.comparing(PointOfInterest::key)
+            .thenComparingInt(point -> point.position().x())
+            .thenComparingInt(point -> point.position().z())
+            .thenComparingInt(point -> point.position().y());
     private static final Comparator<RiverFeatureOccurrence> RIVER_FEATURE_COMPARATOR = Comparator
             .comparing(RiverFeatureOccurrence::profileKey)
             .thenComparing(RiverFeatureOccurrence::type)
@@ -43,6 +44,7 @@ public final class ChunkGenerationSemantics {
     private final Set<String> objectKeys;
     private final Set<RiverFeatureOccurrence> riverFeatures;
     private final Set<StructureOccurrence> structures;
+    private final Set<PointOfInterest> pointsOfInterest;
 
     private ChunkGenerationSemantics(Builder builder) {
         chunkX = builder.chunkX;
@@ -56,6 +58,7 @@ public final class ChunkGenerationSemantics {
         objectKeys = immutableKeys(builder.objectKeys, "object");
         riverFeatures = immutableRiverFeatures(builder.riverFeatures);
         structures = immutableStructures(builder.structures);
+        pointsOfInterest = immutablePoints(builder.pointsOfInterest);
     }
 
     public static Builder builder(int chunkX, int chunkZ, long activationId) {
@@ -102,6 +105,10 @@ public final class ChunkGenerationSemantics {
         return riverFeatures;
     }
 
+    public Set<PointOfInterest> pointsOfInterest() {
+        return pointsOfInterest;
+    }
+
     public Set<StructureOccurrence> structures() {
         return structures;
     }
@@ -129,7 +136,8 @@ public final class ChunkGenerationSemantics {
                 || !riverProfileKeys.containsAll(requiredUpdate.riverProfileKeys)
                 || !objectKeys.containsAll(requiredUpdate.objectKeys)
                 || !riverFeatures.containsAll(requiredUpdate.riverFeatures)
-                || !structures.containsAll(requiredUpdate.structures);
+                || !structures.containsAll(requiredUpdate.structures)
+                || !pointsOfInterest.containsAll(requiredUpdate.pointsOfInterest);
         if (sealed && addsFacts) {
             throw new IllegalStateException(
                     "Chunk " + chunkX + "," + chunkZ + " has sealed generation semantics"
@@ -153,7 +161,9 @@ public final class ChunkGenerationSemantics {
                 .addRiverFeatures(riverFeatures)
                 .addRiverFeatures(requiredUpdate.riverFeatures)
                 .addStructures(structures)
-                .addStructures(requiredUpdate.structures);
+                .addStructures(requiredUpdate.structures)
+                .addPointsOfInterest(pointsOfInterest)
+                .addPointsOfInterest(requiredUpdate.pointsOfInterest);
         if (sealed || requiredUpdate.sealed) {
             merged.seal();
         }
@@ -178,7 +188,8 @@ public final class ChunkGenerationSemantics {
                 && riverProfileKeys.equals(semantics.riverProfileKeys)
                 && objectKeys.equals(semantics.objectKeys)
                 && riverFeatures.equals(semantics.riverFeatures)
-                && structures.equals(semantics.structures);
+                && structures.equals(semantics.structures)
+                && pointsOfInterest.equals(semantics.pointsOfInterest);
     }
 
     @Override
@@ -194,7 +205,8 @@ public final class ChunkGenerationSemantics {
                 riverProfileKeys,
                 objectKeys,
                 riverFeatures,
-                structures
+                structures,
+                pointsOfInterest
         );
     }
 
@@ -230,11 +242,11 @@ public final class ChunkGenerationSemantics {
         if (!requiredKey.equals(requiredKey.trim())) {
             throw new IllegalArgumentException("Generation semantic resource keys must not contain surrounding whitespace: " + requiredKey);
         }
-        if (!requiredKey.equals(requiredKey.toLowerCase(Locale.ROOT))) {
-            throw new IllegalArgumentException("Generation semantic resource keys must be lowercase: " + requiredKey);
-        }
-        if (!RESOURCE_KEY_PATTERN.matcher(requiredKey).matches()) {
-            throw new IllegalArgumentException("Generation semantic resource key is not normalized: " + requiredKey);
+        for (int index = 0; index < requiredKey.length(); index++) {
+            char character = requiredKey.charAt(index);
+            if (character == '\\' || Character.isISOControl(character)) {
+                throw new IllegalArgumentException("Generation semantic resource key contains an invalid character");
+            }
         }
         if (requiredKey.getBytes(StandardCharsets.UTF_8).length > MAX_KEY_BYTES) {
             throw new IllegalArgumentException("Generation semantic resource key is too long");
@@ -283,6 +295,28 @@ public final class ChunkGenerationSemantics {
         return Collections.unmodifiableSet(validated);
     }
 
+    private static Set<PointOfInterest> immutablePoints(Collection<PointOfInterest> points) {
+        if (points.size() > MAX_STRUCTURES) {
+            throw new IllegalArgumentException("A chunk contains too many points of interest");
+        }
+        TreeSet<PointOfInterest> copy = new TreeSet<>(POI_COMPARATOR);
+        for (PointOfInterest point : points) {
+            copy.add(Objects.requireNonNull(point, "point of interest"));
+        }
+        return Collections.unmodifiableSet(copy);
+    }
+
+    static Comparator<PointOfInterest> pointComparator() {
+        return POI_COMPARATOR;
+    }
+
+    public record PointOfInterest(String key, BlockPosition position) {
+        public PointOfInterest {
+            key = requireResourceKey(key);
+            position = Objects.requireNonNull(position, "position");
+        }
+    }
+
     public record BlockPosition(int x, int y, int z) {
     }
 
@@ -317,6 +351,7 @@ public final class ChunkGenerationSemantics {
         private final Set<String> objectKeys;
         private final Set<RiverFeatureOccurrence> riverFeatures;
         private final Set<StructureOccurrence> structures;
+        private final Set<PointOfInterest> pointsOfInterest;
         private boolean sealed;
 
         private Builder(int chunkX, int chunkZ, long activationId) {
@@ -333,6 +368,7 @@ public final class ChunkGenerationSemantics {
             objectKeys = new TreeSet<>();
             riverFeatures = new TreeSet<>(RIVER_FEATURE_COMPARATOR);
             structures = new TreeSet<>(STRUCTURE_COMPARATOR);
+            pointsOfInterest = new TreeSet<>(POI_COMPARATOR);
         }
 
         public Builder addSurfaceBiome(String key) {
@@ -446,6 +482,22 @@ public final class ChunkGenerationSemantics {
             Collection<StructureOccurrence> requiredOccurrences = Objects.requireNonNull(occurrences, "occurrences");
             for (StructureOccurrence occurrence : requiredOccurrences) {
                 addStructure(occurrence);
+            }
+            return this;
+        }
+
+        public Builder addPointOfInterest(PointOfInterest point) {
+            Objects.requireNonNull(point, "point of interest");
+            if (pointsOfInterest.size() >= MAX_STRUCTURES && !pointsOfInterest.contains(point)) {
+                throw new IllegalArgumentException("A chunk contains too many points of interest");
+            }
+            pointsOfInterest.add(point);
+            return this;
+        }
+
+        public Builder addPointsOfInterest(Collection<PointOfInterest> points) {
+            for (PointOfInterest point : points) {
+                addPointOfInterest(point);
             }
             return this;
         }

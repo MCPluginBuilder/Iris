@@ -8,10 +8,16 @@ import java.util.OptionalInt;
 public final class TerrainBoundarySignature {
     private final Column column;
     private final Samples samples;
+    private final BoundaryColumnGeometry geometry;
 
-    public TerrainBoundarySignature(Column column, Samples samples) {
+    public TerrainBoundarySignature(Column column, Samples samples, BoundaryColumnGeometry geometry) {
         this.column = Objects.requireNonNull(column, "Boundary column");
         this.samples = Objects.requireNonNull(samples, "Boundary samples");
+        this.geometry = Objects.requireNonNull(geometry, "Boundary geometry");
+    }
+
+    public BoundaryColumnGeometry geometry() {
+        return geometry;
     }
 
     public Column column() {

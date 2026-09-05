@@ -19,15 +19,20 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.volmlib.util.collection.KList;
+import art.arcane.iris.engine.actuator.IrisTransitionGeometryActuator;
 
 public abstract class IrisEngineMode implements EngineMode {
     private final Engine engine;
+    private final EngineStage transitionStage;
     private final KList<EngineStage> stages;
+    private final KList<EngineStage> terrainStages;
     private boolean closed;
 
     public IrisEngineMode(Engine engine) {
         this.engine = engine;
+        this.transitionStage = new IrisTransitionGeometryActuator(engine);
         this.stages = new KList<>();
+        this.terrainStages = new KList<>();
         this.closed = false;
     }
 
@@ -39,6 +44,9 @@ public abstract class IrisEngineMode implements EngineMode {
 
         closed = true;
         dump();
+        terrainStages.forEach(EngineStage::close);
+        terrainStages.clear();
+        transitionStage.close();
     }
 
     @Override
@@ -49,6 +57,21 @@ public abstract class IrisEngineMode implements EngineMode {
     @Override
     public KList<EngineStage> getStages() {
         return stages;
+    }
+
+    @Override
+    public EngineStage getTransitionStage() {
+        return transitionStage;
+    }
+
+    @Override
+    public KList<EngineStage> getTerrainStages() {
+        return terrainStages;
+    }
+
+    @Override
+    public void registerTerrainStage(EngineStage stage) {
+        terrainStages.add(stage);
     }
 
     @Override

@@ -362,13 +362,15 @@ public final class ModdedForcedDatapack {
         KList<String> presetIds = new KList<>();
         Path worldRoot = worldRootOrNull();
         Set<PackSelection> legacySelections = unadoptedSelections(worldRoot);
-        for (File pack : compilationPackRoots(worldRoot)) {
+        List<File> packRoots = compilationPackRoots(worldRoot);
+        for (File pack : packRoots) {
             PackStageContext context = packStageContext(pack.toPath(), legacySelections);
             if (stagePack(context, fixer, stagingDirectory, seenBiomes, presetIds)) {
                 packCount++;
             }
         }
 
+        IrisDatapackCompiler.installRetainedRegistrySources(packRoots, List.of(stagingDirectory.toFile()), fixer);
         writePackMeta(stagingDirectory);
         // Forge only: FML has no block-drops event Iris can use, so drops are routed through a global loot
         // modifier. NeoForge does not need one - IrisNeoForgeBootstrap listens to BlockDropsEvent and both
@@ -996,7 +998,7 @@ public final class ModdedForcedDatapack {
                 return currentSource;
             }
             PhysicalResourceKey key = new PhysicalResourceKey(registryKey, resourceKey);
-            return GenerationRegistryContractFactory.requireGeneratedSource(retainedContract, key, fixer);
+            return GenerationRegistryContractFactory.renderGeneratedSource(retainedContract, key, fixer);
         }
     }
 

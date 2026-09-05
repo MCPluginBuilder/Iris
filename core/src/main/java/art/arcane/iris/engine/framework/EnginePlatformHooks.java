@@ -19,10 +19,23 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.history.SavedTerrainChunk;
+
+import java.util.concurrent.CompletableFuture;
 import art.arcane.iris.engine.mantle.MantleComponent;
 import art.arcane.volmlib.util.collection.KList;
 
 public interface EnginePlatformHooks {
+    default CompletableFuture<Void> flushSavedTerrainCapture(Engine engine) {
+        return CompletableFuture.failedFuture(new UnsupportedOperationException(
+                "This platform does not support saved terrain checkpoints."));
+    }
+
+    default CompletableFuture<SavedTerrainChunk> captureSavedTerrainChunk(Engine engine, int chunkX, int chunkZ) {
+        return CompletableFuture.failedFuture(new UnsupportedOperationException(
+                "This platform does not support saved terrain boundary capture."));
+    }
+
     /**
      * World-space piece bounds of every native structure that will generate inside the given XZ rect. Platforms
      * without native structures return no volumes, which keeps the object veto free on those platforms.

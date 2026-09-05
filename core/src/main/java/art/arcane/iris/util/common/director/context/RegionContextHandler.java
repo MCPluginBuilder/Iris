@@ -19,9 +19,12 @@
 package art.arcane.iris.util.common.director.context;
 
 import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.util.common.director.DirectorContextHandler;
+import art.arcane.iris.util.common.director.DirectorExecutor;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 
 public class RegionContextHandler implements DirectorContextHandler<IrisRegion> {
@@ -33,7 +36,13 @@ public class RegionContextHandler implements DirectorContextHandler<IrisRegion> 
         if (sender.isPlayer()
                 && IrisToolbelt.isIrisWorld(sender.player().getWorld())
                 && IrisToolbelt.access(sender.player().getWorld()).getEngine() != null) {
-            return EngineBukkitOps.getRegion(IrisToolbelt.access(sender.player().getWorld()).getEngine(), sender.player().getLocation());
+            Engine engine = IrisToolbelt.access(sender.player().getWorld()).getEngine();
+            IrisData source = DirectorExecutor.authoringData(engine);
+            if (source == null) {
+                return null;
+            }
+            IrisRegion region = EngineBukkitOps.getRegion(engine, sender.player().getLocation());
+            return region == null ? null : source.getRegionLoader().load(region.getLoadKey());
         }
 
         return null;

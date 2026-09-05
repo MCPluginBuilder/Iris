@@ -148,6 +148,48 @@ public class GenerationPackRepositoryTest {
         }
     }
 
+    @Test
+    public void releasesOnlyArchivedPacksAndCanRepublishTheirSnapshot() throws Exception {
+        Path dimensionRoot = temporaryFolder.newFolder("retention-world").toPath();
+        Path firstSource = createPack("retention-first", "{\"version\":1}");
+        Path secondSource = createPack("retention-second", "{\"version\":2}");
+        Path pendingSource = createPack("retention-pending", "{\"version\":3}");
+        GenerationPackRepository repository = new GenerationPackRepository(dimensionRoot);
+        GenerationEpoch first = epoch(fingerprint(firstSource));
+        GenerationEpoch second = epoch(fingerprint(secondSource));
+        GenerationEpoch pending = epoch(fingerprint(pendingSource));
+        repository.publish(first.epochId(), first.packFingerprint(), first.packFingerprintVersion(), firstSource);
+        GenerationHistoryStore store = GenerationHistoryStore.initialize(repository.generationRoot(), first);
+        repository.publish(second.epochId(), second.packFingerprint(), second.packFingerprintVersion(), secondSource);
+        GenerationActivation activation = store.preparePendingActivation(second, 256);
+        store.completePendingTransition(activation.activationId(), digest('d'), digest('e'));
+        store.activatePending(activation.activationId());
+        repository.publish(pending.epochId(), pending.packFingerprint(), pending.packFingerprintVersion(), pendingSource);
+        store.preparePendingActivation(pending, 256);
+
+        repository.releaseArchivedPacks(store.manifest());
+        repository.releaseArchivedPacks(store.manifest());
+
+        assertFalse(Files.exists(repository.packRoot(first.epochId())));
+        assertTrue(Files.isRegularFile(repository.epochRoot(first.epochId()).resolve("epoch.json")));
+        assertTrue(Files.isDirectory(repository.packRoot(second.epochId())));
+        assertTrue(Files.isDirectory(repository.packRoot(pending.epochId())));
+        assertTrue(Files.isRegularFile(firstSource.resolve("dimensions/main.json")));
+        assertEquals(store.manifest(), GenerationHistoryStore.open(repository.generationRoot()).manifest());
+        Path republished = repository.publish(first.epochId(), first.packFingerprint(), first.packFingerprintVersion(), firstSource);
+        assertEquals(Files.readString(firstSource.resolve("dimensions/main.json")),
+                Files.readString(republished.resolve("dimensions/main.json")));
+    }
+
+    private static GenerationEpoch epoch(String fingerprint) {
+        GenerationEpoch.DimensionContract contract = new GenerationEpoch.DimensionContract(
+                "overworld", "iris:overworld_type", "NORMAL", "OVERWORLD", 127,
+                -64, 384, 384, 1D, false, "none", 0, "0".repeat(64),
+                GenerationEpochContractFactory.CURRENT_DIMENSION_TYPE_FINGERPRINT_SCHEMA, digest('c'));
+        return GenerationEpoch.create(new GenerationEpoch.Spec(fingerprint, GenerationPackFingerprint.CURRENT_VERSION,
+                42L, 1, 1, 1, GenerationKernelV1.IMPLEMENTATION_FINGERPRINT, contract, GenerationRegistryContract.empty()));
+    }
+
     private void assertStorageLinkRejected(String component) throws Exception {
         Path container = temporaryFolder.newFolder("linked-storage-" + component).toPath();
         Path dimensionRoot = container.resolve("dimension");

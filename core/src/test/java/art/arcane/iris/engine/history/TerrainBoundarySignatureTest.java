@@ -24,7 +24,7 @@ public class TerrainBoundarySignatureTest {
                         new TerrainBoundarySignature.VerticalLayout(-64, 32, 3),
                         biomeEncoding
                 )
-        );
+        , BoundaryColumnGeometry.empty());
 
         palette.set(0, "changed");
         biomeIndices[0] = 1;

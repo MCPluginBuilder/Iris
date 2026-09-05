@@ -29,7 +29,6 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.IrisWorlds;
-import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.runtime.ObjectStudioActivation;
@@ -128,7 +127,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private final boolean studio;
     private final AtomicBoolean studioEntryBootstrapActive;
     private final AtomicInteger a = new AtomicInteger(0);
-    private volatile long lastChunkGenTime = 0L;
     private final CompletableFuture<Integer> spawnChunks = new CompletableFuture<>();
     private final CompletableFuture<Void> initialSpawnReady = new CompletableFuture<>();
     private final AtomicCache<EngineTarget> targetCache = new AtomicCache<>();
@@ -168,7 +166,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         this.folder = new ReactiveFolder(
                 dataLocation,
                 (_a, _b, _c) -> hotloadFromWatcher(),
-                new KList<>(".iob", ".json"),
+                new KList<>(".iob", ".json", ".png"),
                 new KList<>(".iris"),
                 new KList<>()
         );
@@ -390,6 +388,14 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private void setupEngine() {
         lastMode = StudioMode.NORMAL;
         lastJigsawStudioRequestId = null;
+        if (generationHistory != null) {
+            try {
+                generationHistory.prepareCurrentGenerator(IrisSettings.get().getGenerator().getGenerationTransitionWidthBlocks());
+                targetCache.reset();
+            } catch (IOException failure) {
+                throw new IllegalStateException("Unable to prepare saved Iris terrain for the current generator.", failure);
+            }
+        }
         EngineTarget engineTarget = getTarget();
         String packKey = engineTarget.getDimension().getLoadKey();
         JigsawStudioActivation.Request request = studio
@@ -483,12 +489,16 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         } catch (IOException failure) {
             throw new IllegalStateException("Unable to load the active Iris generation transition.", failure);
         }
-        return new IrisEngine(
+        IrisEngine createdEngine = new IrisEngine(
                 engineTarget,
                 mode,
                 generationHistory.paths().activationMantleRoot(active.activationId()),
                 epoch.kernelVersion(),
                 plan);
+        if (studio) {
+            createdEngine.configureStudioGenerationSource(dataLocation.toPath());
+        }
+        return createdEngine;
     }
 
     private static RuntimeException propagateEngineSetupFailure(Throwable failure) {
@@ -520,6 +530,13 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         if (engine != null) return engine.getTarget();
 
         return targetCache.aquireOrThrow(() -> {
+            if (generationHistory != null) {
+                try {
+                    return loadActiveGenerationHistoryTarget();
+                } catch (IOException failure) {
+                    throw new IllegalStateException("Unable to load the active Iris generation pack.", failure);
+                }
+            }
             IrisData data = IrisData.openRuntime(dataLocation);
             data.dump();
             data.clearLists();
@@ -577,7 +594,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
                             && irisEngine.isGenerationCacheWarmPending()) {
                         return HOTLOAD_LOOP_DELAY_MS;
                     }
-                    if (shouldThrottleHotload()) {
+                    if (isMaintenanceActive()) {
                         return HOTLOAD_MAINTENANCE_DELAY_MS;
                     }
 
@@ -978,7 +995,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
         try {
             Engine engine = getEngine(world);
-            lastChunkGenTime = System.currentTimeMillis();
             computeStudioGenerator();
             TerrainChunk tc = TerrainChunk.create(d);
             if (studioGenerator != null) {
@@ -1068,20 +1084,6 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
             IrisLogging.debug("Chunk " + x + "," + z + " Exception Logged: " + e.getClass().getSimpleName() + ": " + C.RESET + "" + C.LIGHT_PURPLE + e.getMessage());
         }
-    }
-
-    private boolean shouldThrottleHotload() {
-        if (isMaintenanceActive()) {
-            return true;
-        }
-
-        if (System.currentTimeMillis() - lastChunkGenTime < 2000L) {
-            return true;
-        }
-
-        World realWorld = BukkitWorldBinding.world(this.world);
-        PregeneratorJob pregeneratorJob = PregeneratorJob.getInstance();
-        return realWorld != null && pregeneratorJob != null && pregeneratorJob.targetsWorldIdentity(WorldIdentity.serialize(realWorld));
     }
 
     @Override

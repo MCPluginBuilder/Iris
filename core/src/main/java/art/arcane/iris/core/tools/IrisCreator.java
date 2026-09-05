@@ -118,9 +118,9 @@ public class IrisCreator {
      */
     private String name = "irisworld";
     /**
-     * Studio mode makes the engine hotloadable and uses the dimension in
-     * your Iris/packs folder instead of copying the dimension files into
-     * the world itself. Studio worlds are deleted when they are unloaded.
+     * Studio mode snapshots edits from your Iris/packs folder into generation history.
+     * Existing chunks retain their generation while new chunks use accepted edits.
+     * Studio worlds are deleted when they are unloaded.
      */
     private boolean studio = false;
     /**
@@ -260,18 +260,15 @@ public class IrisCreator {
                         + "Restart the server, then run the command again.");
             }
 
-            IrisDimension installedDimension = resolvedDimension;
-            if (!studio() || benchmark) {
-                reportCreationProgress(creationReporter, 0.26D, "prepare_world_pack");
-                StudioSVC studioService = IrisServices.get(StudioSVC.class);
-                installedDimension = benchmark
-                        ? studioService.installIntoTransientWorld(sender, resolvedDimension, dimensionRoot)
-                        : studioService.installIntoWorld(sender, resolvedDimension, dimensionRoot, seed);
-                if (installedDimension == null) {
-                    throw new IrisException("Failed to install dimension pack for " + dimension());
-                }
-                dimension = installedDimension.getLoadKey();
+            reportCreationProgress(creationReporter, 0.26D, "prepare_world_pack");
+            StudioSVC studioService = IrisServices.get(StudioSVC.class);
+            IrisDimension installedDimension = benchmark && !studio
+                    ? studioService.installIntoTransientWorld(sender, resolvedDimension, dimensionRoot)
+                    : studioService.installIntoWorld(sender, resolvedDimension, dimensionRoot, seed);
+            if (installedDimension == null) {
+                throw new IrisException("Failed to install dimension pack for " + dimension());
             }
+            dimension = installedDimension.getLoadKey();
             if (studio()) {
                 IrisRuntimeSchedulerMode runtimeSchedulerMode = IrisRuntimeSchedulerMode.resolve(IrisSettings.get().getPregen());
                 IrisLogging.debug("Studio create scheduling: mode=" + runtimeSchedulerMode.name().toLowerCase(Locale.ROOT)
@@ -285,6 +282,7 @@ public class IrisCreator {
             long generatorPrepareStart = System.nanoTime();
             WorldCreator wc = new IrisWorldCreator()
                     .dimension(installedDimension)
+                    .studioPackSource(resolvedDimension.getLoader().getDataFolder())
                     .name(name)
                     .seed(seed)
                     .studio(studio)

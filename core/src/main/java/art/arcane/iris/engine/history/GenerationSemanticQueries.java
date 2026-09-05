@@ -9,7 +9,6 @@ import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
 import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 
 import java.math.BigInteger;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -29,7 +28,7 @@ public final class GenerationSemanticQueries {
     ) {
         Engine requiredEngine = Objects.requireNonNull(engine, "engine");
         String requiredKey = ChunkGenerationSemantics.requireResourceKey(
-                Objects.requireNonNull(key, "key").trim().toLowerCase(Locale.ROOT));
+                Objects.requireNonNull(key, "key").trim());
         int radius = Math.max(0, Math.min(maximumChunkRadius, 2048));
         GenerationHistory history = history(requiredEngine).orElse(null);
         if (history == null) {

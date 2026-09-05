@@ -11,7 +11,7 @@ import static org.junit.Assert.assertThrows;
 
 public class GenerationKernelCatalogTest {
     @Test
-    public void appendsNewRegistrationsWithoutChangingAnExistingSeal() throws Exception {
+    public void parsesMultipleKernelRegistrations() throws Exception {
         GenerationKernelCatalog.Catalog catalog = parse("current\t2\t3\t4\nkernel\t1\nkernel\t2\n");
         assertEquals(new GenerationKernelRegistry.Version(2, 3, 4), catalog.current());
         assertEquals(List.of(1, 2), catalog.abis());
@@ -26,11 +26,11 @@ public class GenerationKernelCatalogTest {
     }
 
     @Test
-    public void installedCatalogUsesOnlyItsSealedFactoryAndAlgorithms() throws Exception {
+    public void installedCatalogUsesItsBuildFactoryAndAlgorithms() throws Exception {
         GenerationKernelRegistry registry = GenerationKernelCatalog.load();
-        GenerationKernelSourceSeal.Descriptor seal = GenerationKernelSourceSeal.load(1);
-        assertEquals("art.arcane.iris.engine.history.GenerationKernelV1", seal.factoryClass());
-        assertEquals(seal.fingerprint(), registry.select(new GenerationKernelRegistry.Version(1, 1, 1))
+        GenerationBuildRevision.Descriptor revision = GenerationBuildRevision.load(1);
+        assertEquals("art.arcane.iris.engine.history.GenerationKernelV1", revision.factoryClass());
+        assertEquals(revision.fingerprint(), registry.select(new GenerationKernelRegistry.Version(1, 1, 1))
                 .implementationFingerprint());
         assertThrows(IOException.class, () -> registry.select(new GenerationKernelRegistry.Version(1, 2, 1)));
     }

@@ -189,6 +189,26 @@ public class IrisData implements ExclusionStrategy, TypeAdapterFactory {
         return Optional.ofNullable(dataLoaders.get(dataFolder));
     }
 
+    public static void invalidateLoadedAuthoringResources(File source) {
+        Path requested = dataFolderIdentity(Objects.requireNonNull(source, "authoring pack source"));
+        for (Map.Entry<File, IrisData> entry : dataLoaders.entrySet()) {
+            if (dataFolderIdentity(entry.getKey()).equals(requested)) {
+                entry.getValue().invalidateAuthoringResources();
+            }
+        }
+    }
+
+    private synchronized void invalidateAuthoringResources() {
+        if (generationRegistryContract != null) {
+            throw new IllegalStateException("Cannot invalidate an immutable generation pack as an authoring source.");
+        }
+        dump();
+        clearLists();
+        generationPackFingerprint = null;
+        contentGate = null;
+        dimensionCustomBiomeResourceKeys.clear();
+    }
+
     public String customBiomeResourceKey(IrisDimension dimension, IrisBiomeCustom customBiome) {
         IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
         IrisBiomeCustom requiredBiome = Objects.requireNonNull(customBiome, "customBiome");

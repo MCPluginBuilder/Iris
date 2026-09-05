@@ -11,6 +11,10 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
+import java.util.Collection;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.TreeSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -36,19 +40,22 @@ public final class GenerationRegistryContract {
     private final String fingerprint;
     private final NavigableMap<PhysicalResourceKey, String> definitions;
     private final NavigableMap<PhysicalResourceKey, GeneratedSource> generatedSources;
+    private final NavigableMap<String, List<String>> biomeTags;
 
     private GenerationRegistryContract(
             int fingerprintSchema,
             String fingerprint,
             NavigableMap<PhysicalResourceKey, String> definitions,
-            NavigableMap<PhysicalResourceKey, GeneratedSource> generatedSources
+            NavigableMap<PhysicalResourceKey, GeneratedSource> generatedSources,
+            Map<String, ? extends Collection<String>> biomeTags
     ) {
         requireSupportedFingerprintSchema(fingerprintSchema);
         this.fingerprintSchema = fingerprintSchema;
         this.definitions = immutableDefinitions(definitions);
         this.generatedSources = immutableGeneratedSources(generatedSources, this.definitions);
+        this.biomeTags = canonicalBiomeTags(biomeTags, this.definitions);
         this.fingerprint = requireSha256(fingerprint, "Registry contract fingerprint");
-        String expectedFingerprint = fingerprint(fingerprintSchema, this.definitions, this.generatedSources);
+        String expectedFingerprint = fingerprint(fingerprintSchema, this.definitions, this.generatedSources, this.biomeTags);
         if (!this.fingerprint.equals(expectedFingerprint)) {
             throw new IllegalArgumentException("Registry contract fingerprint does not match its definitions.");
         }
@@ -93,10 +100,22 @@ public final class GenerationRegistryContract {
         );
         return new GenerationRegistryContract(
                 fingerprintSchema,
-                fingerprint(fingerprintSchema, canonicalDefinitions, canonicalSources),
+                fingerprint(fingerprintSchema, canonicalDefinitions, canonicalSources, new TreeMap<>()),
                 canonicalDefinitions,
-                canonicalSources
+                canonicalSources,
+                Map.of()
         );
+    }
+
+    public GenerationRegistryContract withBiomeTags(Map<String, ? extends Collection<String>> tags) {
+        NavigableMap<String, List<String>> canonical = canonicalBiomeTags(tags, definitions);
+        return new GenerationRegistryContract(fingerprintSchema,
+                fingerprint(fingerprintSchema, definitions, generatedSources, canonical),
+                definitions, generatedSources, canonical);
+    }
+
+    public NavigableMap<String, List<String>> biomeTags() {
+        return biomeTags;
     }
 
     public int fingerprintSchema() {
@@ -160,6 +179,13 @@ public final class GenerationRegistryContract {
             generatedSourceArray.add(sourceJson);
         }
         json.add("generatedSources", generatedSourceArray);
+        JsonObject tags = new JsonObject();
+        for (Map.Entry<String, List<String>> entry : biomeTags.entrySet()) {
+            JsonArray values = new JsonArray();
+            entry.getValue().forEach(values::add);
+            tags.add(entry.getKey(), values);
+        }
+        json.add("biomeTags", tags);
         return json;
     }
 
@@ -170,7 +196,8 @@ public final class GenerationRegistryContract {
                 "fingerprintSchema",
                 "fingerprint",
                 "definitions",
-                "generatedSources"
+                "generatedSources",
+                "biomeTags"
         );
         int fingerprintSchema = GenerationManifest.JsonSchema.requireInt(
                 json,
@@ -197,12 +224,20 @@ public final class GenerationRegistryContract {
                 generatedSourceArray,
                 definitions
         );
-        return new GenerationRegistryContract(
-                fingerprintSchema,
-                fingerprint,
-                definitions,
-                generatedSources
-        );
+        JsonObject encodedTags = GenerationManifest.JsonSchema.requireObject(json.get("biomeTags"), "registry biome tags");
+        Map<String, List<String>> tags = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry : encodedTags.entrySet()) {
+            JsonArray values = GenerationManifest.JsonSchema.requireArray(encodedTags, entry.getKey(), "registry biome tags");
+            List<String> names = new ArrayList<>();
+            for (JsonElement value : values) {
+                if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+                    throw new IllegalArgumentException("Registry biome tags must contain resource keys.");
+                }
+                names.add(value.getAsString());
+            }
+            tags.put(entry.getKey(), names);
+        }
+        return new GenerationRegistryContract(fingerprintSchema, fingerprint, definitions, generatedSources, tags);
     }
 
     @Override
@@ -216,12 +251,13 @@ public final class GenerationRegistryContract {
         return fingerprintSchema == contract.fingerprintSchema
                 && fingerprint.equals(contract.fingerprint)
                 && definitions.equals(contract.definitions)
-                && generatedSources.equals(contract.generatedSources);
+                && generatedSources.equals(contract.generatedSources)
+                && biomeTags.equals(contract.biomeTags);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(fingerprintSchema, fingerprint, definitions, generatedSources);
+        return Objects.hash(fingerprintSchema, fingerprint, definitions, generatedSources, biomeTags);
     }
 
     @Override
@@ -442,13 +478,39 @@ public final class GenerationRegistryContract {
         );
     }
 
+    private static NavigableMap<String, List<String>> canonicalBiomeTags(
+            Map<String, ? extends Collection<String>> values,
+            Map<PhysicalResourceKey, String> definitions
+    ) {
+        if (values.size() > MAX_DEFINITIONS) {
+            throw new IllegalArgumentException("Registry biome tags contain too many biomes.");
+        }
+        TreeMap<String, List<String>> normalized = new TreeMap<>();
+        for (Map.Entry<String, ? extends Collection<String>> entry : values.entrySet()) {
+            PhysicalResourceKey biome = new PhysicalResourceKey("minecraft:worldgen/biome", entry.getKey());
+            if (!definitions.containsKey(biome)) {
+                throw new IllegalArgumentException("Registry biome tags have no matching biome definition: " + entry.getKey());
+            }
+            TreeSet<String> tags = new TreeSet<>();
+            for (String tag : entry.getValue()) {
+                tags.add(new PhysicalResourceKey("minecraft:worldgen/biome", tag).resourceKey());
+            }
+            if (tags.size() > MAX_DEFINITIONS) {
+                throw new IllegalArgumentException("Registry biome contains too many tags.");
+            }
+            normalized.put(biome.resourceKey(), List.copyOf(tags));
+        }
+        return Collections.unmodifiableNavigableMap(normalized);
+    }
+
     private static String fingerprint(
             int fingerprintSchema,
             NavigableMap<PhysicalResourceKey, String> definitions,
-            NavigableMap<PhysicalResourceKey, GeneratedSource> generatedSources
+            NavigableMap<PhysicalResourceKey, GeneratedSource> generatedSources,
+            NavigableMap<String, List<String>> biomeTags
     ) {
         return switch (fingerprintSchema) {
-            case FINGERPRINT_SCHEMA_VERSION_ONE -> fingerprintVersionOne(definitions, generatedSources);
+            case FINGERPRINT_SCHEMA_VERSION_ONE -> fingerprintVersionOne(definitions, generatedSources, biomeTags);
             default -> throw new IllegalArgumentException(
                     "Unsupported generation registry fingerprint schema " + fingerprintSchema + "."
             );
@@ -457,7 +519,8 @@ public final class GenerationRegistryContract {
 
     private static String fingerprintVersionOne(
             NavigableMap<PhysicalResourceKey, String> definitions,
-            NavigableMap<PhysicalResourceKey, GeneratedSource> generatedSources
+            NavigableMap<PhysicalResourceKey, GeneratedSource> generatedSources,
+            NavigableMap<String, List<String>> biomeTags
     ) {
         MessageDigest digest = sha256();
         updateString(digest, FINGERPRINT_DOMAIN);
@@ -478,6 +541,14 @@ public final class GenerationRegistryContract {
             updateString(digest, entry.getValue().rendererIdentity());
             updateString(digest, entry.getValue().renderedDefinitionSha256());
             updateString(digest, entry.getValue().sourceJson());
+        }
+        updateInt(digest, biomeTags.size());
+        for (Map.Entry<String, List<String>> entry : biomeTags.entrySet()) {
+            updateString(digest, entry.getKey());
+            updateInt(digest, entry.getValue().size());
+            for (String tag : entry.getValue()) {
+                updateString(digest, tag);
+            }
         }
         return HexFormat.of().formatHex(digest.digest());
     }

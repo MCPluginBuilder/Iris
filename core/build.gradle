@@ -522,4 +522,4 @@ tasks.named('check').configure {
     dependsOn('bukkitPurityRatchet')
 }
 
-apply from: rootProject.file('gradle/generation-kernel-seals.gradle')
+apply from: rootProject.file('gradle/generation-build-revision.gradle')

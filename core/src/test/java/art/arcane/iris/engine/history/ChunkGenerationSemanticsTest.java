@@ -53,12 +53,32 @@ public final class ChunkGenerationSemanticsTest {
         );
         assertThrows(
                 IllegalArgumentException.class,
-                () -> ChunkGenerationSemantics.builder(0, 0, 1L).addSurfaceBiome("iris:Forest")
+                () -> ChunkGenerationSemantics.builder(0, 0, 1L).addSurfaceBiome("iris:For\nest")
         );
         assertThrows(
                 IllegalArgumentException.class,
                 () -> ChunkGenerationSemantics.builder(0, 0, 1L).addSurfaceBiome("iris\\forest")
         );
+    }
+
+    @Test
+    public void packIdentifiersPreserveCaseAndFilenameCharacters() {
+        ChunkGenerationSemantics semantics = ChunkGenerationSemantics.builder(0, 0, 1L)
+                .addObject("trees/mixed/AmySmol10")
+                .addObject("trees/mixed/amysmol10")
+                .addSurfaceBiome("mountain/Cute_Cliffs+")
+                .addCaveBiome("Caves/Crystal Gallery")
+                .addRegion("Région/Highlands")
+                .addRiverProfile("Rivers/Cold+")
+                .addStructure("Structures/Tower+", 1, 64, 1)
+                .build();
+
+        assertEquals(Set.of("trees/mixed/AmySmol10", "trees/mixed/amysmol10"), semantics.objectKeys());
+        assertEquals(Set.of("mountain/Cute_Cliffs+"), semantics.surfaceBiomeKeys());
+        assertEquals(Set.of("Caves/Crystal Gallery"), semantics.caveBiomeKeys());
+        assertEquals(Set.of("Région/Highlands"), semantics.regionKeys());
+        assertEquals(Set.of("Rivers/Cold+"), semantics.riverProfileKeys());
+        assertEquals("Structures/Tower+", semantics.structures().iterator().next().key());
     }
 
     @Test

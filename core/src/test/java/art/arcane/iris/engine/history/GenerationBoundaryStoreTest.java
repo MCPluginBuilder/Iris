@@ -13,6 +13,8 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -22,6 +24,7 @@ import java.util.zip.CRC32;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -224,6 +227,73 @@ public class GenerationBoundaryStoreTest {
         }
         assertTrue(boundary.isHistoricalChunk(0, 0));
         assertTrue(boundary.cachedRegionCount() <= 64);
+    }
+
+    @Test
+    public void absentRegionsDoNotWaitForTheMaskCacheMonitor() throws Exception {
+        GenerationBoundaryStore store = new GenerationBoundaryStore(temporaryFolder.newFolder("boundary-missing-region").toPath());
+        store.publishPacked(1L, new long[]{GenerationBoundary.packChunk(0, 0)});
+        GenerationBoundary boundary = store.load(1L);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> iteration = executor.submit(() -> {
+                boundary.forEachHistoricalChunk((x, z) -> {
+                    entered.countDown();
+                    try {
+                        release.await();
+                    } catch (InterruptedException failure) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Interrupted boundary iteration", failure);
+                    }
+                });
+                return null;
+            });
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            Future<Boolean> missing = executor.submit(() -> boundary.isHistoricalChunk(-33, 64));
+            assertFalse(missing.get(5, TimeUnit.SECONDS));
+            release.countDown();
+            iteration.get(5, TimeUnit.SECONDS);
+            assertEquals(1, boundary.cachedRegionCount());
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void knownRegionHitsKeepAccessOrderAndEvictedMasksAreRevalidated() throws Exception {
+        GenerationBoundaryStore store = new GenerationBoundaryStore(temporaryFolder.newFolder("boundary-cache-revalidation").toPath());
+        long[] chunks = new long[65];
+        for (int region = 0; region < chunks.length; region++) {
+            chunks[region] = GenerationBoundary.packChunk((region << 5) + (region & 31), region >>> 5);
+        }
+        store.publishPacked(1L, chunks);
+        GenerationBoundary boundary = store.load(1L);
+        for (int region = 0; region < 64; region++) {
+            assertTrue(boundary.isHistoricalChunk((region << 5) + (region & 31), region >>> 5));
+        }
+        assertTrue(boundary.isHistoricalChunk(0, 0));
+        assertTrue(boundary.isHistoricalChunk(64 << 5, 2));
+        assertEquals(64, boundary.cachedRegionCount());
+        int corrupted = 0;
+        try (Stream<Path> files = Files.list(store.directory())) {
+            for (Path file : files.filter(path -> path.getFileName().toString().endsWith(".irbm")).toList()) {
+                byte[] bytes = Files.readAllBytes(file);
+                if (bytes[8] == 1 || bytes[8] == 2) {
+                    bytes[8] ^= 16;
+                    Files.write(file, bytes);
+                    corrupted++;
+                }
+            }
+        }
+        assertEquals(2, corrupted);
+        assertTrue(boundary.isHistoricalChunk(0, 0));
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> boundary.isHistoricalChunk(33, 0));
+        assertTrue(failure.getCause() instanceof IOException);
+        assertEquals(64, boundary.cachedRegionCount());
     }
 
     private void assertStorageLinkRejected(String component) throws Exception {

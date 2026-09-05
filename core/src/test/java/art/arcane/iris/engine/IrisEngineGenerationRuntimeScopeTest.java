@@ -14,6 +14,8 @@ import art.arcane.iris.engine.framework.NativeStructureVolumeMemo;
 import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
 import art.arcane.iris.engine.object.IrisWorld;
 import art.arcane.iris.spi.IrisPlatform;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -21,6 +23,8 @@ import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.project.context.ChunkContext;
+import art.arcane.iris.util.project.context.IrisContext;
+import art.arcane.iris.util.project.stream.ProceduralStream;
 import org.junit.Test;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -47,9 +51,13 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -68,6 +76,77 @@ public class IrisEngineGenerationRuntimeScopeTest {
     @AfterClass
     public static void unbindPlatform() {
         IrisPlatforms.unbind();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void naturalCaveSamplesKeepSelectedRuntimeAcrossChunkEdges() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture selected = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, selected.runtime);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        setField(engine, "generationHistoryRuntimeRouter", router);
+        doReturn(null).when(engine).getDimensionStackContext();
+        doReturn(false).when(engine).answersFromNaturalTerrain(anyInt(), anyInt());
+        doCallRealMethod().when(selected.complex).isNaturalTerrainContext();
+        ChunkContext context = mock(ChunkContext.class);
+        when(context.getComplex()).thenReturn(selected.complex);
+        when(context.isNaturalTerrain()).thenReturn(true);
+        IrisBiome cave = mock(IrisBiome.class);
+        IrisBiome surface = mock(IrisBiome.class);
+        ProceduralStream<IrisBiome> caves = mock(ProceduralStream.class);
+        ProceduralStream<IrisBiome> surfaces = mock(ProceduralStream.class);
+        ProceduralStream<Double> height = mock(ProceduralStream.class);
+        when(selected.complex.getCaveBiomeStream()).thenReturn(caves);
+        when(selected.complex.getTrueBiomeStream()).thenReturn(surfaces);
+        when(selected.complex.getHeightStream()).thenReturn(height);
+        when(caves.get(19D, -3D)).thenReturn(cave);
+        when(surfaces.get(19D, -3D)).thenReturn(surface);
+        when(height.get(19D, -3D)).thenReturn(80D);
+
+        try (IrisEngine.GenerationRuntimeScope ignored = engine.openGenerationRuntimeScope(binding);
+             IrisContext.Scope contextScope = IrisContext.open(engine, 73L, context)) {
+            assertSame(cave, engine.getCaveBiome(19, -3));
+            assertSame(cave, engine.getCaveBiome(19, 20, -3));
+            assertSame(cave, engine.getCaveBiome(19, 20, -3, new IrisDimensionCarvingResolver.State()));
+            assertSame(surface, engine.getSurfaceBiome(19, -3));
+            assertSame(selected.complex, engine.getComplex());
+            verify(router, never()).openCoordinateScope(anyInt(), anyInt());
+            when(context.isNaturalTerrain()).thenReturn(false);
+            assertSame(cave, engine.getCaveBiome(19, -3));
+            verify(router, times(1)).openCoordinateScope(19, -3);
+        }
+        assertSame(active.complex, engine.getComplex());
+        assertNull(IrisContext.get());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void mismatchedAndUnboundNaturalContextsKeepCoordinateRouting() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture selected = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        setField(engine, "generationHistoryRuntimeRouter", router);
+        ProceduralStream<IrisBiome> caves = mock(ProceduralStream.class);
+        when(active.complex.getCaveBiomeStream()).thenReturn(caves);
+        when(selected.complex.getCaveBiomeStream()).thenReturn(caves);
+        doCallRealMethod().when(active.complex).isNaturalTerrainContext();
+        doCallRealMethod().when(selected.complex).isNaturalTerrainContext();
+        ChunkContext context = mock(ChunkContext.class);
+        when(context.getComplex()).thenReturn(active.complex);
+        when(context.isNaturalTerrain()).thenReturn(true);
+
+        try (IrisContext.Scope ignored = IrisContext.open(engine, 73L, context)) {
+            engine.getCaveBiome(19, -3);
+            try (IrisEngine.GenerationRuntimeScope runtimeScope = engine.openGenerationRuntimeScope(
+                    detachedBinding(engine, selected.runtime))) {
+                engine.getCaveBiome(19, -3);
+            }
+        }
+        engine.getCaveBiome(19, -3);
+        verify(router, times(3)).openCoordinateScope(19, -3);
     }
 
     @Test

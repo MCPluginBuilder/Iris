@@ -211,7 +211,6 @@ public class IrisPregenerator {
             historyLastCached.set(cached.get());
             historyLastMillis.set(startedAt);
             ticker.start();
-            checkRegions();
             int[] regionBounds = task.regionBounds();
             generator.onRegionBounds(regionBounds[0], regionBounds[1], regionBounds[2], regionBounds[3]);
             generator.onPregenStart(task.getCenter().getX(), task.getCenter().getZ());
@@ -278,10 +277,6 @@ public class IrisPregenerator {
                 + ", 30s=" + formatRate(rates.thirtySecond())
                 + ", 60s=" + formatRate(rates.sixtySecond())
                 + "] chunks/s";
-    }
-
-    private void checkRegions() {
-        task.iterateRegions(this::checkRegion);
     }
 
     private void init() {
@@ -413,9 +408,6 @@ public class IrisPregenerator {
             }
 
             generatedRegions.add(pos);
-            // No checkRegions() here: re-spiraling every region after every completed region
-            // was O(regions^2) dead work on the submitter thread (result discarded, and the
-            // only side effect was CachedPregenMethod faulting plates against eviction).
         }
     }
 
@@ -435,14 +427,6 @@ public class IrisPregenerator {
         }
 
         MantleHeapPressure.requestPanicReclaim();
-    }
-
-    private void checkRegion(int x, int z) {
-        if (generatedRegions.contains(new Position2(x, z))) {
-            return;
-        }
-
-        generator.supportsRegions(x, z, listener);
     }
 
     public long getFailedChunks() {

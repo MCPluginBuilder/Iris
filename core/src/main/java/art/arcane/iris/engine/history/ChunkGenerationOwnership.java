@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Set;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -179,6 +180,34 @@ public final class ChunkGenerationOwnership {
                 }
             });
             return assigned[0];
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public int discardUnstoredClaims(WorldChunkInventory stored, Set<Long> activationIds) throws IOException {
+        Objects.requireNonNull(stored, "stored chunks");
+        Set<Long> selected = Set.copyOf(activationIds);
+        for (long activation : selected) {
+            requireActivation(activation);
+        }
+        lock.writeLock().lock();
+        try {
+            int removed = 0;
+            for (long regionKey : orderedRegionKeys()) {
+                RegionGenerationOwnership region = loadExistingRegion(regionX(regionKey), regionZ(regionKey));
+                if (region == null) {
+                    continue;
+                }
+                int count = region.discardUnstoredClaims(stored, selected);
+                if (count > 0) {
+                    region.persist(directory);
+                    explicitChunkCount -= count;
+                    regionAssignmentCounts.put(regionKey, region.assignmentCount());
+                    removed += count;
+                }
+            }
+            return removed;
         } finally {
             lock.writeLock().unlock();
         }
