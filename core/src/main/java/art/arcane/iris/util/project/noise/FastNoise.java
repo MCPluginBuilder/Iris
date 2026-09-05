@@ -76,7 +76,7 @@ public class FastNoise {
     }
 
     private static int FastFloor(float f) {
-        return (f >= 0 ? (int) f : (int) f - 1);
+        return (int) Math.floor(f);
     }
 
     private static int FastRound(float f) {
@@ -259,7 +259,7 @@ public class FastNoise {
     // Sets octave count for all fractal noise types
     // Default: 3
     public void SetFractalOctaves(int octaves) {
-        m_octaves = octaves;
+        m_octaves = Math.max(1, Math.min(16, octaves));
         CalculateFractalBounding();
     }
 
@@ -1515,7 +1515,7 @@ public class FastNoise {
         x *= m_frequency;
         y *= m_frequency;
 
-        return SingleCubic(0, x, y);
+        return SingleCubic(m_seed, x, y);
     }
 
     private float SingleCubic(int seed, float x, float y) {

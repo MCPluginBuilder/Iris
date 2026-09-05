@@ -87,7 +87,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class NativeStructurePostProcessorSurfaceTerrainTest {
-    private static final int SLAB_DEPTH = 128;
+    private static final int SLAB_DEPTH = 512;
     private static final int SLAB_MIN_Y = 64;
     private static final int SLAB_PADDING = 14;
     private static final int SLAB_WIDTH = 16;

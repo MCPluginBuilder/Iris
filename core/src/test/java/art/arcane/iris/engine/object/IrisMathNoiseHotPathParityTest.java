@@ -17,10 +17,10 @@ public class IrisMathNoiseHotPathParityTest {
         HexRandomSizeNoise randomSize = new HexRandomSizeNoise(12345L);
         HexJamesNoise james = new HexJamesNoise(54321L);
 
-        assertEquals(0.4670864519829246D, randomSize.noise(12.5D, -8.25D), 0D);
-        assertEquals(0.4935590260372404D, randomSize.noise(-31.75D, 44.5D, 9.125D), 0D);
-        assertEquals(0.5185375921658786D, james.noise(12.5D, -8.25D), 0D);
-        assertEquals(0.4557738681128938D, james.noise(-31.75D, 44.5D, 9.125D), 0D);
+        assertEquals(0.4924242426867459D, randomSize.noise(12.5D, -8.25D), 0D);
+        assertEquals(0.4856492100555178D, randomSize.noise(-31.75D, 44.5D, 9.125D), 0D);
+        assertEquals(0.3769400526313378D, james.noise(12.5D, -8.25D), 0D);
+        assertEquals(0.5487488096537423D, james.noise(-31.75D, 44.5D, 9.125D), 0D);
     }
 
     @Test
@@ -33,17 +33,17 @@ public class IrisMathNoiseHotPathParityTest {
                 .setStyle(NoiseStyle.PERLIN_IRIS.style())
                 .setExponent(1.15D);
 
-        assertEquals(0.3886291844359823D, noiseGenerator.getNoise(9988L, 31.25D, -17.5D, null), 0D);
+        assertEquals(0.5084984235498856D, noiseGenerator.getNoise(9988L, 31.25D, -17.5D, null), 0D);
 
         IrisGeneratorStyle style = NoiseStyle.IRIS_DOUBLE.style();
-        assertEquals(0.8640377573263068D, style.createNoCache(new RNG(112233L), null).noiseFast2D(42.5D, -19.75D), 0D);
+        assertEquals(0.6224926166486215D, style.createNoCache(new RNG(112233L), null).noiseFast2D(42.5D, -19.75D), 0D);
 
         IrisGenerator generator = new IrisGenerator()
                 .setZoom(9.5D)
                 .setOpacity(0.91D)
                 .setComposite(new KList<IrisNoiseGenerator>().qadd(noiseGenerator));
 
-        assertEquals(0.5671980255964687D, generator.getHeight(63.0D, -27.0D, 445566L), 0D);
+        assertEquals(0.43997118860461754D, generator.getHeight(63.0D, -27.0D, 445566L), 0D);
     }
 
     @Test

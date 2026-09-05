@@ -5,7 +5,7 @@ import art.arcane.volmlib.util.math.RNG;
 import org.jetbrains.annotations.NotNull;
 
 
-public class OffsetNoiseGenerator implements NoiseGenerator {
+public class OffsetNoiseGenerator implements NoiseGenerator, OctaveNoise {
     private static final int GENERIC = 0;
     private static final int SIMPLEX = 1;
     private static final int PERLIN = 2;
@@ -100,6 +100,13 @@ public class OffsetNoiseGenerator implements NoiseGenerator {
             case VASCULAR -> vascularBase.noiseSigned(x + ox, y, z + oz);
             default -> base.noiseSigned(x + ox, y, z + oz);
         };
+    }
+
+    @Override
+    public void setOctaves(int octaves) {
+        if (base instanceof OctaveNoise octaveNoise) {
+            octaveNoise.setOctaves(octaves);
+        }
     }
 
     @Override

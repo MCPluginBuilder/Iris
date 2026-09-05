@@ -30,7 +30,7 @@ public class FractalRigidMultiSimplexNoise implements NoiseGenerator, OctaveNois
     }
 
     public double f(double v) {
-        return (v / 2D) + 0.5D;
+        return 1D + (v - 1D) * n.getFractalBounding();
     }
 
     @Override

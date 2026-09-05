@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -78,13 +79,11 @@ public final class IrisNoiseGeneratorCacheTest {
 
         private GeneratorFixture() {
             when(data.getEngine()).thenReturn(engine);
-            when(firstGenerator.oct(OCTAVES)).thenReturn(firstGenerator);
-            when(secondGenerator.oct(OCTAVES)).thenReturn(secondGenerator);
             Map<Long, CNG> generators = Map.of(
                     11L + GENERATOR_SALT - CONFIGURED_SEED, firstGenerator,
                     29L + GENERATOR_SALT - CONFIGURED_SEED, secondGenerator
             );
-            when(style.createNoCache(any(RNG.class), same(data))).thenAnswer(invocation -> {
+            when(style.createForLayer(any(RNG.class), same(data), eq(OCTAVES))).thenAnswer(invocation -> {
                 RNG rng = invocation.getArgument(0);
                 return generators.get(rng.getSeed());
             });

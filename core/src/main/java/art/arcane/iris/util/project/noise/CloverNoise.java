@@ -39,10 +39,6 @@ public class CloverNoise implements NoiseGenerator {
 
     @Override
     public double noise(double x, double y, double z) {
-        if (z == 0) {
-            return n2.noise(x, y);
-        }
-
         return n3.noise(x, y, z);
     }
 
@@ -129,8 +125,6 @@ public class CloverNoise implements NoiseGenerator {
             Vector2 p_floor = p.floor();
 
             Vector2 c_11 = offset(p_floor);
-            Vector2 c_10 = offset(p_floor.add(0, -1));
-            Vector2 c_12 = offset(p_floor.add(0, 1));
             Vector2 c_01 = offset(p_floor.add(-1, 0));
             Vector2 c_21 = offset(p_floor.add(1, 0));
 
@@ -143,6 +137,7 @@ public class CloverNoise implements NoiseGenerator {
             Vector2 a, c, d;
 
             if (side_nx < 0 && p.x < c_11.x || side_px > 0 && p.x > c_11.x) {
+                Vector2 c_12 = offset(p_floor.add(0, 1));
                 double side_py = m_p_c11.sub(d_p_c11.mult(c_12)).ymx();
 
                 if (side_py > 0) {
@@ -155,6 +150,7 @@ public class CloverNoise implements NoiseGenerator {
                     d = new Vector2(1, 1);
                 }
             } else {
+                Vector2 c_10 = offset(p_floor.add(0, -1));
                 double side_ny = m_p_c11.sub(d_p_c11.mult(c_10)).ymx();
 
                 if (side_ny > 0) {
@@ -235,6 +231,7 @@ public class CloverNoise implements NoiseGenerator {
          * @return The value of noise, from 0 to 1.
          */
         public double fractalNoise(Vector2 p, int iterations) {
+            iterations = Math.max(1, Math.min(16, iterations));
             double total = 0;
             double weight = 1;
             double div = 0;
@@ -382,6 +379,18 @@ public class CloverNoise implements NoiseGenerator {
         private static final long HASH_M = 0x1000000000000L;
         private static final double POINT_SPREAD = 0.2;
         private static final double CURL_DX = 0.0001;
+        private static final double[] HEIGHT_SINES = new double[1000];
+        private static final double[] HEIGHT_COSINES = new double[1000];
+        private static final ThreadLocal<Vector3[]> SAMPLE_VERTICES = ThreadLocal.withInitial(Noise3D::createSampleVertices);
+
+        static {
+            for (int index = 0; index < HEIGHT_SINES.length; index++) {
+                double height = (((index + 0.5D) / 100D) % 1D - 0.5D) * Math.PI / 2D;
+                HEIGHT_SINES[index] = Math.sin(height);
+                HEIGHT_COSINES[index] = Math.cos(height);
+            }
+        }
+
         private final long seed;
 
         public Noise3D(long seed) {
@@ -390,6 +399,14 @@ public class CloverNoise implements NoiseGenerator {
 
         public Noise3D() {
             this(System.currentTimeMillis());
+        }
+
+        private static Vector3[] createSampleVertices() {
+            Vector3[] vertices = new Vector3[21];
+            for (int index = 0; index < vertices.length; index++) {
+                vertices[index] = new Vector3();
+            }
+            return vertices;
         }
 
         private long doHash(long input, long seed) {
@@ -433,27 +450,23 @@ public class CloverNoise implements NoiseGenerator {
             return (double) hash / HASH_M;
         }
 
-        private Vector3 offset(Vector3 position) {
-            return offset(position.x, position.y, position.z);
+        private Vector3 offset(Vector3 destination, Vector3 position, double xOffset, double yOffset, double zOffset) {
+            return offset(destination, position.x + xOffset, position.y + yOffset, position.z + zOffset);
         }
 
-        private Vector3 offset(Vector3 position, double xOffset, double yOffset, double zOffset) {
-            return offset(position.x + xOffset, position.y + yOffset, position.z + zOffset);
-        }
-
-        private Vector3 offset(double positionX, double positionY, double positionZ) {
+        private Vector3 offset(Vector3 destination, double positionX, double positionY, double positionZ) {
             double hash = hash(positionX, positionY, positionZ);
             double theta = hash * Math.PI * 2000;
-            double height = (((Math.floor(hash * 1000) + 0.5) / 100) % 1 - 0.5) * Math.PI / 2;
+            int heightIndex = (int) (hash * 1000D);
             double layer = Math.floor(hash * 10 + 1) / 10;
-            double cosHeight = Math.cos(height);
+            double cosHeight = HEIGHT_COSINES[heightIndex];
             double offsetX = Math.sin(theta) * cosHeight * layer + 0.5;
-            double offsetY = Math.sin(height) * layer + 0.5;
+            double offsetY = HEIGHT_SINES[heightIndex] * layer + 0.5;
             double offsetZ = Math.cos(theta) * cosHeight * layer + 0.5;
-            return new Vector3(
-                    positionX + (offsetX * (POINT_SPREAD * 2) + (0.5 - POINT_SPREAD)),
-                    positionY + (offsetY * (POINT_SPREAD * 2) + (0.5 - POINT_SPREAD)),
-                    positionZ + (offsetZ * (POINT_SPREAD * 2) + (0.5 - POINT_SPREAD)));
+            destination.x = positionX + (offsetX * (POINT_SPREAD * 2) + (0.5 - POINT_SPREAD));
+            destination.y = positionY + (offsetY * (POINT_SPREAD * 2) + (0.5 - POINT_SPREAD));
+            destination.z = positionZ + (offsetZ * (POINT_SPREAD * 2) + (0.5 - POINT_SPREAD));
+            return destination;
         }
 
         private boolean boundary(int permutation, Vector3 p, Vector3 c_00, Vector3 c_10, Vector3 c_20, Vector3 c_01, Vector3 c_11, Vector3 c_21, Vector3 c_02, Vector3 c_12, Vector3 c_22) {
@@ -565,27 +578,34 @@ public class CloverNoise implements NoiseGenerator {
          * @return The value of noise, from 0 to 1.
          */
         public double noise(Vector3 p) {
-            Vector3 p_floor = p.floor();
+            return sample(p, SAMPLE_VERTICES.get());
+        }
 
-            Vector3 c_111 = offset(p_floor);
-            Vector3 c_100 = offset(p_floor, 0, -1, -1);
-            Vector3 c_010 = offset(p_floor, -1, 0, -1);
-            Vector3 c_110 = offset(p_floor, 0, 0, -1);
-            Vector3 c_210 = offset(p_floor, 1, 0, -1);
-            Vector3 c_120 = offset(p_floor, 0, 1, -1);
-            Vector3 c_001 = offset(p_floor, -1, -1, 0);
-            Vector3 c_101 = offset(p_floor, 0, -1, 0);
-            Vector3 c_201 = offset(p_floor, 1, -1, 0);
-            Vector3 c_011 = offset(p_floor, -1, 0, 0);
-            Vector3 c_211 = offset(p_floor, 1, 0, 0);
-            Vector3 c_021 = offset(p_floor, -1, 1, 0);
-            Vector3 c_121 = offset(p_floor, 0, 1, 0);
-            Vector3 c_221 = offset(p_floor, 1, 1, 0);
-            Vector3 c_102 = offset(p_floor, 0, -1, 1);
-            Vector3 c_012 = offset(p_floor, -1, 0, 1);
-            Vector3 c_112 = offset(p_floor, 0, 0, 1);
-            Vector3 c_212 = offset(p_floor, 1, 0, 1);
-            Vector3 c_122 = offset(p_floor, 0, 1, 1);
+        private double sample(Vector3 p, Vector3[] vertices) {
+            Vector3 p_floor = vertices[20];
+            p_floor.x = Math.floor(p.x);
+            p_floor.y = Math.floor(p.y);
+            p_floor.z = Math.floor(p.z);
+
+            Vector3 c_111 = offset(vertices[0], p_floor.x, p_floor.y, p_floor.z);
+            Vector3 c_100 = offset(vertices[1], p_floor, 0, -1, -1);
+            Vector3 c_010 = offset(vertices[2], p_floor, -1, 0, -1);
+            Vector3 c_110 = offset(vertices[3], p_floor, 0, 0, -1);
+            Vector3 c_210 = offset(vertices[4], p_floor, 1, 0, -1);
+            Vector3 c_120 = offset(vertices[5], p_floor, 0, 1, -1);
+            Vector3 c_001 = offset(vertices[6], p_floor, -1, -1, 0);
+            Vector3 c_101 = offset(vertices[7], p_floor, 0, -1, 0);
+            Vector3 c_201 = offset(vertices[8], p_floor, 1, -1, 0);
+            Vector3 c_011 = offset(vertices[9], p_floor, -1, 0, 0);
+            Vector3 c_211 = offset(vertices[10], p_floor, 1, 0, 0);
+            Vector3 c_021 = offset(vertices[11], p_floor, -1, 1, 0);
+            Vector3 c_121 = offset(vertices[12], p_floor, 0, 1, 0);
+            Vector3 c_221 = offset(vertices[13], p_floor, 1, 1, 0);
+            Vector3 c_102 = offset(vertices[14], p_floor, 0, -1, 1);
+            Vector3 c_012 = offset(vertices[15], p_floor, -1, 0, 1);
+            Vector3 c_112 = offset(vertices[16], p_floor, 0, 0, 1);
+            Vector3 c_212 = offset(vertices[17], p_floor, 1, 0, 1);
+            Vector3 c_122 = offset(vertices[18], p_floor, 0, 1, 1);
 
             boolean x_bound = boundary(1, p, c_100, c_110, c_120, c_101, c_111, c_121, c_102, c_112, c_122);
             boolean y_bound = boundary(2, p, c_010, c_110, c_210, c_011, c_111, c_211, c_012, c_112, c_212);
@@ -596,7 +616,7 @@ public class CloverNoise implements NoiseGenerator {
             if (x_bound) {
                 if (y_bound) {
                     if (z_bound) {
-                        a = offset(p_floor, -1, -1, -1);
+                        a = offset(vertices[19], p_floor, -1, -1, -1);
                         b = c_001;
                         c = c_010;
                         d = c_011;
@@ -606,7 +626,7 @@ public class CloverNoise implements NoiseGenerator {
                         h = c_111;
                     } else {
                         a = c_001;
-                        b = offset(p_floor, -1, -1, 1);
+                        b = offset(vertices[19], p_floor, -1, -1, 1);
                         c = c_011;
                         d = c_012;
                         e = c_101;
@@ -618,7 +638,7 @@ public class CloverNoise implements NoiseGenerator {
                     if (z_bound) {
                         a = c_010;
                         b = c_011;
-                        c = offset(p_floor, -1, 1, -1);
+                        c = offset(vertices[19], p_floor, -1, 1, -1);
                         d = c_021;
                         e = c_110;
                         f = c_111;
@@ -628,7 +648,7 @@ public class CloverNoise implements NoiseGenerator {
                         a = c_011;
                         b = c_012;
                         c = c_021;
-                        d = offset(p_floor, -1, 1, 1);
+                        d = offset(vertices[19], p_floor, -1, 1, 1);
                         e = c_111;
                         f = c_112;
                         g = c_121;
@@ -642,7 +662,7 @@ public class CloverNoise implements NoiseGenerator {
                         b = c_101;
                         c = c_110;
                         d = c_111;
-                        e = offset(p_floor, 1, -1, -1);
+                        e = offset(vertices[19], p_floor, 1, -1, -1);
                         f = c_201;
                         g = c_210;
                         h = c_211;
@@ -652,7 +672,7 @@ public class CloverNoise implements NoiseGenerator {
                         c = c_111;
                         d = c_112;
                         e = c_201;
-                        f = offset(p_floor, 1, -1, 1);
+                        f = offset(vertices[19], p_floor, 1, -1, 1);
                         g = c_211;
                         h = c_212;
                     }
@@ -664,7 +684,7 @@ public class CloverNoise implements NoiseGenerator {
                         d = c_121;
                         e = c_210;
                         f = c_211;
-                        g = offset(p_floor, 1, 1, -1);
+                        g = offset(vertices[19], p_floor, 1, 1, -1);
                         h = c_221;
                     } else {
                         a = c_111;
@@ -674,7 +694,7 @@ public class CloverNoise implements NoiseGenerator {
                         e = c_211;
                         f = c_212;
                         g = c_221;
-                        h = offset(p_floor, 1, 1, 1);
+                        h = offset(vertices[19], p_floor, 1, 1, 1);
                     }
                 }
             }
@@ -783,6 +803,7 @@ public class CloverNoise implements NoiseGenerator {
          * @return The value of noise, from 0 to 1.
          */
         public double fractalNoise(Vector3 p, int iterations) {
+            iterations = Math.max(1, Math.min(16, iterations));
             double total = 0;
             double weight = 1;
             double div = 0;
@@ -980,6 +1001,9 @@ public class CloverNoise implements NoiseGenerator {
 
         public Vector2 normalize() {
             double len2 = x * x + y * y;
+            if (len2 == 0D) {
+                return new Vector2(0D, 0D);
+            }
             double len = Math.sqrt(len2);
 
             return new Vector2(x / len, y / len);
@@ -1092,6 +1116,9 @@ public class CloverNoise implements NoiseGenerator {
 
         public Vector3 normalize() {
             double len2 = x * x + y * y + z * z;
+            if (len2 == 0D) {
+                return new Vector3(0D, 0D, 0D);
+            }
             double len = Math.sqrt(len2);
 
             return new Vector3(x / len, y / len, z / len);

@@ -38,6 +38,26 @@ public class IrisInterpolationBoundsTest {
     }
 
     @Test
+    public void fractionalBoundsMatchSeparatePassesAndSampleEachCoordinateOnce() {
+        for (InterpolationMethod method : InterpolationMethod.values()) {
+            Map<Coordinate, NoiseBounds> expectedSamples = new HashMap<>();
+            NoiseBounds expected = separatePasses(method, -31.75D, 29.25D, 32D,
+                    IrisInterpolationBoundsTest::asymmetricBounds, expectedSamples);
+            Map<Coordinate, Integer> actualSamples = new HashMap<>();
+            NoiseBounds actual = IrisInterpolation.getNoiseBounds(method, -31.75D, 29.25D, 32D, (x, z) -> {
+                actualSamples.merge(new Coordinate(x, z), 1, Integer::sum);
+                return asymmetricBounds(x, z);
+            });
+
+            assertBounds(expected, actual);
+            assertEquals(expectedSamples.keySet(), actualSamples.keySet());
+            for (int calls : actualSamples.values()) {
+                assertEquals(1, calls);
+            }
+        }
+    }
+
+    @Test
     public void nestedProvidersKeepTheirOwnSamplingSequences() {
         for (InterpolationMethod method : InterpolationMethod.values()) {
             NoiseBoundsProvider expectedProvider = (x, z) -> separatePasses(
@@ -95,7 +115,7 @@ public class IrisInterpolationBoundsTest {
         assertBounds(expected, actual);
     }
 
-    private static NoiseBounds separatePasses(InterpolationMethod method, int x, int z, double scale,
+    private static NoiseBounds separatePasses(InterpolationMethod method, double x, double z, double scale,
                                               NoiseBoundsProvider provider, Map<Coordinate, NoiseBounds> samples) {
         double minimum = IrisInterpolation.getNoise(method, x, z, scale,
                 (sx, sz) -> samples.computeIfAbsent(new Coordinate(sx, sz),

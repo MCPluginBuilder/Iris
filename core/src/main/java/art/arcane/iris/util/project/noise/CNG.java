@@ -39,6 +39,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.IdentityHashMap;
 import java.util.List;
 
 @Data
@@ -79,6 +80,7 @@ public class CNG {
     private transient double signedFractureScale;
     private transient boolean fastPathStateDirty = true;
     private transient int coordCacheSalt;
+    private transient Object coordCacheIdentity = new Object();
 
     public CNG(RNG random) {
         this(random, 1);
@@ -93,7 +95,7 @@ public class CNG {
     }
 
     public CNG(RNG random, NoiseType type, double opacity, int octaves) {
-        this(random, type.create(random.nextParallelRNG((long) ((1113334944L * opacity) + 12922 + octaves)).lmax()), opacity, octaves);
+        this(random, type.create(random.nextParallelRNG((long) ((1113334944L * opacity) + 12923)).lmax()), opacity, octaves);
     }
 
     public CNG(RNG random, NoiseGenerator generator, double opacity, int octaves) {
@@ -115,8 +117,8 @@ public class CNG {
         this.injectorMode = InjectorMode.ADD;
         coordCacheSalt = createCoordCacheSalt();
 
-        if (generator instanceof OctaveNoise) {
-            ((OctaveNoise) generator).setOctaves(octaves);
+        if (generator instanceof OctaveNoise octaveNoise) {
+            octaveNoise.setOctaves(octaves);
         }
 
         refreshFastPathState();
@@ -256,7 +258,7 @@ public class CNG {
             return this;
         }
 
-        cache = null;
+        markFastPathStateDirty();
 
         File f = new File(new File(cacheFolder, ".cache"), key + ".cnm");
         FloatCache fbc;
@@ -306,6 +308,7 @@ public class CNG {
         }
 
         cache = fbc;
+        coordCacheIdentity = new Object();
         return this;
     }
 
@@ -352,6 +355,16 @@ public class CNG {
     public CNG scale(double c) {
         scale = c;
         markFastPathStateDirty();
+        return this;
+    }
+
+    public CNG zoom(double factor) {
+        if (!Double.isFinite(factor) || factor <= 0D || !Double.isFinite(1D / factor)) {
+            throw new IllegalArgumentException("Zoom must be positive and finite");
+        }
+        if (factor != 1D) {
+            zoom(factor, new IdentityHashMap<>());
+        }
         return this;
     }
 
@@ -650,46 +663,16 @@ public class CNG {
         return IrisInterpolation.lerp(min, max, noise);
     }
 
-    private double getNoise(double... dim) {
-        ensureFastPathState();
-        double scale = effectiveScale;
-
-        if (fracture == null || noscale) {
-            return generator.noise(
-                    (dim.length > 0 ? dim[0] : 0D) * scale,
-                    (dim.length > 1 ? dim[1] : 0D) * scale,
-                    (dim.length > 2 ? dim[2] : 0D) * scale) * opacity;
-        }
-
-        double x = dim.length > 0 ? dim[0] : 0D;
-        double y = dim.length > 1 ? dim[1] : 0D;
-        double z = dim.length > 2 ? dim[2] : 0D;
-
-        if (dim.length > 0) {
-            x += (fracture.noise(dim) - 0.5) * fscale;
-        }
-
-        if (dim.length > 1) {
-            y += (fracture.noise(dim[1], dim[0]) - 0.5) * fscale;
-        }
-
-        if (dim.length > 2) {
-            z += (fracture.noise(dim[2], dim[0], dim[1]) - 0.5) * fscale;
-        }
-
-        return generator.noise(x * scale, y * scale, z * scale) * opacity;
-    }
-
     private double getNoise(double x) {
         ensureFastPathState();
         double scl = effectiveScale;
 
         if (fracture == null || noscale) {
-            return generator.noise(x * scl, 0D, 0D) * opacity;
+            return generator.noise(x * scl) * opacity;
         }
 
         double fx = x + ((fracture.noiseFast1D(x) - 0.5D) * fscale);
-        return generator.noise(fx * scl, 0D, 0D) * opacity;
+        return generator.noise(fx * scl) * opacity;
     }
 
     private double getNoise(double x, double z) {
@@ -697,12 +680,12 @@ public class CNG {
         double scl = effectiveScale;
 
         if (fracture == null || noscale) {
-            return generator.noise(x * scl, z * scl, 0D) * opacity;
+            return generator.noise(x * scl, z * scl) * opacity;
         }
 
         double fx = x + ((fracture.noiseFast2D(x, z) - 0.5D) * fscale);
         double fz = z + ((fracture.noiseFast2D(z, x) - 0.5D) * fscale);
-        return generator.noise(fx * scl, fz * scl, 0D) * opacity;
+        return generator.noise(fx * scl, fz * scl) * opacity;
     }
 
     private double getNoise(double x, double y, double z) {
@@ -735,8 +718,15 @@ public class CNG {
         return (noise(dim) * 2) - 1;
     }
 
-    private static boolean isWholeCoordinate(double value) {
-        return value == Math.rint(value);
+    private boolean isCachedCoordinate(double x, double z) {
+        return cache != null
+                && x >= 0D && x < cache.getWidth()
+                && z >= 0D && z < cache.getHeight()
+                && x == (int) x && z == (int) z;
+    }
+
+    private double getCachedNoise(double x, double z) {
+        return cache.get((int) z * cache.getWidth() + (int) x);
     }
 
     private double applyPost(double n, double x) {
@@ -860,57 +850,12 @@ public class CNG {
     }
 
     public double noise(double... dim) {
-        if (dim.length == 1) {
-            return noise(dim[0]);
-        }
-
-        if (dim.length == 2) {
-            return noise(dim[0], dim[1]);
-        }
-
-        if (dim.length == 3) {
-            return noise(dim[0], dim[1], dim[2]);
-        }
-
-        double n = getNoise(dim);
-        n = power != 1D ? (n < 0 ? -Math.pow(Math.abs(n), power) : Math.pow(n, power)) : n;
-        double m = 1;
-        if (children == null) {
-            return (n - down + up) * patch;
-        }
-
-        for (CNG i : children) {
-            double source = n;
-            double value = i.noise(dim);
-            switch (injectorMode) {
-                case ADD -> {
-                    n = source + value;
-                    m += 1D;
-                }
-                case SRC_SUBTRACT -> {
-                    n = source - value < 0D ? 0D : source - value;
-                    m -= 1D;
-                }
-                case DST_SUBTRACT -> {
-                    n = value - source < 0D ? 0D : source - value;
-                    m -= 1D;
-                }
-                case MULTIPLY -> n = source * value;
-                case MAX -> n = Math.max(source, value);
-                case MIN -> n = Math.min(source, value);
-                case SRC_MOD -> n = source % value;
-                case SRC_POW -> n = Math.pow(source, value);
-                case DST_MOD -> n = value % source;
-                case DST_POW -> n = Math.pow(value, source);
-                case CUSTOM -> {
-                    double[] combined = injector.combine(source, value);
-                    n = combined[0];
-                    m += combined[1];
-                }
-            }
-        }
-
-        return ((n / m) - down + up) * patch;
+        return switch (dim.length) {
+            case 1 -> noise(dim[0]);
+            case 2 -> noise(dim[0], dim[1]);
+            case 3 -> noise(dim[0], dim[1], dim[2]);
+            default -> throw new IllegalArgumentException("Noise requires one, two, or three coordinates");
+        };
     }
 
     public double noise(double x) {
@@ -922,16 +867,16 @@ public class CNG {
     }
 
     public double noise(double x, double z) {
-        if (cache != null && isWholeCoordinate(x) && isWholeCoordinate(z)) {
-            return cache.get((int) x, (int) z);
+        if (isCachedCoordinate(x, z)) {
+            return getCachedNoise(x, z);
         }
 
         return applyPost(getNoise(x, z), x, z);
     }
 
     public double noiseFast2D(double x, double z) {
-        if (cache != null && isWholeCoordinate(x) && isWholeCoordinate(z)) {
-            return cache.get((int) x, (int) z);
+        if (isCachedCoordinate(x, z)) {
+            return getCachedNoise(x, z);
         }
 
         if (isIdentityPostFastPath()) {
@@ -963,12 +908,13 @@ public class CNG {
         long kx = Double.doubleToRawLongBits(x);
         long kz = Double.doubleToRawLongBits(z);
         CoordCache cc = COORD_CACHE_2D.get();
+        Object identity = coordCacheIdentity();
         int slot = coordSlot(kx, kz, coordCacheSalt());
-        if (cc.owner[slot] == this && cc.kx[slot] == kx && cc.kz[slot] == kz) {
+        if (cc.owner[slot] == identity && cc.kx[slot] == kx && cc.kz[slot] == kz) {
             return cc.value[slot];
         }
         double computed = computeNoiseFastSigned2D(x, z);
-        cc.owner[slot] = this;
+        cc.owner[slot] = identity;
         cc.kx[slot] = kx;
         cc.kz[slot] = kz;
         cc.value[slot] = computed;
@@ -976,8 +922,8 @@ public class CNG {
     }
 
     private double computeNoiseFastSigned2D(double x, double z) {
-        if (cache != null && isWholeCoordinate(x) && isWholeCoordinate(z)) {
-            return (cache.get((int) x, (int) z) * 2D) - 1D;
+        if (isCachedCoordinate(x, z)) {
+            return (getCachedNoise(x, z) * 2D) - 1D;
         }
 
         if (hasIdentitySignedFastPath()) {
@@ -1014,12 +960,13 @@ public class CNG {
         long ky = Double.doubleToRawLongBits(y);
         long kz = Double.doubleToRawLongBits(z);
         CoordCache3D cc = COORD_CACHE_3D.get();
+        Object identity = coordCacheIdentity();
         int slot = coordSlot(kx ^ Long.rotateLeft(ky, 21), kz, coordCacheSalt());
-        if (cc.owner[slot] == this && cc.kx[slot] == kx && cc.ky[slot] == ky && cc.kz[slot] == kz) {
+        if (cc.owner[slot] == identity && cc.kx[slot] == kx && cc.ky[slot] == ky && cc.kz[slot] == kz) {
             return cc.value[slot];
         }
         double computed = hasIdentitySignedFastPath() ? getSignedNoise(x, y, z) : (noiseFast3D(x, y, z) * 2D) - 1D;
-        cc.owner[slot] = this;
+        cc.owner[slot] = identity;
         cc.kx[slot] = kx;
         cc.ky[slot] = ky;
         cc.kz[slot] = kz;
@@ -1034,7 +981,15 @@ public class CNG {
     }
 
     public CNG oct(int octaves) {
+        if (oct == octaves) {
+            return this;
+        }
+
         oct = octaves;
+        if (generator instanceof OctaveNoise octaveNoise) {
+            octaveNoise.setOctaves(octaves);
+        }
+        markFastPathStateDirty();
         return this;
     }
 
@@ -1056,6 +1011,23 @@ public class CNG {
         return identitySignedFastPath;
     }
 
+    private void zoom(double factor, IdentityHashMap<CNG, Boolean> visited) {
+        if (visited.put(this, Boolean.TRUE) != null) {
+            return;
+        }
+        bakedScale /= factor;
+        fscale *= factor;
+        if (fracture != null) {
+            fracture.zoom(factor, visited);
+        }
+        if (children != null) {
+            for (CNG child : children) {
+                child.zoom(factor, visited);
+            }
+        }
+        markFastPathStateDirty();
+    }
+
     private void ensureFastPathState() {
         if (fastPathStateDirty) {
             refreshFastPathState();
@@ -1064,6 +1036,16 @@ public class CNG {
 
     private void markFastPathStateDirty() {
         fastPathStateDirty = true;
+        cache = null;
+        coordCacheIdentity = new Object();
+    }
+
+    private Object coordCacheIdentity() {
+        if (coordCacheIdentity == null) {
+            coordCacheIdentity = new Object();
+        }
+
+        return coordCacheIdentity;
     }
 
     private int coordCacheSalt() {
@@ -1112,12 +1094,12 @@ public class CNG {
         CNG localFracture = fracture;
 
         if (localFracture == null || noscale) {
-            return signedWithOpacity(localGenerator.noiseSigned(x * scl, z * scl, 0D));
+            return signedWithOpacity(localGenerator.noiseSigned(x * scl, z * scl));
         }
 
         double fx = x + (localFracture.noiseFastSigned2D(x, z) * signedFractureScale);
         double fz = z + (localFracture.noiseFastSigned2D(z, x) * signedFractureScale);
-        return signedWithOpacity(localGenerator.noiseSigned(fx * scl, fz * scl, 0D));
+        return signedWithOpacity(localGenerator.noiseSigned(fx * scl, fz * scl));
     }
 
     private double getSignedNoise(double x, double y, double z) {

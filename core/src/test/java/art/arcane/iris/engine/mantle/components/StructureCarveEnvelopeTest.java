@@ -2,6 +2,7 @@ package art.arcane.iris.engine.mantle.components;
 
 import art.arcane.iris.engine.object.IrisStructureCarveShape;
 import art.arcane.iris.util.project.noise.CNG;
+import art.arcane.iris.util.project.noise.NoiseType;
 import art.arcane.volmlib.util.math.RNG;
 import org.junit.Test;
 
@@ -99,7 +100,7 @@ public class StructureCarveEnvelopeTest {
 
     @Test
     public void lobedSideReachWandersInsideTheConfiguredPaddingBand() {
-        CNG lobe = new CNG(new RNG(1337L), 1D, 1);
+        CNG lobe = new CNG(new RNG(1337L), NoiseType.CLOVER, 1D, 1);
         double lowest = 14D;
         double highest = 0D;
 

@@ -126,7 +126,7 @@ public class CNGInjectorParityTest {
     }
 
     private double legacyCombined1D(CompositeFixture fixture, double x) {
-        double n = fixture.rootGenerator.noise(x, 0D, 0D);
+        double n = fixture.rootGenerator.noise(x);
         double m = 1D;
 
         double valueA = fixture.childA.noise(x);
@@ -143,7 +143,7 @@ public class CNGInjectorParityTest {
     }
 
     private double legacyCombined2D(CompositeFixture fixture, double x, double z) {
-        double n = fixture.rootGenerator.noise(x, z, 0D);
+        double n = fixture.rootGenerator.noise(x, z);
         double m = 1D;
 
         double valueA = fixture.childA.noise(x, z);

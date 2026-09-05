@@ -31,7 +31,7 @@ public class VascularNoise implements NoiseGenerator {
     }
 
     private double filter(double noise) {
-        double normalized = (noise * 0.5D) + 0.5D;
+        double normalized = 0.5D - noise * 0.5D;
         if (normalized < 0D) {
             return 0D;
         }
@@ -40,6 +40,7 @@ public class VascularNoise implements NoiseGenerator {
     }
 
     private double filterSigned(double noise) {
+        noise = -noise;
         if (noise < -1D) {
             return -1D;
         }

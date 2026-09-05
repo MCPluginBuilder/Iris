@@ -25,6 +25,7 @@ public class FractalBillowPerlinNoise implements NoiseGenerator, OctaveNoise {
 
     public FractalBillowPerlinNoise(long seed) {
         this.n = new FastNoiseDouble(new RNG(seed).lmax());
+        n.setLongerp(FastNoiseDouble.Longerp.Qulongic);
         n.setFractalOctaves(1);
         n.setFractalType(FractalType.Billow);
     }
