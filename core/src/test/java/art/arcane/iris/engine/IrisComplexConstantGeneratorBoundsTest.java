@@ -7,6 +7,7 @@ import org.junit.Test;
 import java.util.Arrays;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class IrisComplexConstantGeneratorBoundsTest {
@@ -51,17 +52,53 @@ public class IrisComplexConstantGeneratorBoundsTest {
     }
 
     @Test
-    public void nonconstantAndNonfiniteBoundsRetainNoiseEvaluation() {
-        double[][] bounds = {{0D, 1D}, {-9D, 12D}, {Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY},
-                {Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY}, {Double.NaN, Double.NaN}};
+    public void nonconstantFiniteBoundsRetainNoiseEvaluation() {
+        double[][] bounds = {{0D, 1D}, {-9D, 12D}};
         for (double[] pair : bounds) {
-            for (double noise : new double[]{0.3D, Double.NaN, Double.POSITIVE_INFINITY}) {
+            for (double noise : new double[]{0.3D, -2D, 3D}) {
                 CountingGenerator generator = new CountingGenerator(noise);
                 double expected = (0D + M.lerp(pair[0], pair[1], noise)) / 1;
                 assertBits(expected, IrisComplex.averageGeneratorHeights(new IrisGenerator[]{generator},
                         pair[0], pair[1], 12D, -9D, 7331L));
                 assertEquals(1, generator.calls);
             }
+        }
+    }
+
+    @Test
+    public void nonfiniteBoundsFailBeforeSamplingWithColumnAndGeneratorDetails() {
+        for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            for (double[] bounds : new double[][]{{invalid, 1D}, {0D, invalid}, {invalid, invalid}}) {
+                CountingGenerator generator = new CountingGenerator(0.3D);
+                generator.setLoadKey("diagnostic/terrain");
+                IllegalStateException failure = assertThrows(IllegalStateException.class,
+                        () -> IrisComplex.averageGeneratorHeights(new IrisGenerator[]{generator},
+                                bounds[0], bounds[1], 671D, 2437D, 7331L));
+                assertTrue(failure.getMessage().contains("671.0,2437.0"));
+                assertTrue(failure.getMessage().contains("generator=diagnostic/terrain"));
+                assertTrue(failure.getMessage().contains("bounds=" + bounds[0] + ".." + bounds[1]));
+                assertEquals(0, generator.calls);
+            }
+        }
+    }
+
+    @Test
+    public void nonfiniteActiveNoiseFailsAtItsFirstSampleWithObservedValue() {
+        for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            CountingGenerator valid = new CountingGenerator(0.3D);
+            CountingGenerator invalidGenerator = new CountingGenerator(invalid);
+            invalidGenerator.setLoadKey("diagnostic/cliffs");
+            CountingGenerator unsampled = new CountingGenerator(0.5D);
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    () -> IrisComplex.averageGeneratorHeights(new IrisGenerator[]{valid, invalidGenerator, unsampled},
+                            0D, 44D, 671D, 2437D, 7331L));
+            assertTrue(failure.getMessage().contains("671.0,2437.0"));
+            assertTrue(failure.getMessage().contains("generator=diagnostic/cliffs"));
+            assertTrue(failure.getMessage().contains("noise=" + invalid));
+            assertTrue(failure.getMessage().contains("bounds=0.0..44.0"));
+            assertEquals(1, valid.calls);
+            assertEquals(1, invalidGenerator.calls);
+            assertEquals(0, unsampled.calls);
         }
     }
 
