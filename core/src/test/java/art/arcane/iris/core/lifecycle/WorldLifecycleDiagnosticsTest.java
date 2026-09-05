@@ -15,7 +15,7 @@ import static org.junit.Assert.fail;
 public class WorldLifecycleDiagnosticsTest {
     @Test
     public void studioCreateSelectionFailurePrintsFullStacktrace() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.PAPER, false, false, false));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.PAPER, false, false, false));
         WorldLifecycleRequest request = new WorldLifecycleRequest("studio", NamespacedKey.minecraft("studio"), World.Environment.NORMAL, null, null, null, true, false, 1337L, true, false, WorldLifecycleCaller.STUDIO);
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();

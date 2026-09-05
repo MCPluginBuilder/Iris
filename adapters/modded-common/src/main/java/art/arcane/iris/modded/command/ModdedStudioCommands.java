@@ -90,7 +90,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.modded.localization.ModdedCommandMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedStudioCommands {
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);

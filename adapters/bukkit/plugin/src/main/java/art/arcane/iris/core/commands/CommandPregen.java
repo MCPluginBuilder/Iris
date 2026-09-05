@@ -18,6 +18,7 @@
 
 package art.arcane.iris.core.commands;
 
+import art.arcane.iris.core.localization.IrisMessages;
 import art.arcane.iris.Iris;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.pregenerator.PregenTask;
@@ -33,7 +34,6 @@ import org.bukkit.util.Vector;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.BukkitCommandMessagesExtended;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 @Director(name = "pregen", aliases = "pregenerate", description = "Pregenerate your Iris worlds!", descriptionKey = "iris.director.commandpregen.director.pregenerate_your_iris_worlds")
@@ -62,7 +62,7 @@ public class CommandPregen implements DirectorExecutor {
 
         if (PregeneratorJob.getInstance() != null) {
             // Reject like the modded adapter does; never silently kill a running job.
-            sender().sendMessage(IrisLanguage.text(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PREGENERATION_TASK_IS_ALREADY_RUNNING_STOP_IT_FIRST_WITH_IRIS));
+            sender().sendMessage(IrisLanguage.text(IrisMessages.PREGEN_ALREADY_RUNNING));
             return;
         }
 

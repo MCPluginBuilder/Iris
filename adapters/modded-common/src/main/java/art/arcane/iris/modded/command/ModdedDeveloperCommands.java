@@ -32,7 +32,7 @@ import java.util.Enumeration;
 import java.util.function.Predicate;
 
 import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.modded.localization.ModdedCommandMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 final class ModdedDeveloperCommands {
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);

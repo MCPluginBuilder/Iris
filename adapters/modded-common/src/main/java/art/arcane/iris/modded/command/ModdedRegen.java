@@ -62,7 +62,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.modded.localization.ModdedCommandMessages;
 public final class ModdedRegen {
     private static final int APPLY_AHEAD = 8;
     private static final long CHUNK_SLOT_TIMEOUT_MILLIS = 120000L;

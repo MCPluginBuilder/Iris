@@ -21,7 +21,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void studioSelectsPaperLikeBackendOnPaper() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.PAPER, false, false, true));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.PAPER, false, false, true));
         WorldLifecycleRequest request = new WorldLifecycleRequest("studio", NamespacedKey.minecraft("studio"), World.Environment.NORMAL, null, null, null, true, false, 1337L, true, false, WorldLifecycleCaller.STUDIO);
 
         assertEquals("paper_like_runtime", service.selectCreateBackend(request).backendName());
@@ -29,7 +29,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void studioSelectsPaperLikeBackendOnPurpur() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.PURPUR, false, false, true));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.PURPUR, false, false, true));
         WorldLifecycleRequest request = new WorldLifecycleRequest("studio", NamespacedKey.minecraft("studio"), World.Environment.NORMAL, null, null, null, true, false, 1337L, true, false, WorldLifecycleCaller.STUDIO);
 
         assertEquals("paper_like_runtime", service.selectCreateBackend(request).backendName());
@@ -37,7 +37,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void studioSelectsPaperLikeBackendOnCanvas() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.CANVAS, true, false, true));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.CANVAS, true, false, true));
         WorldLifecycleRequest request = new WorldLifecycleRequest("studio", NamespacedKey.minecraft("studio"), World.Environment.NORMAL, null, null, null, true, false, 1337L, true, false, WorldLifecycleCaller.STUDIO);
 
         assertEquals("paper_like_runtime", service.selectCreateBackend(request).backendName());
@@ -45,7 +45,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void studioSelectsPaperLikeBackendOnFolia() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.FOLIA, true, false, true));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.FOLIA, true, false, true));
         WorldLifecycleRequest request = new WorldLifecycleRequest("studio", NamespacedKey.minecraft("studio"), World.Environment.NORMAL, null, null, null, true, false, 1337L, true, false, WorldLifecycleCaller.STUDIO);
 
         assertEquals("paper_like_runtime", service.selectCreateBackend(request).backendName());
@@ -53,7 +53,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void studioSelectsBukkitBackendOnSpigot() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.SPIGOT, false, false, false));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.SPIGOT, false, false, false));
         WorldLifecycleRequest request = new WorldLifecycleRequest("studio", NamespacedKey.minecraft("studio"), World.Environment.NORMAL, null, null, null, true, false, 1337L, true, false, WorldLifecycleCaller.STUDIO);
 
         assertEquals("bukkit_public", service.selectCreateBackend(request).backendName());
@@ -61,7 +61,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void persistentCreatePrefersBukkitBackendOnPaperLikeServers() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.PURPUR, false, false, true));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.PURPUR, false, false, true));
         WorldLifecycleRequest request = new WorldLifecycleRequest("persistent", NamespacedKey.minecraft("persistent"), World.Environment.NORMAL, null, null, null, true, false, 1337L, false, false, WorldLifecycleCaller.CREATE);
 
         assertEquals("bukkit_public", service.selectCreateBackend(request).backendName());
@@ -69,7 +69,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void persistentCreateSelectsPaperLikeBackendOnFolia() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.FOLIA, true, false, true));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.FOLIA, true, false, true));
         WorldLifecycleRequest request = new WorldLifecycleRequest("persistent", NamespacedKey.minecraft("persistent"), World.Environment.NORMAL, null, null, null, true, false, 1337L, false, false, WorldLifecycleCaller.CREATE);
 
         assertEquals("paper_like_runtime", service.selectCreateBackend(request).backendName());
@@ -77,7 +77,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void persistentCreateSelectsPaperLikeBackendOnCanvas() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.CANVAS, true, false, true));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.CANVAS, true, false, true));
         WorldLifecycleRequest request = new WorldLifecycleRequest("persistent", NamespacedKey.minecraft("persistent"), World.Environment.NORMAL, null, null, null, true, false, 1337L, false, false, WorldLifecycleCaller.CREATE);
 
         assertEquals("paper_like_runtime", service.selectCreateBackend(request).backendName());
@@ -85,7 +85,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void persistentCreateFailsClosedOnFoliaWithoutRuntime() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.FOLIA, false, false, false));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.FOLIA, false, false, false));
         WorldLifecycleRequest request = new WorldLifecycleRequest("persistent", NamespacedKey.minecraft("persistent"), World.Environment.NORMAL, null, null, null, true, false, 1337L, false, false, WorldLifecycleCaller.CREATE);
 
         assertThrows(IllegalStateException.class, () -> service.selectCreateBackend(request));
@@ -93,7 +93,7 @@ public class WorldLifecycleSelectionTest {
 
     @Test
     public void unloadUsesRememberedBackendFamily() {
-        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshot.forTesting(ServerFamily.PURPUR, false, false, true));
+        WorldLifecycleService service = new WorldLifecycleService(CapabilitySnapshotFixtures.forTesting(ServerFamily.PURPUR, false, false, true));
 
         service.rememberBackend(NamespacedKey.minecraft("studio"), "paper_like_runtime");
         assertEquals("paper_like_runtime", service.selectUnloadBackend("minecraft:studio").backendName());
@@ -104,7 +104,7 @@ public class WorldLifecycleSelectionTest {
         CountingBackend selected = new CountingBackend("selected", true);
         CountingBackend inactive = new CountingBackend("inactive", false);
         WorldLifecycleService service = new WorldLifecycleService(
-                CapabilitySnapshot.forTesting(ServerFamily.PAPER, false, false, true),
+                CapabilitySnapshotFixtures.forTesting(ServerFamily.PAPER, false, false, true),
                 selected,
                 inactive,
                 inactive);

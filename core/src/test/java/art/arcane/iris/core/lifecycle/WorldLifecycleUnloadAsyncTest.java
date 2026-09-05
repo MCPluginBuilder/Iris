@@ -279,7 +279,7 @@ public class WorldLifecycleUnloadAsyncTest {
     ) {
         ControlledBackend inactive = new ControlledBackend("inactive");
         return new WorldLifecycleService(
-                CapabilitySnapshot.forTesting(ServerFamily.PURPUR, false, false, false),
+                CapabilitySnapshotFixtures.forTesting(ServerFamily.PURPUR, false, false, false),
                 inactive,
                 remembered,
                 fallback

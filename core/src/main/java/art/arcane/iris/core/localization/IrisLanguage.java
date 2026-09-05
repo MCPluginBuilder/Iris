@@ -568,21 +568,37 @@ public final class IrisLanguage {
         });
     }
 
-    private static void validateDownload(String locale, String raw) {
-        LocalizationValidator.validate(CATALOG, List.of(parseOverlay("download:" + locale, locale, raw)))
-                .throwIfInvalid();
+    static void validateDownload(String locale, String raw) {
+        LocaleOverlay overlay = parseDownloadedOverlay("download:" + locale, locale, raw);
+        LocalizationValidator.validate(CATALOG, List.of(overlay)).throwIfInvalid();
+        for (MessageKey key : CATALOG.keys()) {
+            if (overlay.value(key.id()) == null) {
+                throw new IllegalArgumentException("Downloaded Iris locale " + locale + " is incomplete: " + key.id());
+            }
+        }
     }
 
     private static LocaleOverlay loadDownloadedOverlay(File root, String locale) {
         RemoteLanguageCatalog.CacheResult cached = remote(root).read(locale, IrisLanguage::validateDownload);
         if (cached.state() == RemoteLanguageCatalog.CacheState.VALID) {
-            return parseOverlay(cached.file().toString(), locale, cached.content());
+            return parseDownloadedOverlay(cached.file().toString(), locale, cached.content());
         }
         if (cached.failure() != null) {
             IrisLogging.error("Ignoring invalid downloaded Iris locale " + locale + ".");
             IrisLogging.reportError(cached.failure());
         }
         return null;
+    }
+
+    static LocaleOverlay parseDownloadedOverlay(String source, String locale, String raw) {
+        LocaleOverlay parsed = parseOverlay(source, locale, raw);
+        LocaleOverlay.Builder builder = LocaleOverlay.builder(source, locale);
+        for (Map.Entry<String, MessageValue> entry : parsed.values().entrySet()) {
+            if (CATALOG.key(entry.getKey()) != null) {
+                builder.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return builder.build();
     }
 
     static LocaleOverlay parseOverlay(String source, String locale, String raw) {

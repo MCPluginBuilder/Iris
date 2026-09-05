@@ -1,6 +1,6 @@
 package art.arcane.iris.client.mixin;
 
-import art.arcane.iris.core.localization.ClientUiMessages;
+import art.arcane.iris.modded.localization.ClientUiMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.modded.IrisModdedChunkGenerator;
 import art.arcane.iris.modded.ModdedMixinFlags;

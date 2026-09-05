@@ -7,8 +7,14 @@ import art.arcane.volmlib.util.localization.TextKey;
 import art.arcane.volmlib.util.localization.VolmitLocales;
 
 import java.util.List;
+import java.util.ServiceLoader;
 
 public final class IrisMessages {
+    public static final TextKey PREGEN_ALREADY_RUNNING = TextKey.of(
+            "iris.modded.irismoddedcommands.pregeneration_task_is_already_running_stop_it_first_with_iris",
+            "A pregeneration task is already running. Stop it first with /iris pregen stop."
+    );
+
     public static final TextKey COMMAND_PERMISSION_DENIED = TextKey.of(
             "iris.command.permission_denied",
             "You lack the permission '{permission}'"
@@ -67,6 +73,7 @@ public final class IrisMessages {
     );
 
     private static final List<MessageKey> RUNTIME_KEYS = List.of(
+            PREGEN_ALREADY_RUNNING,
             COMMAND_PERMISSION_DENIED,
             COMMAND_UNKNOWN,
             COMMAND_PLAYER_ONLY,
@@ -101,16 +108,16 @@ public final class IrisMessages {
         builder.addAll(RUNTIME_KEYS);
         builder.addAll(BukkitCommandMessages.keys());
         builder.addAll(BukkitCommandMessagesExtended.keys());
-        builder.addAll(ModdedCommandMessages.keys());
         builder.addAll(DirectorCommandMessages.keys());
-        builder.addAll(ModdedHelpMessages.keys());
         builder.addAll(RuntimeUiMessages.keys());
         builder.addAll(BukkitRuntimeMessages.keys());
         builder.addAll(RuntimeProgressMessages.keys());
         builder.addAll(PackDownloadMessages.keys());
-        builder.addAll(ClientUiMessages.keys());
         builder.addAll(BukkitUiMessages.keys());
         builder.addAll(DesktopUiMessages.keys());
+        for (IrisMessageContributor contributor : ServiceLoader.load(IrisMessageContributor.class, IrisMessages.class.getClassLoader())) {
+            builder.addAll(contributor.keys());
+        }
         return builder.build();
     }
 }

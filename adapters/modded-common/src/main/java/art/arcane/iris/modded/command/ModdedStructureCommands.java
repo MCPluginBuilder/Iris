@@ -49,7 +49,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
 
 import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.modded.localization.ModdedCommandMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedStructureCommands {
     private static final Predicate<CommandSourceStack> GATE = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);

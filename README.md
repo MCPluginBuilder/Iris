@@ -250,9 +250,11 @@ Per-platform tasks: `./gradlew buildBukkit`, `buildFabric`, `buildForge`, `build
 SPI jar (the pure-JVM adapter/platform contract, not the stable plugin API) is built to `spi/build/libs/` by
 `./gradlew :spi:jar`.
 
-`./gradlew buildAll` is a different task: it builds every platform and copies the jars into a
-consumer dropin tree for a local test server. It defaults to `build/consumers/` inside the repo;
-override with `-Plocation=/path/to/consumers`.
+`./gradlew buildAll` also runs `buildAllToOut` and copies the jars into a consumer dropin tree
+for a local test server. The consumer directory defaults to `../../[Minecraft Server]/consumers/`
+when it exists, otherwise `build/consumers/` inside the repo. `-Plocation=/path/to/consumers`
+changes only the consumer directory. Both tasks copy all four verified platform jars into
+`../PluginOuts/`.
 
 If you need help compiling as a developer or contributor, ask in the Discord.
 

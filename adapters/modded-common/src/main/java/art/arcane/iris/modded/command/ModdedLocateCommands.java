@@ -20,7 +20,7 @@ package art.arcane.iris.modded.command;
 
 import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.modded.localization.ModdedCommandMessages;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;

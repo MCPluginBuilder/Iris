@@ -1,4 +1,4 @@
-package art.arcane.iris.core.localization;
+package art.arcane.iris.modded.localization;
 
 import art.arcane.volmlib.util.localization.MessageKey;
 import art.arcane.volmlib.util.localization.TextKey;

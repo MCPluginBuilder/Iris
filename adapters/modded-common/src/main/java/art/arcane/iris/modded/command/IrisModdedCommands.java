@@ -22,7 +22,7 @@ import art.arcane.iris.modded.ModdedIrisLog;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.IrisMessages;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.modded.localization.ModdedCommandMessages;
 import art.arcane.iris.core.localization.PackDownloadMessages;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.core.lifecycle.LifecycleOperationCoordinator;

@@ -20,11 +20,23 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 
+buildscript {
+    repositories {
+        mavenCentral()
+        maven { url = uri('https://jitpack.io') }
+    }
+    dependencies {
+        classpath('com.github.VolmitSoftware.VolmLib:packaging:master-SNAPSHOT')
+    }
+}
+
 plugins {
     id 'java'
     id 'net.neoforged.moddev' version '2.0.141'
     alias(libs.plugins.shadow)
 }
+
+apply plugin: 'art.arcane.volmit-packaging'
 
 apply from: file('../../gradle/modded-generation-build-revision.gradle')
 
@@ -269,4 +281,15 @@ tasks.named('jar').configure {
 
 tasks.named('assemble').configure {
     dependsOn(tasks.named('shadowJar'))
+}
+
+pluginPackaging {
+    artifacts {
+        create('distribution') {
+            taskName = 'shadowJar'
+            policyName = 'Iris NeoForge'
+            prunePrefixes = ['art/arcane/volmlib/']
+            keepPrefixes = ['art/arcane/volmlib/util/matter/slices/']
+        }
+    }
 }

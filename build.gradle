@@ -33,10 +33,22 @@ buildscript {
     }
 }
 
+buildscript {
+    repositories {
+        mavenCentral()
+        maven { url = uri('https://jitpack.io') }
+    }
+    dependencies {
+        classpath('com.github.VolmitSoftware.VolmLib:packaging:master-SNAPSHOT')
+    }
+}
+
 plugins {
     id 'java'
     id 'java-library'
 }
+
+apply plugin: 'art.arcane.volmit-packaging'
 
 group = 'art.arcane'
 version = providers.gradleProperty('irisVersion').getOrElse('4.1.0-26.2')
@@ -167,9 +179,6 @@ tasks.named('jar', Jar).configure {
         delete(layout.buildDirectory.file("libs/Iris-${project.version}.jar"))
     }
     archiveFileName.set(bukkitArtifactName)
-    doLast {
-        JarCompactor.compact(archiveFile.get().asFile)
-    }
 }
 
 tasks.register('iris', Copy) {
@@ -611,7 +620,7 @@ tasks.register('buildAllToOut') {
 tasks.register('buildAll') {
     group = 'iris'
     outputs.upToDateWhen { false }
-    dependsOn('iris', 'verifyModdedArtifacts')
+    dependsOn('iris', 'verifyModdedArtifacts', 'buildAllToOut')
     doLast {
         delete(
             file("${bukkitConsumerPath}/Iris-Fabric.jar"),
@@ -745,4 +754,18 @@ if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_25)) {
     System.err.println('=========================================================================================================')
     System.err.println()
     System.exit(69)
+}
+
+pluginPackaging {
+    artifacts {
+        create('distribution') {
+            taskName = 'jar'
+            policyName = 'Iris Bukkit'
+            stripDirectories = true
+            stripLocalVariables = true
+            releaseCompression = providers.gradleProperty('compactRelease').map { it.toBoolean() }.getOrElse(false)
+            prunePrefixes = ['art/arcane/volmlib/']
+            keepPrefixes = ['art/arcane/volmlib/util/matter/slices/']
+        }
+    }
 }

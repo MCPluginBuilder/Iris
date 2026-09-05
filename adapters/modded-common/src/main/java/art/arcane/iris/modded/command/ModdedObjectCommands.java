@@ -69,7 +69,7 @@ import java.util.UUID;
 import java.util.function.Predicate;
 
 import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.modded.localization.ModdedCommandMessages;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 public final class ModdedObjectCommands {

@@ -1,3 +1,10 @@
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
+
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -6,8 +13,8 @@ import java.util.Set;
 
 /**
  * Reads the {@code CONSTANT_Class} entries of a class file. That is exactly the set of types the
- * class links against - supertypes, field and method owners, casts, catches, constant class
- * literals. Annotation types live in the annotation attributes as plain UTF-8 descriptors and are
+ * class names directly - supertypes, field and method owners, casts, catches, constant class
+ * literals. Field and method descriptors are also traversed to include signature-only types. Annotation types live in the annotation attributes as plain UTF-8 descriptors and are
  * deliberately not reported: the JVM skips an annotation whose type is absent.
  */
 public final class ClassReferences {
@@ -42,6 +49,7 @@ public final class ClassReferences {
         int constantCount = readUnsignedShort(classFile, 8);
         String[] utf8 = new String[constantCount];
         List<Integer> classNameIndexes = new ArrayList<>();
+        List<Integer> descriptorIndexes = new ArrayList<>();
         int offset = 10;
         int index = 1;
         while (index < constantCount) {
@@ -58,10 +66,18 @@ public final class ClassReferences {
                     classNameIndexes.add(readUnsignedShort(classFile, offset));
                     offset += 2;
                 }
-                case CONSTANT_STRING, CONSTANT_METHOD_TYPE, CONSTANT_MODULE, CONSTANT_PACKAGE -> offset += 2;
+                case CONSTANT_METHOD_TYPE -> {
+                    descriptorIndexes.add(readUnsignedShort(classFile, offset));
+                    offset += 2;
+                }
+                case CONSTANT_NAME_AND_TYPE -> {
+                    descriptorIndexes.add(readUnsignedShort(classFile, offset + 2));
+                    offset += 4;
+                }
+                case CONSTANT_STRING, CONSTANT_MODULE, CONSTANT_PACKAGE -> offset += 2;
                 case CONSTANT_METHOD_HANDLE -> offset += 3;
                 case CONSTANT_INTEGER, CONSTANT_FLOAT, CONSTANT_FIELDREF, CONSTANT_METHODREF,
-                     CONSTANT_INTERFACE_METHODREF, CONSTANT_NAME_AND_TYPE, CONSTANT_DYNAMIC,
+                     CONSTANT_INTERFACE_METHODREF, CONSTANT_DYNAMIC,
                      CONSTANT_INVOKE_DYNAMIC -> offset += 4;
                 case CONSTANT_LONG, CONSTANT_DOUBLE -> {
                     offset += 8;
@@ -83,7 +99,39 @@ public final class ClassReferences {
                 references.add(name);
             }
         }
+        for (int descriptorIndex : descriptorIndexes) {
+            addType(Type.getType(utf8[descriptorIndex]), references);
+        }
+        new ClassReader(classFile).accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+                addType(Type.getType(descriptor), references);
+                return null;
+            }
+
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature,
+                                             String[] exceptions) {
+                addType(Type.getMethodType(descriptor), references);
+                return null;
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
         return references;
+    }
+
+    private static void addType(Type type, Set<String> references) {
+        switch (type.getSort()) {
+            case Type.ARRAY -> addType(type.getElementType(), references);
+            case Type.OBJECT -> references.add(type.getInternalName());
+            case Type.METHOD -> {
+                addType(type.getReturnType(), references);
+                for (Type argument : type.getArgumentTypes()) {
+                    addType(argument, references);
+                }
+            }
+            default -> {
+            }
+        }
     }
 
     private static String normalize(String rawName) {

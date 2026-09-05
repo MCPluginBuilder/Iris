@@ -18,8 +18,9 @@
 
 package art.arcane.iris.modded.command;
 
+import art.arcane.iris.core.localization.IrisMessages;
 import art.arcane.iris.core.localization.IrisLanguage;
-import art.arcane.iris.core.localization.ModdedCommandMessages;
+import art.arcane.iris.modded.localization.ModdedCommandMessages;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.volmlib.util.localization.MessageArgument;
@@ -59,7 +60,7 @@ final class ModdedPregenCommands {
             return 0;
         }
         if (!started) {
-            IrisModdedCommands.fail(source, IrisLanguage.plain(ModdedCommandMessages.IRIS_MODDED_COMMANDS_PREGENERATION_TASK_IS_ALREADY_RUNNING_STOP_IT_FIRST_WITH_IRIS));
+            IrisModdedCommands.fail(source, IrisLanguage.plain(IrisMessages.PREGEN_ALREADY_RUNNING));
             return 0;
         }
         ModdedPregenBossBar.begin(source.getPlayer());

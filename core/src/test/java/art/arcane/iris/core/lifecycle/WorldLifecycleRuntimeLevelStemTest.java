@@ -24,7 +24,7 @@ public class WorldLifecycleRuntimeLevelStemTest {
     public void runtimeStemUsesFullServerRegistryAccessForPlatformGenerators() throws Exception {
         Object datapackDimensions = new MissingDimensionTypeRegistry();
         Object serverRegistryAccess = new Object();
-        CapabilitySnapshot capabilities = CapabilitySnapshot.forTestingRuntimeRegistries(ServerFamily.PURPUR, false, datapackDimensions, serverRegistryAccess);
+        CapabilitySnapshot capabilities = CapabilitySnapshotFixtures.forTestingRuntimeRegistries(ServerFamily.PURPUR, false, datapackDimensions, serverRegistryAccess);
         WorldLifecycleRequest request = new WorldLifecycleRequest(
                 "studio",
                 NamespacedKey.minecraft("studio"),

@@ -20,7 +20,7 @@ package art.arcane.iris.modded.command;
 
 import art.arcane.iris.core.localization.IrisLanguage;
 import art.arcane.iris.core.localization.IrisMessages;
-import art.arcane.iris.core.localization.ModdedHelpMessages;
+import art.arcane.iris.modded.localization.ModdedHelpMessages;
 import art.arcane.volmlib.util.director.help.DirectorHelpMessages;
 import art.arcane.volmlib.util.localization.MessageArgument;
 import art.arcane.volmlib.util.localization.TextKey;

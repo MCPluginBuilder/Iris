@@ -41,7 +41,7 @@ public class BukkitPublicBackendTest {
                 worldName, worldKey, World.Environment.NORMAL, generator, biomeProvider,
                 WorldType.NORMAL, true, false, 123L, false, false, WorldLifecycleCaller.CREATE);
         BukkitPublicBackend backend = new BukkitPublicBackend(
-                CapabilitySnapshot.forTesting(ServerFamily.PAPER, false, false, false));
+                CapabilitySnapshotFixtures.forTesting(ServerFamily.PAPER, false, false, false));
 
         doAnswer(invocation -> {
             assertSame(generator, WorldLifecycleStaging.peekStemGenerator(worldName));

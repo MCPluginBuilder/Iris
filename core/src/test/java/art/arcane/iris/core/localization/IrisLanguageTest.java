@@ -128,7 +128,32 @@ public class IrisLanguageTest {
 
     private LocaleOverlay loadSourceOverlay(String locale) throws Exception {
         Path source = Path.of("src/main/resources/languages", locale + ".json");
-        return IrisLanguage.parseOverlay(source.toString(), locale, Files.readString(source));
+        return IrisLanguage.parseDownloadedOverlay(source.toString(), locale, Files.readString(source));
+    }
+
+    @Test
+    public void downloadedCatalogSelectsBukkitKeysWithoutAcceptingUnknownOverrides() {
+        String raw = """
+                {"locale":"de_DE","messages":{
+                  "iris.command.unknown":"Unbekannter Iris-Befehl",
+                  "iris.modded.help.entry.command.version":"Version anzeigen"
+                }}
+                """;
+        LocaleOverlay downloaded = IrisLanguage.parseDownloadedOverlay("download", "de_DE", raw);
+        assertEquals(Set.of(IrisMessages.COMMAND_UNKNOWN.id()), downloaded.values().keySet());
+        assertTrue(LocalizationValidator.validate(IrisLanguage.catalog(), List.of(downloaded)).errors().isEmpty());
+        LocaleOverlay override = IrisLanguage.parseOverlay("override", "de_DE", raw);
+        assertFalse(LocalizationValidator.validate(IrisLanguage.catalog(), List.of(override)).errors().isEmpty());
+        assertEquals("A pregeneration task is already running. Stop it first with /iris pregen stop.",
+                IrisLanguage.plain(IrisMessages.PREGEN_ALREADY_RUNNING));
+    }
+
+    @Test
+    public void downloadedCatalogStillRejectsInvalidActivePlaceholders() {
+        LocaleOverlay downloaded = IrisLanguage.parseDownloadedOverlay("download", "de_DE", """
+                {"locale":"de_DE","messages":{"iris.command.permission_denied":"Keine Erlaubnis"}}
+                """);
+        assertFalse(LocalizationValidator.validate(IrisLanguage.catalog(), List.of(downloaded)).errors().isEmpty());
     }
 
     @Test
@@ -231,7 +256,8 @@ public class IrisLanguageTest {
                 }
                 assertValueIntegrity(locale, key.id(), key.englishValue(), overlay.value(key.id()));
             }
-            assertTrue(locale + " contains too many English placeholder values", translated >= 1050);
+            assertTrue(locale + " contains too many English placeholder values",
+                    translated * 10 >= IrisLanguage.catalog().keys().size() * 7);
         }
     }
 
