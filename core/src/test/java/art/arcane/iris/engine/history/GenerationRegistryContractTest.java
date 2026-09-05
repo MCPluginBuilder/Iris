@@ -7,6 +7,7 @@ import org.junit.Test;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -38,7 +39,7 @@ public class GenerationRegistryContractTest {
         );
 
         assertEquals(
-                "b9165819aa1cdf4e7024a85ca1b63801c3cfaaefb1898de7fd83b0adf366b16e",
+                "bf3d52711738c90740c8ac35d7462041625b42705cc0ce7dd82dbd59e0a8244a",
                 contract.fingerprint()
         );
         assertEquals(desert, contract.definitions().firstKey());
@@ -47,6 +48,21 @@ public class GenerationRegistryContractTest {
                 UnsupportedOperationException.class,
                 () -> contract.definitions().put(key("minecraft:block", "minecraft:stone"), DEFINITION_A)
         );
+    }
+
+    @Test
+    public void biomeTagsAreCanonicalPersistedAndFingerprintProtected() {
+        GenerationRegistryContract base = GenerationRegistryContract.fromDefinitions(
+                Map.of(key("minecraft:worldgen/biome", "iris:old"), DEFINITION_A));
+        GenerationRegistryContract tagged = base.withBiomeTags(Map.of("iris:old",
+                List.of("minecraft:is_overworld", "iris:humid", "iris:humid")));
+        assertEquals(List.of("iris:humid", "minecraft:is_overworld"), tagged.biomeTags().get("iris:old"));
+        assertNotEquals(base.fingerprint(), tagged.fingerprint());
+        assertEquals(tagged, GenerationRegistryContract.fromJson(tagged.toJson()));
+        JsonObject tampered = tagged.toJson();
+        tampered.getAsJsonObject("biomeTags").getAsJsonArray("iris:old").add("iris:new");
+        assertThrows(IllegalArgumentException.class, () -> GenerationRegistryContract.fromJson(tampered));
+        assertThrows(IllegalArgumentException.class, () -> base.withBiomeTags(Map.of("iris:missing", List.of("iris:humid"))));
     }
 
     @Test

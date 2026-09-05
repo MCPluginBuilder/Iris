@@ -23,19 +23,19 @@ final class GenerationKernelCatalog {
             Catalog catalog = parse(input.readNBytes(MAXIMUM_BYTES + 1));
             List<GenerationKernelRegistry.Kernel> kernels = new ArrayList<>();
             for (int abi : catalog.abis()) {
-                GenerationKernelSourceSeal.Descriptor seal = GenerationKernelSourceSeal.load(abi);
+                GenerationBuildRevision.Descriptor revision = GenerationBuildRevision.load(abi);
                 Class<? extends GenerationKernelRegistry.RuntimeFactory> factoryType = Class.forName(
-                        seal.factoryClass(), true, GenerationKernelCatalog.class.getClassLoader())
+                        revision.factoryClass(), true, GenerationKernelCatalog.class.getClassLoader())
                         .asSubclass(GenerationKernelRegistry.RuntimeFactory.class);
                 Map<GenerationKernelRegistry.AlgorithmVersion, GenerationKernelRegistry.RuntimeFactory> factories = new LinkedHashMap<>();
-                for (GenerationKernelRegistry.AlgorithmVersion algorithm : seal.algorithms()) {
+                for (GenerationKernelRegistry.AlgorithmVersion algorithm : revision.algorithms()) {
                     factories.put(algorithm, factoryType.getDeclaredConstructor().newInstance());
                 }
-                kernels.add(new GenerationKernelRegistry.Kernel(abi, seal.fingerprint(), factories));
+                kernels.add(new GenerationKernelRegistry.Kernel(abi, revision.fingerprint(), factories));
             }
             return new GenerationKernelRegistry(catalog.current(), kernels);
         } catch (IOException | ReflectiveOperationException | IllegalArgumentException failure) {
-            throw new IllegalStateException("Cannot load the sealed Iris generation kernel catalog.", failure);
+            throw new IllegalStateException("Cannot load the Iris generation kernel catalog.", failure);
         }
     }
 

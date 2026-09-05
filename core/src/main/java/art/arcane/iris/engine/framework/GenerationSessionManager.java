@@ -1,22 +1,94 @@
 package art.arcane.iris.engine.framework;
 
+import art.arcane.iris.util.project.context.IrisContext;
+
+import java.util.Optional;
+
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CancellationException;
 
 public final class GenerationSessionManager {
     private final AtomicLong sessionSequence;
     private final AtomicReference<GenerationSessionState> current;
     private final Object drainMonitor;
+    private final GenerationTransitionGate transitionGate;
 
     public GenerationSessionManager() {
+        this(false);
+    }
+
+    public GenerationSessionManager(boolean studioTransitions) {
+        this.transitionGate = new GenerationTransitionGate(studioTransitions);
         this.sessionSequence = new AtomicLong(0L);
         this.current = new AtomicReference<>(new GenerationSessionState(nextSessionId(), new AtomicBoolean(true), new AtomicInteger(0), new AtomicBoolean(false), new AtomicReference<>(null)));
         this.drainMonitor = new Object();
     }
 
     public GenerationSessionLease acquire(String operation) throws GenerationSessionException {
+        GenerationTransitionGate.Participation participation = transitionGate.enter();
+        try {
+            return acquireAdmitted(operation, participation);
+        } catch (Throwable failure) {
+            participation.close();
+            throw failure;
+        }
+    }
+
+    public GenerationTransitionGate transitionGate() {
+        return transitionGate;
+    }
+
+    public GenerationSessionLease acquireForEngine(Engine engine, String operation) throws GenerationSessionException {
+        GenerationTransitionGate.Participation participation;
+        try {
+            participation = transitionGate.enter();
+        } catch (CancellationException cancellation) {
+            GenerationSessionException failure = new GenerationSessionException(
+                    "Generation session cancelled while waiting to run " + operation + ".",
+                    engine.isClosing() || engine.isClosed());
+            failure.initCause(cancellation);
+            throw failure;
+        }
+        try {
+            if (engine.isClosing() || engine.isClosed()) {
+                throw new GenerationSessionException("Generation session rejected new work for " + operation
+                        + " while the Iris engine is closing.", engine.isClosed());
+            }
+            return acquireAdmitted(operation, participation);
+        } catch (Throwable failure) {
+            participation.close();
+            throw failure;
+        }
+    }
+
+    public Optional<GenerationSessionLease> tryAcquireForEngine(Engine engine, String operation)
+            throws GenerationSessionException {
+        Optional<GenerationTransitionGate.Participation> entered = transitionGate.tryEnter();
+        if (entered.isEmpty()) {
+            return Optional.empty();
+        }
+        GenerationTransitionGate.Participation participation = entered.get();
+        try {
+            if (engine.isClosing() || engine.isClosed()) {
+                throw new GenerationSessionException("Generation session rejected new work for " + operation
+                        + " while the Iris engine is closing.", engine.isClosed());
+            }
+            IrisContext context = IrisContext.get();
+            return Optional.of(context != null && context.getEngine() == engine && context.getGenerationSessionId() != 0L
+                    ? continueAdmittedSession(operation, context.getGenerationSessionId(), participation)
+                    : acquireAdmitted(operation, participation));
+        } catch (Throwable failure) {
+            participation.close();
+            throw failure;
+        }
+    }
+
+    private GenerationSessionLease acquireAdmitted(String operation,
+                                                   GenerationTransitionGate.Participation participation)
+            throws GenerationSessionException {
         while (true) {
             GenerationSessionState state = current.get();
             if (state == null || !state.accepting().get()) {
@@ -34,11 +106,23 @@ public final class GenerationSessionManager {
                 throw rejected(operation, state);
             }
 
-            return new GenerationSessionLease(this, state, state.sessionId());
+            return new GenerationSessionLease(this, state, state.sessionId(), participation);
         }
     }
 
     public GenerationSessionLease continueSession(String operation, long sessionId) throws GenerationSessionException {
+        GenerationTransitionGate.Participation participation = transitionGate.continueAdmittedWork();
+        try {
+            return continueAdmittedSession(operation, sessionId, participation);
+        } catch (Throwable failure) {
+            participation.close();
+            throw failure;
+        }
+    }
+
+    private GenerationSessionLease continueAdmittedSession(String operation, long sessionId,
+                                                           GenerationTransitionGate.Participation participation)
+            throws GenerationSessionException {
         while (true) {
             GenerationSessionState state = current.get();
             if (state == null || state.sessionId() != sessionId) {
@@ -51,7 +135,7 @@ public final class GenerationSessionManager {
                 continue;
             }
 
-            return new GenerationSessionLease(this, state, state.sessionId());
+            return new GenerationSessionLease(this, state, state.sessionId(), participation);
         }
     }
 

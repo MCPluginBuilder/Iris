@@ -37,6 +37,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -45,6 +46,18 @@ public class IrisBiomeActuatorCoordinateTest {
     @After
     public void unbindPlatform() {
         IrisPlatforms.unbind();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void speculativeTerrainDoesNotPublishPersistentMetadata() {
+        Engine engine = mock(Engine.class);
+        ChunkContext context = mock(ChunkContext.class);
+        when(context.isSpeculativeTerrain()).thenReturn(true);
+
+        IrisBiomeActuator.publishNaturalMetadata(engine, 0, 0, mock(Hunk.class), context);
+
+        verifyNoMoreInteractions(engine);
     }
 
     @Test
@@ -96,7 +109,7 @@ public class IrisBiomeActuatorCoordinateTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    public void transitionColumnEmitsFrozenPhysicalKeyWithoutResolvingANewBiome() {
+    public void transitionColumnOverlaysFrozenPhysicalKeyAfterCurrentBiome() {
         bindPlatform();
         IrisComplex complex = mock(IrisComplex.class);
         when(complex.allowsNewDiscreteContentAt(100, -200)).thenReturn(false);
@@ -104,7 +117,7 @@ public class IrisBiomeActuatorCoordinateTest {
         TransitionGenerationPlan.TerrainSample terrainSample = mock(TransitionGenerationPlan.TerrainSample.class);
         when(complex.getTransitionGenerationPlan()).thenReturn(transitionPlan);
         when(transitionPlan.terrainSampleAt(100, -200)).thenReturn(terrainSample);
-        when(terrainSample.historicalPhysicalBiomeKeyAt(0))
+        when(transitionPlan.historicalPhysicalBiomeKeyAt(100, 0, -200, terrainSample))
                 .thenReturn(Optional.of("iris:old-physical"));
         Engine engine = engine(complex);
         IrisBiomeActuator actuator = new IrisBiomeActuator(engine);
@@ -112,16 +125,16 @@ public class IrisBiomeActuatorCoordinateTest {
         when(output.getWidth()).thenReturn(1);
         when(output.getDepth()).thenReturn(1);
         when(output.getHeight()).thenReturn(1);
-        ChunkedDataCache<IrisBiome> biomeCache = mock(ChunkedDataCache.class);
+        ChunkedDataCache<IrisBiome> biomeCache = currentBiomeCache(engine);
         ChunkContext context = mock(ChunkContext.class);
         when(context.getComplex()).thenReturn(complex);
         when(context.getBiome()).thenReturn(biomeCache);
 
         actuator.onActuate(100, -200, output, false, context);
 
-        verify(biomeCache, never()).get(anyInt(), anyInt());
+        verify(biomeCache).get(0, 0);
         verify(IrisPlatforms.get().registries()).biome("iris:old-physical");
-        verify(IrisPlatforms.get().biomeWriter(), never()).biomeIdFor(anyString());
+        verify(IrisPlatforms.get().biomeWriter(), never()).biomeIdFor("iris:old-physical");
         Mantle<Matter> mantle = engine.getMantle().getMantle();
         verify(mantle).set(eq(100), eq(0), eq(-200), argThat(value -> {
             MatterBiomeInject injection = (MatterBiomeInject) value;
@@ -139,8 +152,8 @@ public class IrisBiomeActuatorCoordinateTest {
         TransitionGenerationPlan.TerrainSample terrainSample = mock(TransitionGenerationPlan.TerrainSample.class);
         when(complex.getTransitionGenerationPlan()).thenReturn(transitionPlan);
         when(transitionPlan.terrainSampleAt(100, -200)).thenReturn(terrainSample);
-        when(terrainSample.historicalPhysicalBiomeKeyAt(anyInt())).thenAnswer(invocation ->
-                Optional.of(invocation.<Integer>getArgument(0) < -60
+        when(transitionPlan.historicalPhysicalBiomeKeyAt(eq(100), anyInt(), eq(-200), same(terrainSample))).thenAnswer(invocation ->
+                Optional.of(invocation.<Integer>getArgument(1) < -60
                         ? "iris:old-bottom"
                         : "iris:old-top"));
         Engine engine = engine(complex);
@@ -152,10 +165,14 @@ public class IrisBiomeActuatorCoordinateTest {
         when(output.getHeight()).thenReturn(8);
         ChunkContext context = mock(ChunkContext.class);
         when(context.getComplex()).thenReturn(complex);
-        when(context.getBiome()).thenReturn(mock(ChunkedDataCache.class));
+        ChunkedDataCache<IrisBiome> biomeCache = currentBiomeCache(engine);
+        when(context.getBiome()).thenReturn(biomeCache);
 
         actuator.onActuate(100, -200, output, false, context);
 
+        verify(transitionPlan, times(1)).terrainSampleAt(100, -200);
+        verify(transitionPlan, never()).newEpochWeightAt(anyInt(), anyInt());
+        verify(transitionPlan, never()).historicalPhysicalBiomeKeyAt(anyInt(), anyInt(), anyInt());
         verify(output).set(eq(0), eq(0), eq(0), eq(0), eq(3), eq(0), any(PlatformBiome.class));
         verify(output).set(eq(0), eq(4), eq(0), eq(0), eq(7), eq(0), any(PlatformBiome.class));
         Mantle<Matter> mantle = engine.getMantle().getMantle();
@@ -167,6 +184,16 @@ public class IrisBiomeActuatorCoordinateTest {
             MatterBiomeInject injection = (MatterBiomeInject) value;
             return "iris:old-top".equals(injection.getBiomeKey());
         }));
+    }
+
+    @SuppressWarnings("unchecked")
+    private ChunkedDataCache<IrisBiome> currentBiomeCache(Engine engine) {
+        IrisBiome biome = mock(IrisBiome.class);
+        when(biome.getSkyBiomeKey(any(RNG.class), same(engine), anyDouble(), anyDouble(), anyDouble()))
+                .thenReturn("minecraft:plains");
+        ChunkedDataCache<IrisBiome> cache = mock(ChunkedDataCache.class);
+        when(cache.get(anyInt(), anyInt())).thenReturn(biome);
+        return cache;
     }
 
     @SuppressWarnings("unchecked")

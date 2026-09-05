@@ -18,6 +18,10 @@
 
 package art.arcane.iris.modded;
 
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+
+import art.arcane.iris.nativegen.NativeGenerationWriteGuard;
+
 import art.arcane.iris.engine.DimensionStackContext;
 import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.framework.Engine;
@@ -341,7 +345,8 @@ final class ModdedNativeStructureStage {
                     List<NativePlacement> resolvedPlacements = new ArrayList<>(starts.size());
                     for (StructureStart start : starts) {
                         BoundingBox footprint = start.getBoundingBox();
-                        if (!current.getComplex().allowsNewGenerationFootprint(
+                        if (!isHistoricalStructureStart(current, world, start)
+                                && !current.getComplex().allowsNewGenerationFootprint(
                                 footprint.minX(),
                                 footprint.minZ(),
                                 footprint.maxX(),
@@ -572,6 +577,16 @@ final class ModdedNativeStructureStage {
                     + x + "," + y + "," + z);
         }
         return blockState;
+    }
+
+    private boolean isHistoricalStructureStart(Engine current, WorldGenLevel world, StructureStart start) {
+        ChunkPos origin = start.getChunkPos();
+        if (!current.getComplex().allowsMantleChunkWrite(origin.x(), origin.z())) {
+            return true;
+        }
+        ChunkAccess source = world.getChunk(origin.x(), origin.z(), ChunkStatus.EMPTY, false);
+        return source != null && NativeGenerationWriteGuard.isHistoricalStructure(
+                current, ModdedNativeTerrainReceipts.structureActivation(source));
     }
 
     private BoundingBox writableArea(ChunkAccess chunk) {

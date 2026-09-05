@@ -19,10 +19,12 @@
 package art.arcane.iris.util.common.director.context;
 
 import art.arcane.iris.core.tools.IrisToolbelt;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisGenerator;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.util.common.director.DirectorContextHandler;
+import art.arcane.iris.util.common.director.DirectorExecutor;
 import art.arcane.iris.util.common.plugin.VolmitSender;
 
 public class GeneratorContextHandler implements DirectorContextHandler<IrisGenerator> {
@@ -37,7 +39,9 @@ public class GeneratorContextHandler implements DirectorContextHandler<IrisGener
                 && IrisToolbelt.isIrisWorld(sender.player().getWorld())
                 && IrisToolbelt.access(sender.player().getWorld()).getEngine() != null) {
             Engine engine = IrisToolbelt.access(sender.player().getWorld()).getEngine();
-            return engine.getData().getGeneratorLoader().load(EngineBukkitOps.getBiome(engine, sender.player().getLocation()).getGenerators().getRandom().getGenerator());
+            IrisData source = DirectorExecutor.authoringData(engine);
+            return source == null ? null : source.getGeneratorLoader().load(
+                    EngineBukkitOps.getBiome(engine, sender.player().getLocation()).getGenerators().getRandom().getGenerator());
         }
 
         return null;

@@ -169,6 +169,7 @@ public final class GenerationRegistryContractFactory {
                 new LinkedHashMap<>();
         Map<GenerationRegistryContract.PhysicalResourceKey, GenerationRegistryContract.GeneratedSource>
                 generatedSources = new LinkedHashMap<>();
+        Map<String, Set<String>> biomeTags = new TreeMap<>();
         String packName = requiredData.getDataFolder().getName();
         List<IrisBiome> reachableBiomes = new ArrayList<>(requiredDimension.getReachableBiomes(() -> requiredData));
         for (IrisDimension registryDimension : registryDimensions(requiredData, requiredDimension)) {
@@ -196,7 +197,8 @@ public final class GenerationRegistryContractFactory {
                     requiredData,
                     requiredFixer,
                     requiredGenerationRegistry,
-                    requiredAliasPolicy
+                    requiredAliasPolicy,
+                    biomeTags
             );
         }
         addNativeStructures(
@@ -209,7 +211,7 @@ public final class GenerationRegistryContractFactory {
         ReferencedPlatformKeys referenced = referencedPlatformKeys(packRoot, requiredRegistries);
         addPlatformDefinitions(definitions, BLOCK_REGISTRY, referenced.blockKeys(), requiredGenerationRegistry);
         addPlatformDefinitions(definitions, ENTITY_TYPE_REGISTRY, referenced.entityKeys(), requiredGenerationRegistry);
-        return contract(definitions, generatedSources, requiredGenerationRegistry);
+        return contract(definitions, generatedSources, requiredGenerationRegistry).withBiomeTags(biomeTags);
     }
 
     public static CustomBiomeDefinition customBiomeDefinition(
@@ -798,7 +800,8 @@ public final class GenerationRegistryContractFactory {
             IrisData data,
             IDataFixer fixer,
             PlatformGenerationRegistry registry,
-            CustomBiomeAliasPolicy aliasPolicy
+            CustomBiomeAliasPolicy aliasPolicy,
+            Map<String, Set<String>> biomeTags
     ) throws IOException {
         TreeSet<String> platformBiomeKeys = new TreeSet<>();
         Map<String, String> customResourceKeys = new LinkedHashMap<>();
@@ -833,6 +836,19 @@ public final class GenerationRegistryContractFactory {
                         registry.generatedDefinitionRendererIdentity(),
                         generated.definition()
                 );
+                Set<String> tags = biomeTags.computeIfAbsent(generated.physicalKey().resourceKey(), ignored -> new TreeSet<>());
+                for (String rawTag : customBiome.getEffectiveTags(biome.getVanillaDerivativeKey())) {
+                    if (rawTag == null || rawTag.isBlank()) {
+                        continue;
+                    }
+                    String tag = rawTag.trim().toLowerCase(Locale.ROOT);
+                    if (tag.indexOf(':') < 0) {
+                        tag = "minecraft:" + tag;
+                    }
+                    if (tag.matches("[a-z0-9_.-]+:[a-z0-9/._-]+")) {
+                        tags.add(tag);
+                    }
+                }
                 String logicalKey = dimensionKey.toLowerCase(Locale.ROOT)
                         + ":" + customBiomeId.toLowerCase(Locale.ROOT);
                 customResourceKeys.merge(
@@ -858,6 +874,7 @@ public final class GenerationRegistryContractFactory {
         }
         for (Map.Entry<String, CustomBiomeDefinition> entry : legacyDefinitions.entrySet()) {
             CustomBiomeDefinition generated = entry.getValue();
+            biomeTags.put(entry.getKey(), new TreeSet<>(biomeTags.get(generated.physicalKey().resourceKey())));
             putGeneratedDefinition(
                     definitions,
                     generatedSources,

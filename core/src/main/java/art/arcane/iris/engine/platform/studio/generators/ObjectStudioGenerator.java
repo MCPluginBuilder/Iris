@@ -93,9 +93,11 @@ public class ObjectStudioGenerator extends EnginedStudioGenerator {
     }
 
     private void generateChunkWithinSession(Engine engine, TerrainChunk tc, int x, int z) {
-        ensureLayout(engine);
-
         int floorY = Math.max(engine.getMinHeight(), ObjectStudioLayout.FLOOR_Y);
+        if (floorY >= tc.getMaxHeight()) {
+            return;
+        }
+        ensureLayout(engine);
         for (int bx = 0; bx < 16; bx++) {
             for (int bz = 0; bz < 16; bz++) {
                 tc.setBiome(bx, floorY, bz, DEFAULT_BIOME);

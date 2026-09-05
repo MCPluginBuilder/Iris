@@ -2,6 +2,7 @@ package art.arcane.iris.engine.decorator;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.SeedManager;
 import art.arcane.iris.engine.object.InferredType;
@@ -10,20 +11,45 @@ import art.arcane.iris.engine.object.IrisDecorationPart;
 import art.arcane.iris.engine.object.IrisDecorator;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.util.project.hunk.Hunk;
-import art.arcane.iris.util.project.stream.ProceduralStream;
 import org.junit.Test;
+import org.junit.BeforeClass;
+import org.junit.AfterClass;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 
 public class IrisDecoratorCaveContextTest {
+    @BeforeClass
+    public static void bindPlatform() {
+        IrisPlatforms.unbind();
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        doReturn(true).when(air).isAir();
+        doReturn("minecraft:air").when(air).key();
+        PlatformRegistries registries = mock(PlatformRegistries.class);
+        doReturn(air).when(registries).block(anyString());
+        doReturn(air).when(registries).air();
+        IrisPlatform platform = mock(IrisPlatform.class);
+        doReturn(registries).when(platform).registries();
+        IrisPlatforms.bind(platform);
+    }
+
+    @AfterClass
+    public static void unbindPlatform() {
+        IrisPlatforms.unbind();
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     public void explicitCaveContextSkipsFluidWithoutMutatingBiome() {
@@ -35,10 +61,10 @@ public class IrisDecoratorCaveContextTest {
         doReturn(63).when(dimension).getFluidHeight();
         doReturn(dimension).when(engine).getDimension();
         IrisComplex complex = mock(IrisComplex.class);
-        ProceduralStream<Double> fluidStream = mock(ProceduralStream.class);
+        EngineMantle mantle = mock(EngineMantle.class);
         doReturn(complex).when(engine).getComplex();
-        doReturn(fluidStream).when(complex).getRiverWaterSurfaceStream();
-        doReturn(63D).when(fluidStream).get(anyDouble(), anyDouble());
+        doReturn(mantle).when(engine).getMantle();
+        doReturn(63).when(mantle).getFluidHeight(anyInt(), anyInt());
 
         IrisDecorator decorator = mock(IrisDecorator.class);
         doReturn(true).when(decorator).passesChanceGate(any(), anyDouble(), anyDouble(), any());

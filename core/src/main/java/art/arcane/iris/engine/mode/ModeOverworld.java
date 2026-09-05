@@ -57,7 +57,7 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
             if (shouldBypassMantleStages()) {
                 return;
             }
-            generateMatter(
+            generateTerrainMatter(
                     x >> 4,
                     z >> 4,
                     m || getEngine().isStudio(),
@@ -101,18 +101,24 @@ public class ModeOverworld extends IrisEngineMode implements EngineMode {
 
         // Matter runs on the calling thread so its window fans out across the burst pool (a pool
         // thread would run every chunk of the window inline) while biome and terrain run alongside.
-        registerStage(burstAround(
+        registerTerrainStage(burstAround(
                 sGenMatter,
                 sBiome,
                 sTerrain
         ));
-        registerStage(sCave);
-        registerStage(sPost);
-        registerStage(sFloatingTerrainSolid);
+        registerTerrainStage(sCave);
+        registerTerrainStage(sPost);
+        registerTerrainStage(sFloatingTerrainSolid);
+        registerStage((x, z, k, p, m, c) -> cave.decorateNaturalCaves(x, z, k));
         // Never burst these three: all of them write the same block hunk (and sDecorant reads
         // the surface sInsertMatter writes), so parallel order is scheduler-dependent. The
         // production path already runs them inline in this order; sequential registration
         // makes studio (the only multicore path) match production and the goldenhash baseline.
+        registerStage((x, z, k, p, m, c) -> {
+            if (!shouldBypassMantleStages()) {
+                generateContentMatter(x >> 4, z >> 4, m || getEngine().isStudio(), c);
+            }
+        });
         registerStage(sDeposit);
         registerStage(sInsertMatter);
         registerStage(sDecorant);

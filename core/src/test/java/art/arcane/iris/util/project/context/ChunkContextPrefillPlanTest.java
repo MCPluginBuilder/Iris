@@ -4,9 +4,11 @@ import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import org.bukkit.block.data.BlockData;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -22,6 +24,7 @@ import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -88,8 +91,39 @@ public class ChunkContextPrefillPlanTest {
 
     @Test
     public void singleOrNoFillTaskPrefillsInline() {
-        assertFalse(ChunkContext.shouldPrefillAsync(0));
-        assertFalse(ChunkContext.shouldPrefillAsync(1));
+        assertFalse(ChunkContext.shouldPrefillAsync(ChunkContext.PrefillPlan.NO_CAVE, 0));
+        assertFalse(ChunkContext.shouldPrefillAsync(ChunkContext.PrefillPlan.NO_CAVE, 1));
+    }
+
+    @Test
+    public void naturalTerrainPrefillsAllRequiredCachesWithoutConsultingSharedExecutor() {
+        AtomicInteger caveCalls = new AtomicInteger();
+        AtomicInteger heightCalls = new AtomicInteger();
+        AtomicInteger biomeCalls = new AtomicInteger();
+        AtomicInteger rockCalls = new AtomicInteger();
+        AtomicInteger fluidCalls = new AtomicInteger();
+        AtomicInteger regionCalls = new AtomicInteger();
+        try (MockedStatic<IrisPlatforms> platforms = mockStatic(IrisPlatforms.class)) {
+            platforms.when(IrisPlatforms::isBound).thenReturn(true);
+            assertFalse(ChunkContext.shouldPrefillAsync(ChunkContext.PrefillPlan.NATURAL_TERRAIN, 5));
+            ChunkContext context = createContext(ChunkContext.PrefillPlan.NATURAL_TERRAIN,
+                    caveCalls, heightCalls, biomeCalls, rockCalls, fluidCalls, regionCalls);
+
+            assertEquals(256, heightCalls.get());
+            assertEquals(256, biomeCalls.get());
+            assertEquals(256, rockCalls.get());
+            assertEquals(256, fluidCalls.get());
+            assertEquals(256, regionCalls.get());
+            assertEquals(0, caveCalls.get());
+            assertEquals(34051D, context.getHeight().getDouble(2, 3), 0D);
+            assertEquals(34051, context.getRoundedHeight(2, 3));
+            context.getBiome().get(2, 3);
+            context.getRegion().get(2, 3);
+            assertEquals(256, heightCalls.get());
+            assertEquals(256, biomeCalls.get());
+            assertEquals(256, regionCalls.get());
+            platforms.verifyNoInteractions();
+        }
     }
 
     @Test
@@ -243,7 +277,7 @@ public class ChunkContextPrefillPlanTest {
             return region;
         }).when(regionStream).get(anyDouble(), anyDouble());
 
-        doReturn(heightStream).when(complex).getHeightStream();
+        doReturn(heightStream).when(complex).getRawHeightStream();
         doReturn(biomeStream).when(complex).getTrueBiomeStream();
         doReturn(caveStream).when(complex).getCaveBiomeStream();
         doReturn(rockStream).when(complex).getRockStream();

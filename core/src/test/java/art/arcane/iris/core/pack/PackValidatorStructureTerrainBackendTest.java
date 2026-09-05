@@ -16,11 +16,99 @@ import java.util.Locale;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class PackValidatorStructureTerrainBackendTest {
     @Rule
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+    @Test
+    public void rejectsNativeAnchorsInNestedResourcesAcrossEveryHost() throws Exception {
+        File pack = temporaryFolder.newFolder("native-anchors");
+        List<String> expected = new ArrayList<>();
+        for (String folder : List.of("dimensions", "regions", "biomes")) {
+            JSONArray placements = new JSONArray();
+            for (String anchor : List.of("SURFACE", "HEIGHT_BAND", "CAVE_FLOOR", "CAVE_CEILING")) {
+                placements.put(new JSONObject()
+                        .put("placementId", folder + "-" + anchor)
+                        .put("anchor", anchor)
+                        .put("nativeStructures", new JSONArray().put(
+                                new JSONObject().put("structure", "minecraft:village_plains"))));
+                String host = switch (folder) {
+                    case "dimensions" -> "Dimension";
+                    case "regions" -> "Region";
+                    default -> "Biome";
+                };
+                expected.add(host + " 'nested/host' structures[" + (placements.length() - 1)
+                        + "].anchor must be omitted, null, or LEGACY for nativeStructures.");
+            }
+            write(pack, folder + "/nested/host.json", new JSONObject().put("structures", placements).toString());
+        }
+        List<String> errors = new ArrayList<>();
+
+        PackStructurePlacementValidator.validateStructurePlacements(pack, Set.of(), false, errors);
+
+        assertEquals(expected, errors);
+        PackValidationResult result = PackValidator.validateForPackaging(pack);
+        assertFalse(result.isLoadable());
+        assertTrue(result.getBlockingErrors().toString(), result.getBlockingErrors().containsAll(expected));
+    }
+
+    @Test
+    public void rejectsMixedAndEmptyBackendsAcrossEveryHost() throws Exception {
+        File pack = temporaryFolder.newFolder("invalid-backends");
+        List<String> expected = new ArrayList<>();
+        for (String folder : List.of("dimensions", "regions", "biomes")) {
+            JSONArray placements = new JSONArray()
+                    .put(new JSONObject().put("placementId", folder + "-mixed")
+                            .put("structures", new JSONArray().put("tower"))
+                            .put("nativeStructures", new JSONArray().put(
+                                    new JSONObject().put("structure", "minecraft:village_plains"))))
+                    .put(new JSONObject().put("placementId", folder + "-empty")
+                            .put("structures", new JSONArray()).put("nativeStructures", new JSONArray()));
+            write(pack, folder + "/host.json", new JSONObject().put("structures", placements).toString());
+            String host = switch (folder) {
+                case "dimensions" -> "Dimension";
+                case "regions" -> "Region";
+                default -> "Biome";
+            };
+            for (int index = 0; index < 2; index++) {
+                expected.add(host + " 'host' structures[" + index
+                        + "] must declare exactly one non-empty backend: structures or nativeStructures.");
+            }
+        }
+        List<String> errors = new ArrayList<>();
+
+        PackStructurePlacementValidator.validateStructurePlacements(pack, Set.of("tower"), false, errors);
+
+        assertEquals(expected, errors);
+    }
+
+    @Test
+    public void acceptsNativeDefaultAndLegacyAnchorsAndEditableSurfaceAnchor() throws Exception {
+        File pack = temporaryFolder.newFolder("supported-anchors");
+        JSONArray placements = new JSONArray();
+        for (int index = 0; index < 3; index++) {
+            JSONObject placement = new JSONObject().put("placementId", "native-" + index)
+                    .put("nativeStructures", new JSONArray().put(
+                            new JSONObject().put("structure", "minecraft:village_plains")));
+            if (index == 1) {
+                placement.put("anchor", "LEGACY");
+            } else if (index == 2) {
+                placement.put("anchor", JSONObject.NULL);
+            }
+            placements.put(placement);
+        }
+        placements.put(new JSONObject().put("placementId", "editable")
+                .put("anchor", "SURFACE").put("structures", new JSONArray().put("tower")));
+        write(pack, "dimensions/main.json", new JSONObject().put("structures", placements).toString());
+        List<String> errors = new ArrayList<>();
+
+        PackStructurePlacementValidator.validateStructurePlacements(pack, Set.of("tower"), false, errors);
+
+        assertTrue(errors.toString(), errors.isEmpty());
+    }
 
     @Test
     public void rejectsNativeOnlyTerrainModesForEditablePlacementsAcrossEveryHost() throws Exception {

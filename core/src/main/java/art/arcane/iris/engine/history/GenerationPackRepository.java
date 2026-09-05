@@ -70,31 +70,51 @@ public final class GenerationPackRepository {
             int packFingerprintVersion,
             Path source
     ) throws IOException {
-        Path target = epochsRoot.resolve(epochId);
+        Path epochDirectory = ensureChildDirectory(epochsRoot, epochId);
+        Path target = epochDirectory.resolve("pack");
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-            requireSafeDirectory(target, "Generation epoch path is not a safe directory");
             return requireExactPack(epochId, packFingerprint, packFingerprintVersion);
         }
 
-        Path stage = Files.createTempDirectory(epochsRoot, ".epoch-" + epochId.substring(0, 12) + "-");
-        boolean published = false;
+        Path stage = Files.createTempDirectory(epochDirectory, ".pack-");
         try {
-            Path stagedPack = stage.resolve("pack");
-            copyPackTree(source, stagedPack);
-            requireFingerprint(stagedPack, packFingerprint, packFingerprintVersion);
+            Files.delete(stage);
+            copyPackTree(source, stage);
+            requireFingerprint(stage, packFingerprint, packFingerprintVersion);
             try (AtomicDirectoryPublisher.Publication publication =
                          AtomicDirectoryPublisher.publishAbsent(stage, target)) {
                 publication.commit();
             } catch (FileAlreadyExistsException race) {
-                requireSafeDirectory(target, "Generation epoch path is not a safe directory");
                 return requireExactPack(epochId, packFingerprint, packFingerprintVersion);
             }
-            forceDirectory(epochsRoot);
-            published = true;
+            forceDirectory(epochDirectory);
             return requireExactPack(epochId, packFingerprint, packFingerprintVersion);
         } finally {
-            if (!published && Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) {
                 AtomicDirectoryPublisher.deleteTree(stage);
+            }
+        }
+    }
+
+    public synchronized void releaseArchivedPacks(GenerationManifest manifest) throws IOException {
+        GenerationManifest retained = Objects.requireNonNull(manifest, "manifest");
+        String activeEpochId = retained.activeEpoch().epochId();
+        String pendingEpochId = retained.pendingEpoch().map(GenerationEpoch::epochId).orElse(null);
+        for (GenerationEpoch epoch : retained.epochs()) {
+            String epochId = epoch.epochId();
+            if (epochId.equals(activeEpochId) || epochId.equals(pendingEpochId)) {
+                continue;
+            }
+            try (GenerationPublicationLock ignored = GenerationPublicationLock.acquire(
+                    epochsRoot, ".epoch-" + epochId + ".lock")) {
+                validateExistingAncestors(epochId);
+                Path pack = packRoot(epochId);
+                if (!Files.exists(pack, LinkOption.NOFOLLOW_LINKS)) {
+                    continue;
+                }
+                requireSafeDirectory(pack, "Generation epoch pack is unsafe");
+                AtomicDirectoryPublisher.deleteTree(pack);
+                forceDirectory(epochRoot(epochId));
             }
         }
     }
@@ -182,7 +202,7 @@ public final class GenerationPackRepository {
         }
     }
 
-    private static void copyPackTree(Path source, Path target) throws IOException {
+    public static void copyPackTree(Path source, Path target) throws IOException {
         Path sourcePath = Objects.requireNonNull(source, "source").toAbsolutePath().normalize();
         if (Files.isSymbolicLink(sourcePath)) {
             throw new IOException("Pack source is a symbolic link: " + sourcePath);

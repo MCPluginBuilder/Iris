@@ -43,6 +43,21 @@ public interface MatterGenerator {
 
     @ChunkCoordinates
     default void generateMatter(int x, int z, boolean multicore, ChunkContext context) {
+        generateMatterPhase(x, z, multicore, context, MatterGenerationPhase.ALL);
+    }
+
+    @ChunkCoordinates
+    default void generateTerrainMatter(int x, int z, boolean multicore, ChunkContext context) {
+        generateMatterPhase(x, z, multicore, context, MatterGenerationPhase.TERRAIN);
+    }
+
+    @ChunkCoordinates
+    default void generateContentMatter(int x, int z, boolean multicore, ChunkContext context) {
+        generateMatterPhase(x, z, multicore, context, MatterGenerationPhase.CONTENT);
+    }
+
+    private void generateMatterPhase(int x, int z, boolean multicore, ChunkContext context,
+                                     MatterGenerationPhase phase) {
         if (!getEngine().getDimension().isUseMantle()) {
             return;
         }
@@ -53,7 +68,7 @@ public interface MatterGenerator {
         if (complex != null && !complex.allowsMantleChunkWrite(x, z)) {
             return;
         }
-        generateMatterWindow(x, z, multicore, context, complex);
+        generateMatterWindow(x, z, multicore, context, complex, phase);
     }
 
     private void generateMatterWindow(
@@ -61,16 +76,19 @@ public interface MatterGenerator {
             int z,
             boolean multicore,
             ChunkContext context,
-            IrisComplex complex
+            IrisComplex complex,
+            MatterGenerationPhase phase
     ) {
 
-        MatterGenerationPlan generationPlan = resolveGenerationPlan(x, z, context);
+        MatterGenerationPlan generationPlan = resolveGenerationPlan(x, z, context, phase);
         MatterPassPlan[] passPlans = generationPlan.passPlans();
         if (passPlans.length == 0) {
             return;
         }
         int prefetchRadius = passPlans[0].passChunkRadius();
         LongOpenHashSet partialChunks = new LongOpenHashSet();
+        List<MantleComponent> requiredComponents = enabledComponents();
+        List<MantleFlag> terrainFlags = terrainFlags(requiredComponents);
 
         try (MantleWriter writer = new MantleWriter(
                 getEngine().getMantle(),
@@ -94,7 +112,7 @@ public interface MatterGenerator {
                     int[] componentPassRadii = new int[passComponents.size()];
                     int enabledComponentCount = 0;
                     for (MantleComponent component : passComponents) {
-                        if (shouldGenerateComponent(component)) {
+                        if (phase.includes(component) && shouldGenerateComponent(component)) {
                             // A component must cover its own reach plus every later pass' reach, or a
                             // later pass reads this component's data from chunks it never wrote.
                             int componentReach = component.getOutputRadius() + passPlan.downstreamBlockRadius();
@@ -162,6 +180,9 @@ public interface MatterGenerator {
                                 continue;
                             }
 
+                            if (phase == MatterGenerationPhase.CONTENT) {
+                                requireTerrainPhase(chunk, passX, passZ, terrainFlags);
+                            }
                             int eligibleComponentCount = 0;
                             for (int componentIndex = 0; componentIndex < enabledComponentCount; componentIndex++) {
                                 MantleComponent component = enabledComponents[componentIndex];
@@ -217,6 +238,9 @@ public interface MatterGenerator {
                     }
                 }
 
+                if (phase == MatterGenerationPhase.TERRAIN) {
+                    return;
+                }
                 int realRadius = passPlans[passPlans.length - 1].passChunkRadius();
                 for (int i = -realRadius; i <= realRadius; i++) {
                     for (int j = -realRadius; j <= realRadius; j++) {
@@ -229,7 +253,10 @@ public interface MatterGenerator {
                         if (complex != null && !complex.allowsMantleChunkWrite(realX, realZ)) {
                             continue;
                         }
-                        writer.acquireChunk(realX, realZ).flag(MantleFlag.PLANNED, true);
+                        MantleChunk<Matter> chunk = writer.acquireChunk(realX, realZ);
+                        if (hasCompletedComponents(chunk, requiredComponents)) {
+                            chunk.flag(MantleFlag.PLANNED, true);
+                        }
                     }
                 }
             } finally {
@@ -242,7 +269,7 @@ public interface MatterGenerator {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
 
-    private MatterGenerationPlan resolveGenerationPlan(int x, int z, ChunkContext context) {
+    private MatterGenerationPlan resolveGenerationPlan(int x, int z, ChunkContext context, MatterGenerationPhase phase) {
         List<MantlePass> passes = getComponents();
         MatterPassPlan[] plans = new MatterPassPlan[passes.size()];
         int accessDownstreamBlockRadius = 0;
@@ -278,7 +305,48 @@ public interface MatterGenerator {
         int writerChunkRadius = accessDownstreamBlockRadius > 0
                 ? Math.ceilDiv(accessDownstreamBlockRadius, 16)
                 : 0;
-        return new MatterGenerationPlan(plans, writerChunkRadius * 2);
+        return new MatterGenerationPlan(plans, writerChunkRadius * 2, phase);
+    }
+
+    private List<MantleComponent> enabledComponents() {
+        List<MantleComponent> components = new ArrayList<>();
+        for (MantlePass pass : getComponents()) {
+            for (MantleComponent component : pass.components()) {
+                if (shouldGenerateComponent(component)) {
+                    components.add(component);
+                }
+            }
+        }
+        return List.copyOf(components);
+    }
+
+    private static List<MantleFlag> terrainFlags(List<MantleComponent> components) {
+        List<MantleFlag> flags = new ArrayList<>();
+        for (MantleComponent component : components) {
+            if (component.getGenerationPhase() == MatterGenerationPhase.TERRAIN) {
+                flags.add(component.getFlag());
+            }
+        }
+        return List.copyOf(flags);
+    }
+
+    private static void requireTerrainPhase(MantleChunk<Matter> chunk, int chunkX, int chunkZ,
+                                            List<MantleFlag> flags) {
+        for (MantleFlag flag : flags) {
+            if (!chunk.isFlagged(flag)) {
+                throw new IllegalStateException("Content generation at " + chunkX + "," + chunkZ
+                        + " requires completed terrain component " + flag.name());
+            }
+        }
+    }
+
+    private static boolean hasCompletedComponents(MantleChunk<Matter> chunk, List<MantleComponent> components) {
+        for (MantleComponent component : components) {
+            if (!chunk.isFlagged(component.getFlag())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean shouldGenerateComponent(MantleComponent component) {
@@ -535,7 +603,7 @@ public interface MatterGenerator {
     record MatterPassPlan(MantlePass pass, int passChunkRadius, int downstreamBlockRadius) {
     }
 
-    record MatterGenerationPlan(MatterPassPlan[] passPlans, int writerAccessRadius) {
+    record MatterGenerationPlan(MatterPassPlan[] passPlans, int writerAccessRadius, MatterGenerationPhase phase) {
     }
 
     final class MatterTaskKey {

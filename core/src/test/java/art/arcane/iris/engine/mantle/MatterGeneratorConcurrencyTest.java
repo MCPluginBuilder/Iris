@@ -34,6 +34,8 @@ import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertThrows;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -148,6 +150,71 @@ public class MatterGeneratorConcurrencyTest {
         assertNull(IrisContext.get());
     }
 
+    @Test
+    public void terrainPhasePreparesContentReachWithoutPublishingPlanned() {
+        GeneratorFixture fixture = new GeneratorFixture(true);
+        AtomicInteger terrainRuns = new AtomicInteger();
+        AtomicInteger contentRuns = new AtomicInteger();
+        RecordingComponent terrain = new RecordingComponent(ReservedFlag.CARVED, 0, 0) {
+            @Override
+            public MatterGenerationPhase getGenerationPhase() {
+                return MatterGenerationPhase.TERRAIN;
+            }
+
+            @Override
+            public void generateLayer(MantleWriter writer, int x, int z, ChunkContext context) {
+                terrainRuns.incrementAndGet();
+            }
+        };
+        RecordingComponent content = new RecordingComponent(ReservedFlag.OBJECT, 1, 16) {
+            @Override
+            public void generateLayer(MantleWriter writer, int x, int z, ChunkContext context) {
+                assertEquals(9, terrainRuns.get());
+                contentRuns.incrementAndGet();
+            }
+        };
+        TestMatterGenerator generator = fixture.generator(List.of(
+                new MantlePass(List.of(terrain), 1, 0),
+                new MantlePass(List.of(content), 1, 0)));
+
+        generator.generateTerrainMatter(0, 0, true, fixture.context);
+        assertEquals(9, terrainRuns.get());
+        assertEquals(0, contentRuns.get());
+        assertFalse(fixture.mantle.getChunk(0, 0).isFlagged(MantleFlag.PLANNED));
+        assertFalse(fixture.mantle.getChunk(0, 0).isFlagged(ReservedFlag.OBJECT));
+
+        generator.generateContentMatter(0, 0, true, fixture.context);
+        generator.generateTerrainMatter(0, 0, true, fixture.context);
+        generator.generateContentMatter(0, 0, true, fixture.context);
+        assertEquals(9, terrainRuns.get());
+        assertEquals(9, contentRuns.get());
+        assertTrue(fixture.mantle.getChunk(0, 0).isFlagged(MantleFlag.PLANNED));
+    }
+
+    @Test
+    public void contentPhaseRequiresTerrainEvenWhenItsExplicitPrerequisiteIsMissing() {
+        GeneratorFixture fixture = new GeneratorFixture(true);
+        RecordingComponent terrain = new RecordingComponent(ReservedFlag.CARVED, 0, 0) {
+            @Override
+            public MatterGenerationPhase getGenerationPhase() {
+                return MatterGenerationPhase.TERRAIN;
+            }
+        };
+        RecordingComponent content = new RecordingComponent(ReservedFlag.OBJECT, 1, 0) {
+            @Override
+            public MantleFlag[] getPrerequisiteFlags() {
+                return new MantleFlag[]{ReservedFlag.CARVED};
+            }
+        };
+        TestMatterGenerator generator = fixture.generator(List.of(
+                new MantlePass(List.of(terrain), 0, 0),
+                new MantlePass(List.of(content), 0, 0)));
+
+        assertThrows(IllegalStateException.class,
+                () -> generator.generateContentMatter(0, 0, false, fixture.context));
+        assertFalse(fixture.mantle.getChunk(0, 0).isFlagged(MantleFlag.PLANNED));
+    }
+
     private static void await(CountDownLatch latch) {
         try {
             assertTrue(latch.await(5, TimeUnit.SECONDS));
@@ -251,6 +318,11 @@ public class MatterGeneratorConcurrencyTest {
             Set<Object> flagged = ConcurrentHashMap.newKeySet();
             when(chunk.use()).thenReturn(chunk);
             when(chunk.isFlagged(any())).thenAnswer(invocation -> flagged.contains(invocation.getArgument(0)));
+            doAnswer(invocation -> {
+                Object flag = invocation.getArgument(0);
+                boolean enabled = invocation.getArgument(1);
+                return enabled ? flagged.add(flag) : flagged.remove(flag);
+            }).when(chunk).flag(any(), anyBoolean());
             doAnswer(invocation -> {
                 Object flag = invocation.getArgument(0);
                 Runnable task = invocation.getArgument(1);

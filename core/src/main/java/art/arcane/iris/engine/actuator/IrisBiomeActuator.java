@@ -36,6 +36,7 @@ import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
+import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterBiomeInject;
@@ -65,7 +66,7 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
         int depth = h.getDepth();
         int height = h.getHeight();
         Engine engine = getEngine();
-        Mantle<Matter> mantle = engine.getMantle().getMantle();
+        Mantle<Matter> mantle = context.isSpeculativeTerrain() ? null : engine.getMantle().getMantle();
         ChunkedDataCache<IrisBiome> biomeCache = context.getBiome();
         IrisComplex complex = context.getComplex();
         DimensionStackContext dimensionStackContext = engine.getDimensionStackContext();
@@ -74,21 +75,6 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
             for (int zf = 0; zf < depth; zf++) {
                 int worldX = x + xf;
                 int worldZ = z + zf;
-                if (!complex.allowsNewDiscreteContentAt(worldX, worldZ)) {
-                    writeHistoricalColumn(
-                            h,
-                            mantle,
-                            xf,
-                            zf,
-                            worldX,
-                            worldZ,
-                            height,
-                            engine,
-                            complex
-                    );
-                    continue;
-                }
-
                 IrisBiome biome = biomeCache.get(xf, zf);
                 ResolvedBiome resolved = resolve(biomeKey(
                         biome,
@@ -117,9 +103,37 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
                             context.getDimensionStackLayout(xf, zf)
                     );
                 }
+                writeHistoricalColumn(h, mantle, xf, zf, worldX, worldZ, height, engine, complex);
             }
         }
         engine.getMetrics().getBiome().put(p.getMilliseconds());
+    }
+
+    public static void publishNaturalMetadata(Engine engine, int x, int z, Hunk<PlatformBiome> biomes,
+                                               ChunkContext context) {
+        if (context.isSpeculativeTerrain() || !context.getComplex().allowsMantleChunkWrite(x >> 4, z >> 4)) {
+            return;
+        }
+        Mantle<Matter> mantle = engine.getMantle().getMantle();
+        MantleChunk<Matter> chunk = mantle.getChunk(x >> 4, z >> 4).use();
+        try {
+            synchronized (chunk) {
+                IrisDimensionStackActuator.clearNaturalMetadata(chunk, context, biomes.getHeight());
+                chunk.deleteSlices(MatterBiomeInject.class);
+                for (int localX = 0; localX < biomes.getWidth(); localX += 4) {
+                    for (int localZ = 0; localZ < biomes.getDepth(); localZ += 4) {
+                        for (int y = 0; y < biomes.getHeight(); y += 4) {
+                            PlatformBiome biome = biomes.getRaw(localX, y, localZ);
+                            if (biome != null) {
+                                mantle.set(x + localX, y, z + localZ, BiomeInjectMatter.get(biome.key()));
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            chunk.release();
+        }
     }
 
     private void writeHistoricalColumn(
@@ -137,14 +151,17 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
         if (transitionPlan == null) {
             return;
         }
-        TransitionGenerationPlan.TerrainSample sample = transitionPlan.terrainSampleAt(worldX, worldZ);
+        TransitionGenerationPlan.TerrainSample terrainSample = transitionPlan.terrainSampleAt(worldX, worldZ);
+        if (terrainSample.newEpochWeight() == 1D) {
+            return;
+        }
         int minimumWorldY = engine.getMinHeight();
-        String activeKey = sample.historicalPhysicalBiomeKeyAt(minimumWorldY).orElse(null);
+        String activeKey = transitionPlan.historicalPhysicalBiomeKeyAt(worldX, minimumWorldY, worldZ, terrainSample).orElse(null);
         int rangeStart = 0;
         for (int internalY = 1; internalY <= height; internalY++) {
             String nextKey = internalY == height
                     ? null
-                    : sample.historicalPhysicalBiomeKeyAt(minimumWorldY + internalY).orElse(null);
+                    : transitionPlan.historicalPhysicalBiomeKeyAt(worldX, minimumWorldY + internalY, worldZ, terrainSample).orElse(null);
             if (Objects.equals(activeKey, nextKey)) {
                 continue;
             }
@@ -179,7 +196,9 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
         if (resolved.biome() != null) {
             output.set(localX, 0, localZ, localX, height - 1, localZ, resolved.biome());
         }
-        mantle.set(worldX, 0, worldZ, resolved.matter());
+        if (mantle != null) {
+            mantle.set(worldX, 0, worldZ, resolved.matter());
+        }
     }
 
     private void applyDimensionStackBiomes(
@@ -256,7 +275,9 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
         if (minimumY > maximumY) {
             return;
         }
-        clearBiomeMatterRange(mantle, worldX, worldZ, minimumY, maximumY);
+        if (mantle != null) {
+            clearBiomeMatterRange(mantle, worldX, worldZ, minimumY, maximumY);
+        }
         if (resolved.biome() != null) {
             output.set(
                     localX,
@@ -268,7 +289,7 @@ public class IrisBiomeActuator extends EngineAssignedActuator<PlatformBiome> {
                     resolved.biome()
             );
         }
-        if (resolved.matter() != null) {
+        if (mantle != null && resolved.matter() != null) {
             mantle.set(worldX, minimumY, worldZ, resolved.matter());
         }
     }

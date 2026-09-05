@@ -38,9 +38,9 @@ public class TerrainBoundarySignatureStoreTest {
                 new TerrainBoundarySignature.VerticalLayout(-64, 4, 0),
                 new TerrainBoundarySignature.BiomeEncoding(List.of(), new short[0]));
         TerrainBoundarySignature present = new TerrainBoundarySignature(
-                new TerrainBoundarySignature.Column(-17, 8, 64, 64, OptionalInt.empty(), OptionalInt.of(80)), samples);
+                new TerrainBoundarySignature.Column(-17, 8, 64, 64, OptionalInt.empty(), OptionalInt.of(80)), samples, BoundaryColumnGeometry.empty());
         TerrainBoundarySignature absent = new TerrainBoundarySignature(
-                new TerrainBoundarySignature.Column(257, 8, 64, 64, OptionalInt.empty(), OptionalInt.empty()), samples);
+                new TerrainBoundarySignature.Column(257, 8, 64, 64, OptionalInt.empty(), OptionalInt.empty()), samples, BoundaryColumnGeometry.empty());
         store.publish(2L, List.of(present, absent));
 
         TerrainBoundarySignatureStore.Snapshot reopened = store.load(2L);
@@ -422,7 +422,7 @@ public class TerrainBoundarySignatureStoreTest {
                         OptionalInt.empty()
                 ),
                 new TerrainBoundarySignature.Samples(layout, biomeEncoding)
-        );
+        , BoundaryColumnGeometry.empty());
     }
 
     private static void assertSignatureEquals(

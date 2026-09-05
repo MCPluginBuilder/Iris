@@ -1,4 +1,4 @@
-import art.arcane.iris.buildtools.GenerationKernelSeal;
+import art.arcane.iris.buildtools.GenerationBuildRevision;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -17,20 +17,20 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-public class GenerationKernelSealTest {
+public class GenerationBuildRevisionTest {
     @Rule
     public final TemporaryFolder temporary = new TemporaryFolder();
 
     @Test
     public void verifiesUnchangedSourceAndCanonicalDependencyContents() throws Exception {
         Fixture fixture = fixture();
-        GenerationKernelSeal.verify(fixture.root(), fixture.seal(), fixture.dependencies());
-        String original = GenerationKernelSeal.artifactHash(fixture.dependency());
+        GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), fixture.dependencies());
+        String original = GenerationBuildRevision.artifactHash(fixture.dependency());
         artifact(fixture.dependency(), "same code", "another version", 1_700_000_000_000L);
-        assertEquals(original, GenerationKernelSeal.artifactHash(fixture.dependency()));
-        GenerationKernelSeal.verify(fixture.root(), fixture.seal(), fixture.dependencies());
-        assertEquals(GenerationKernelSeal.fingerprint(GenerationKernelSeal.read(fixture.seal())),
-                GenerationKernelSeal.fingerprint(GenerationKernelSeal.capture(fixture.options(), fixture.dependencies())));
+        assertEquals(original, GenerationBuildRevision.artifactHash(fixture.dependency()));
+        GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), fixture.dependencies());
+        assertEquals(GenerationBuildRevision.fingerprint(GenerationBuildRevision.read(fixture.revision())),
+                GenerationBuildRevision.fingerprint(GenerationBuildRevision.capture(fixture.options(), fixture.dependencies())));
     }
 
     @Test
@@ -39,120 +39,118 @@ public class GenerationKernelSealTest {
         Path source = fixture.root().resolve("generation/Noise.java");
         Files.writeString(source, "class Noise { int value = 2; }");
         assertTrue(assertThrows(IOException.class,
-                () -> GenerationKernelSeal.verify(fixture.root(), fixture.seal(), fixture.dependencies()))
+                () -> GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), fixture.dependencies()))
                 .getMessage().contains("source changed"));
         Files.writeString(source, "class Noise { int value = 1; }");
         Path added = fixture.root().resolve("generation/Added.java");
         Files.writeString(added, "class Added {}");
         assertTrue(assertThrows(IOException.class,
-                () -> GenerationKernelSeal.verify(fixture.root(), fixture.seal(), fixture.dependencies()))
+                () -> GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), fixture.dependencies()))
                 .getMessage().contains("source added"));
         Files.delete(added);
         Files.delete(source);
         assertThrows(IOException.class,
-                () -> GenerationKernelSeal.verify(fixture.root(), fixture.seal(), fixture.dependencies()));
+                () -> GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), fixture.dependencies()));
     }
 
     @Test
     public void rejectsChangedAddedAndDeletedDependencies() throws Exception {
         Fixture fixture = fixture();
-        String original = GenerationKernelSeal.artifactHash(fixture.dependency());
+        String original = GenerationBuildRevision.artifactHash(fixture.dependency());
         artifact(fixture.dependency(), "changed code", "same version", 0L);
-        assertNotEquals(original, GenerationKernelSeal.artifactHash(fixture.dependency()));
+        assertNotEquals(original, GenerationBuildRevision.artifactHash(fixture.dependency()));
         assertTrue(assertThrows(IOException.class,
-                () -> GenerationKernelSeal.verify(fixture.root(), fixture.seal(), fixture.dependencies()))
+                () -> GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), fixture.dependencies()))
                 .getMessage().contains("dependency changed"));
         artifact(fixture.dependency(), "same code", "same version", 0L);
-        assertThrows(IOException.class, () -> GenerationKernelSeal.verify(fixture.root(), fixture.seal(),
+        assertThrows(IOException.class, () -> GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(),
                 Map.of("math", fixture.dependency(), "new-math", fixture.dependency())));
         assertThrows(IOException.class,
-                () -> GenerationKernelSeal.verify(fixture.root(), fixture.seal(), Map.of()));
+                () -> GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), Map.of()));
     }
 
     @Test
     public void rejectsMultiReleaseManifestChanges() throws Exception {
         Fixture fixture = fixture();
-        String original = GenerationKernelSeal.artifactHash(fixture.dependency());
+        String original = GenerationBuildRevision.artifactHash(fixture.dependency());
         artifact(fixture.dependency(), "same code", "same version\r\nMulti-Release: true", 0L);
-        assertNotEquals(original, GenerationKernelSeal.artifactHash(fixture.dependency()));
+        assertNotEquals(original, GenerationBuildRevision.artifactHash(fixture.dependency()));
         assertThrows(IOException.class,
-                () -> GenerationKernelSeal.verify(fixture.root(), fixture.seal(), fixture.dependencies()));
+                () -> GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), fixture.dependencies()));
     }
 
     @Test
     public void rejectsAgentEntrypointAndCapabilityChanges() throws Exception {
         Fixture fixture = fixture();
-        String original = GenerationKernelSeal.artifactHash(fixture.dependency());
+        String original = GenerationBuildRevision.artifactHash(fixture.dependency());
         for (String attribute : List.of("Agent-Class", "Premain-Class", "Launcher-Agent-Class", "Boot-Class-Path",
                 "Can-Redefine-Classes", "Can-Retransform-Classes", "Can-Set-Native-Method-Prefix")) {
             artifact(fixture.dependency(), "same code", "same version\r\n" + attribute + ": changed", 0L);
-            assertNotEquals(attribute, original, GenerationKernelSeal.artifactHash(fixture.dependency()));
+            assertNotEquals(attribute, original, GenerationBuildRevision.artifactHash(fixture.dependency()));
             assertThrows(IOException.class,
-                    () -> GenerationKernelSeal.verify(fixture.root(), fixture.seal(), fixture.dependencies()));
+                    () -> GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), fixture.dependencies()));
         }
     }
 
     @Test
-    public void sealsExplicitAgentBuildInputsAndExecutableSources() throws Exception {
+    public void capturesExplicitAgentBuildInputsAndExecutableSources() throws Exception {
         Fixture fixture = fixture();
         Path agentSource = fixture.root().resolve("agent/src/main/java/Installer.java");
         Path agentBuild = fixture.root().resolve("agent/build.gradle");
         Files.createDirectories(agentSource.getParent());
         Files.writeString(agentSource, "class Installer {}");
         Files.writeString(agentBuild, "plugins { id 'java' }");
-        GenerationKernelSeal.CaptureOptions options = new GenerationKernelSeal.CaptureOptions(
-                fixture.root(), 1, "example.KernelV1", List.of(new GenerationKernelSeal.AlgorithmVersion(1, 1)),
+        GenerationBuildRevision.CaptureOptions options = new GenerationBuildRevision.CaptureOptions(
+                fixture.root(), 1, "example.KernelV1", List.of(new GenerationBuildRevision.AlgorithmVersion(1, 1)),
                 List.of("generation", "agent/build.gradle", "agent/src/main/java"), List.of("generation/kernels"));
-        Path seal = fixture.root().resolve("agent.seal");
-        GenerationKernelSeal.writeNew(seal, GenerationKernelSeal.capture(options, fixture.dependencies()));
-        GenerationKernelSeal.verify(fixture.root(), seal, fixture.dependencies());
+        Path revision = fixture.root().resolve("agent.revision");
+        GenerationBuildRevision.write(revision, GenerationBuildRevision.capture(options, fixture.dependencies()));
+        GenerationBuildRevision.verifySnapshot(fixture.root(), revision, fixture.dependencies());
         Files.writeString(agentBuild, "plugins { id 'application' }");
         assertThrows(IOException.class,
-                () -> GenerationKernelSeal.verify(fixture.root(), seal, fixture.dependencies()));
+                () -> GenerationBuildRevision.verifySnapshot(fixture.root(), revision, fixture.dependencies()));
         Files.writeString(agentBuild, "plugins { id 'java' }");
         Files.writeString(agentSource, "class Installer { boolean defers; }");
         assertThrows(IOException.class,
-                () -> GenerationKernelSeal.verify(fixture.root(), seal, fixture.dependencies()));
+                () -> GenerationBuildRevision.verifySnapshot(fixture.root(), revision, fixture.dependencies()));
     }
 
     @Test
     public void checksTheActualPlatformDependencySubset() throws Exception {
         Fixture fixture = fixture();
-        GenerationKernelSeal.verifyDependencySubset(fixture.seal(), fixture.dependencies());
-        assertThrows(IOException.class, () -> GenerationKernelSeal.verifyDependencySubset(fixture.seal(),
+        GenerationBuildRevision.verifyDependencySubset(fixture.revision(), fixture.dependencies());
+        assertThrows(IOException.class, () -> GenerationBuildRevision.verifyDependencySubset(fixture.revision(),
                 Map.of("unknown-library", fixture.dependency())));
         artifact(fixture.dependency(), "platform override", "same version", 0L);
         assertThrows(IOException.class,
-                () -> GenerationKernelSeal.verifyDependencySubset(fixture.seal(), fixture.dependencies()));
+                () -> GenerationBuildRevision.verifyDependencySubset(fixture.revision(), fixture.dependencies()));
     }
 
     @Test
-    public void catalogCannotSelectAnUnsealedAlgorithmTuple() throws Exception {
+    public void catalogRequiresAPackagedAlgorithmTuple() throws Exception {
         Fixture fixture = fixture();
         Path catalog = fixture.root().resolve("catalog.tsv");
         Files.writeString(catalog, "iris-generation-kernel-catalog-v1\ncurrent\t1\t1\t1\nkernel\t1\n");
-        Map<Integer, GenerationKernelSeal.SourceManifest> manifests = Map.of(1, GenerationKernelSeal.read(fixture.seal()));
-        GenerationKernelSeal.verifyCatalog(catalog, manifests);
+        Map<Integer, GenerationBuildRevision.SourceManifest> manifests = Map.of(1, GenerationBuildRevision.read(fixture.revision()));
+        GenerationBuildRevision.verifyCatalog(catalog, manifests);
         Files.writeString(catalog, "iris-generation-kernel-catalog-v1\ncurrent\t1\t2\t1\nkernel\t1\n");
-        assertThrows(IOException.class, () -> GenerationKernelSeal.verifyCatalog(catalog, manifests));
+        assertThrows(IOException.class, () -> GenerationBuildRevision.verifyCatalog(catalog, manifests));
         Files.writeString(catalog, "iris-generation-kernel-catalog-v1\ncurrent\t1\t1\t1\nkernel\t1\nkernel\t2\n");
-        assertThrows(IOException.class, () -> GenerationKernelSeal.verifyCatalog(catalog, manifests));
+        assertThrows(IOException.class, () -> GenerationBuildRevision.verifyCatalog(catalog, manifests));
     }
 
     @Test
-    public void permitsSeparatelyScopedFutureKernelsWithoutChangingRetainedSeal() throws Exception {
+    public void recapturesChangedGenerationWithoutChangingAbi() throws Exception {
         Fixture fixture = fixture();
-        Path future = fixture.root().resolve("generation/kernels/v2/NewMath.java");
-        Files.createDirectories(future.getParent());
-        Files.writeString(future, "class NewMath {}");
-        GenerationKernelSeal.verify(fixture.root(), fixture.seal(), fixture.dependencies());
-        GenerationKernelSeal.SourceManifest next = GenerationKernelSeal.capture(new GenerationKernelSeal.CaptureOptions(
-                fixture.root(), 2, "example.KernelV2", List.of(new GenerationKernelSeal.AlgorithmVersion(2, 3)),
-                List.of("generation/kernels/v2"), List.of()), fixture.dependencies());
-        assertNotEquals(GenerationKernelSeal.fingerprint(next),
-                GenerationKernelSeal.fingerprint(GenerationKernelSeal.read(fixture.seal())));
-        assertThrows(IOException.class,
-                () -> GenerationKernelSeal.writeNew(fixture.seal(), next));
+        String original = GenerationBuildRevision.fingerprint(GenerationBuildRevision.read(fixture.revision()));
+        Files.writeString(fixture.root().resolve("generation/Noise.java"), "class Noise { int value = 9; }");
+        artifact(fixture.dependency(), "new generation code", "new version", 0L);
+        GenerationBuildRevision.SourceManifest next = GenerationBuildRevision.capture(fixture.options(), fixture.dependencies());
+        GenerationBuildRevision.write(fixture.revision(), next);
+        GenerationBuildRevision.verifySnapshot(fixture.root(), fixture.revision(), fixture.dependencies());
+        assertEquals(1, next.abi());
+        assertNotEquals(original, GenerationBuildRevision.fingerprint(next));
+        assertEquals(next, GenerationBuildRevision.read(fixture.revision()));
     }
 
     private Fixture fixture() throws Exception {
@@ -161,13 +159,13 @@ public class GenerationKernelSealTest {
         Files.writeString(root.resolve("generation/Noise.java"), "class Noise { int value = 1; }");
         Path dependency = root.resolve("math.jar");
         artifact(dependency, "same code", "same version", 0L);
-        GenerationKernelSeal.CaptureOptions options = new GenerationKernelSeal.CaptureOptions(
-                root, 1, "example.KernelV1", List.of(new GenerationKernelSeal.AlgorithmVersion(1, 1)),
+        GenerationBuildRevision.CaptureOptions options = new GenerationBuildRevision.CaptureOptions(
+                root, 1, "example.KernelV1", List.of(new GenerationBuildRevision.AlgorithmVersion(1, 1)),
                 List.of("generation"), List.of("generation/kernels"));
-        Path seal = root.resolve("abi-1.seal");
+        Path revision = root.resolve("abi-1.revision");
         Map<String, Path> dependencies = Map.of("math", dependency);
-        GenerationKernelSeal.writeNew(seal, GenerationKernelSeal.capture(options, dependencies));
-        return new Fixture(root, seal, dependency, dependencies, options);
+        GenerationBuildRevision.write(revision, GenerationBuildRevision.capture(options, dependencies));
+        return new Fixture(root, revision, dependency, dependencies, options);
     }
 
     private static void artifact(Path path, String content, String version, long timestamp) throws IOException {
@@ -186,7 +184,7 @@ public class GenerationKernelSealTest {
         }
     }
 
-    private record Fixture(Path root, Path seal, Path dependency, Map<String, Path> dependencies,
-                           GenerationKernelSeal.CaptureOptions options) {
+    private record Fixture(Path root, Path revision, Path dependency, Map<String, Path> dependencies,
+                           GenerationBuildRevision.CaptureOptions options) {
     }
 }

@@ -32,6 +32,10 @@ import org.jetbrains.annotations.NotNull;
 public interface MantleComponent extends Comparable<MantleComponent> {
     int getPriority();
 
+    default MatterGenerationPhase getGenerationPhase() {
+        return MatterGenerationPhase.CONTENT;
+    }
+
     int getRadius();
 
     default int getOutputRadius() {

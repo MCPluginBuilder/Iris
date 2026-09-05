@@ -693,6 +693,81 @@ public class MantleHydrologyComponentTest {
     }
 
     @Test
+    public void omittedHistoricalHaloVolumeDoesNotPublishItsGuardInNewChunk() {
+        HydrologyColumnLayer pool = cavePool();
+        HydrologyColumnSample historical = sample(-1, 8, false, 80, List.of(pool));
+        HydrologyColumnSample current = sample(8, 8, false, 80, List.of());
+
+        MantleHydrologyComponent.Publication publication = compile(
+                samples(current),
+                List.of(acceptedPlan(historical, pool)),
+                new TestCaveVoxelView()
+        );
+
+        assertEmpty(publication);
+    }
+
+    @Test
+    public void includedHaloVolumePublishesOnlyItsGuardInsideTargetChunk() {
+        HydrologyColumnLayer pool = cavePool();
+        HydrologyColumnSample neighbor = sample(-1, 8, false, 80, List.of(pool));
+
+        MantleHydrologyComponent.Publication publication = compile(
+                samples(neighbor),
+                List.of(acceptedPlan(neighbor, pool)),
+                new TestCaveVoxelView()
+        );
+
+        assertEquals(1, publication.caveCells().size());
+        assertEquals(HydrologyCaveAction.SEAL_GUARD,
+                publication.caveCells().get(new CavePosition(0, 22, 8)).action());
+        assertTrue(publication.surfaceWrites().isEmpty());
+        assertTrue(publication.fluidUpdates().isEmpty());
+    }
+
+    @Test
+    public void includedCaveColumnStillRejectsGuardWithoutPublishedOwner() {
+        HydrologyColumnLayer pool = cavePool();
+        HydrologyColumnSample sample = sample(8, 8, false, 80, List.of(pool));
+        HydrologyCavePlan plan = acceptedPlan(sample, pool);
+        CavePosition extraVolume = new CavePosition(8, 35, 8);
+        CavePosition extraGuard = new CavePosition(9, 35, 8);
+        LinkedHashMap<CavePosition, HydrologyCaveAction> actions = new LinkedHashMap<>(plan.actions());
+        actions.put(extraVolume, HydrologyCaveAction.WET_SOURCE);
+        actions.put(extraGuard, HydrologyCaveAction.SEAL_GUARD);
+        LinkedHashMap<CavePosition, CaveVoxelPrecondition> preconditions =
+                new LinkedHashMap<>(plan.baselinePreconditions());
+        preconditions.put(extraVolume, new CaveVoxelPrecondition(CaveVoxel.SOLID, false));
+        preconditions.put(extraGuard, new CaveVoxelPrecondition(CaveVoxel.SOLID, false));
+        HydrologyCavePlan malformed = new HydrologyCavePlan(plan.source(), plan.rejection(),
+                actions, preconditions, plan.arbitrationWinnerSourceId());
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> compile(samples(sample), List.of(malformed), new TestCaveVoxelView()));
+
+        assertTrue(failure.getMessage().contains("guard has no adjacent cave volume"));
+        assertTrue(failure.getMessage().contains(extraGuard.toString()));
+    }
+
+    @Test
+    public void includedCaveLayerStillRejectsMissingAcceptedAction() {
+        HydrologyColumnLayer pool = cavePool();
+        HydrologyColumnSample sample = sample(8, 8, false, 80, List.of(pool));
+        HydrologyCavePlan plan = acceptedPlan(sample, pool);
+        CavePosition missing = new CavePosition(8, 25, 8);
+        LinkedHashMap<CavePosition, HydrologyCaveAction> actions = new LinkedHashMap<>(plan.actions());
+        actions.remove(missing);
+        HydrologyCavePlan malformed = new HydrologyCavePlan(plan.source(), plan.rejection(),
+                actions, plan.baselinePreconditions(), plan.arbitrationWinnerSourceId());
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> compile(samples(sample), List.of(malformed), new TestCaveVoxelView()));
+
+        assertTrue(failure.getMessage().contains("layer is absent from its containment plan"));
+        assertTrue(failure.getMessage().contains(missing.toString()));
+    }
+
+    @Test
     public void lavaPreconditionMismatchPublishesNothing() {
         HydrologyColumnLayer pool = cavePool();
         HydrologyColumnSample sample = sample(8, 8, false, 80, List.of(pool));

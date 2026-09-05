@@ -191,6 +191,8 @@ public final class ModdedWorldEngines {
             ModdedGenerationHistoryStorage.ActivePack opened
     ) throws IOException {
         GenerationHistory history = opened.history();
+        history.prepareCurrentGenerator(IrisSettings.get().getGenerator().getGenerationTransitionWidthBlocks());
+        opened = ModdedGenerationHistoryStorage.resolveActive(history);
         long openedActivationId = history.activeActivation().activationId();
         IrisEngine candidate = buildEngine(level, seed, opened);
         boolean ready = false;

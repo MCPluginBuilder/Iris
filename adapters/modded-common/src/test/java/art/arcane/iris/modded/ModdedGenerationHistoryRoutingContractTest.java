@@ -25,7 +25,15 @@ public class ModdedGenerationHistoryRoutingContractTest {
         assertTrue(createHistoryEngine.contains("IrisBoundarySignatureSampler.INSTANCE"));
         assertTrue(createHistoryEngine.contains("getGenerationTransitionWidthBlocks()"));
         assertTrue(createHistoryEngine.contains("router.preloadActiveRuntimes();"));
-        assertBefore(createHistoryEngine, "close(candidate);", "ModdedGenerationHistoryStorage.resolveActive(history)");
+        assertBefore(createHistoryEngine, "history.prepareCurrentGenerator(",
+                "opened = ModdedGenerationHistoryStorage.resolveActive(history)");
+        assertBefore(createHistoryEngine, "opened = ModdedGenerationHistoryStorage.resolveActive(history)",
+                "IrisEngine candidate = buildEngine(level, seed, opened)");
+        String promoted = method(createHistoryEngine,
+                "if (history.activeActivation().activationId() != openedActivationId)");
+        assertBefore(promoted, "close(candidate);", "ModdedGenerationHistoryStorage.resolveActive(history)");
+        assertBefore(promoted, "ModdedGenerationHistoryStorage.resolveActive(history)",
+                "candidate = buildEngine(level, seed, promoted)");
         assertTrue(createHistoryEngine.contains("GenerationHistoryRuntimeRouter.attach("));
         assertTrue(buildEngine.contains("active.packRoot().toFile()"));
         assertTrue(buildEngine.contains("history.paths().activationMantleRoot(activation.activationId())"));
@@ -84,10 +92,16 @@ public class ModdedGenerationHistoryRoutingContractTest {
         assertTrue(fill.contains("generateTerrain(chunk, generationEngine, pos, air, route)"));
         assertTrue(fill.contains("return closeRouteOnCompletion(pipeline, route);"));
         assertTrue(terrain.contains("openHistoryRuntimeScope(route)"));
-        assertBefore(terrain, "generationEngine.generate(", "route.claimGeneratedSemantics();");
-        assertBefore(terrain, "route.claimGeneratedSemantics();", "return chunk;");
+        assertBefore(terrain, "generationEngine.generate(", "writeBlocks(chunk, blocks, dimMinY, height)");
+        assertBefore(terrain, "writeBlocks(chunk, blocks, dimMinY, height)", "route.claimGeneratedSemantics(");
+        assertTrue(terrain.contains("chunk.getBlockState(position.set(x, dimMinY + y, z))"));
+        assertTrue(terrain.contains("state.isAir() || state.liquid()"));
+        assertBefore(terrain, "route.claimGeneratedSemantics(", "ModdedNativeTerrainReceipts.persist(chunk, route)");
+        assertBefore(terrain, "ModdedNativeTerrainReceipts.persist(chunk, route)", "return chunk;");
         assertTrue(completion.contains("pipeline.whenComplete("));
         assertTrue(completion.contains("route.close();"));
+        assertBefore(completion, "pipeline.whenComplete(", "route.detachThread()");
+        assertBefore(completion, "route.detachThread()", "return completion;");
     }
 
     @Test
@@ -108,7 +122,7 @@ public class ModdedGenerationHistoryRoutingContractTest {
     }
 
     @Test
-    public void discreteStagesResumeIncompleteHistoricalChunksAndRejectTransitionOwnership() throws IOException {
+    public void pendingNativeStagesPreserveSavedStartsAndGuardNewFeatureFootprints() throws IOException {
         String generator = source("IrisModdedChunkGenerator.java");
         String discrete = method(generator, "private boolean allowsRoutedDiscreteGeneration(");
         String decoration = method(generator, "public void applyBiomeDecoration(");
@@ -117,19 +131,28 @@ public class ModdedGenerationHistoryRoutingContractTest {
         String nativeStage = source("ModdedNativeStructureStage.java");
         String adjust = method(nativeStage, "void adjustGeneratedStructures(");
         String place = method(nativeStage, "void placeVanillaStructures(");
+        String savedStart = method(nativeStage, "private boolean isHistoricalStructureStart(");
 
         assertTrue(discrete.contains("chunk.getPersistedStatus().isOrAfter(stage)"));
         assertFalse(discrete.contains("router.history().activeActivation().activationId()"));
         assertFalse(discrete.contains("return true;"));
         assertTrue(discrete.contains("allowsNewGenerationChunk("));
+        assertTrue(discrete.contains("NativeGenerationWriteGuard.allowsPendingStage(current, chunk, stage)"));
         assertTrue(decoration.contains("ChunkStatus.FEATURES"));
         assertTrue(structures.contains("ChunkStatus.STRUCTURE_STARTS"));
         assertTrue(mobs.contains("ChunkStatus.SPAWN"));
-        assertBefore(decoration, "allowsRoutedDiscreteGeneration(", "nativeStructures.placeVanillaStructures(");
+        assertBefore(decoration, "chunk.getPersistedStatus().isOrAfter(ChunkStatus.FEATURES)",
+                "nativeStructures.placeVanillaStructures(");
+        assertBefore(decoration, "nativeStructures.placeVanillaStructures(", "allowsRoutedDiscreteGeneration(");
+        assertBefore(decoration, "allowsRoutedDiscreteGeneration(", "importedFeatures.run(");
+        assertBefore(decoration, "NativeGenerationWriteGuard.allowsDecoration(", "importedFeatures.run(");
         assertBefore(structures, "allowsRoutedDiscreteGeneration(", "super.createStructures(");
         assertBefore(mobs, "allowsRoutedDiscreteGeneration(", "NaturalSpawner.spawnMobsForChunkGeneration(");
         assertBefore(adjust, "allowsNewGenerationFootprint(", "recordWorldCheckStructureShift(");
-        assertTrue(place.contains("allowsNewGenerationFootprint("));
+        assertBefore(place, "!isHistoricalStructureStart(current, world, start)", "allowsNewGenerationFootprint(");
+        assertTrue(savedStart.contains("world.getChunk(origin.x(), origin.z(), ChunkStatus.EMPTY, false)"));
+        assertTrue(savedStart.contains("ModdedNativeTerrainReceipts.structureActivation(source)"));
+        assertBefore(structures, "super.createStructures(", "ModdedNativeTerrainReceipts.persistStructureActivation(");
     }
 
     private static void assertRuntimeRoute(String source, String signature) {

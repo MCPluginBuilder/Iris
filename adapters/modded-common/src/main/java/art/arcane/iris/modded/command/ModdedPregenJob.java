@@ -25,6 +25,7 @@ import art.arcane.iris.core.pregenerator.PregenPerformanceProfile;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
 import art.arcane.iris.core.pregenerator.cache.PregenCache;
+import art.arcane.iris.core.pregenerator.cache.PregenSavedChunkStatus;
 import art.arcane.iris.core.pregenerator.methods.CachedPregenMethod;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.volmlib.util.format.Form;
@@ -64,7 +65,9 @@ public final class ModdedPregenJob {
         ModdedPregenMethod moddedMethod = new ModdedPregenMethod(level, engine, sync);
         PregeneratorMethod method = moddedMethod;
         if (cached) {
-            method = new CachedPregenMethod(method, PregenCache.create(cacheDirectory(level)).sync(), task);
+            method = new CachedPregenMethod(new CachedPregenMethod.Configuration(method,
+                    PregenCache.create(cacheDirectory(level)).sync(), task,
+                    PregenSavedChunkStatus.fromWorld(engine.getWorld().worldFolder().toPath())));
         }
         ActivePregen active = new ActivePregen(engine, moddedMethod);
         ACTIVE.set(active);

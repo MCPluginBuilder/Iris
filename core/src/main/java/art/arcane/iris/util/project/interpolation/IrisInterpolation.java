@@ -667,13 +667,21 @@ public class IrisInterpolation {
             // outer pass's table — its entries belong to a different bound provider.
             cache = new NoiseBoundsSampleCache2D(64);
         }
+        NoiseSampleCache2D scalarCache = usesSampleCache(method) ? NOISE_SAMPLE_CACHE_2D.get() : null;
+        boolean ownsScalarCache = scalarCache != null && !scalarCache.isInUse();
         cache.beginUse();
         NoiseBoundsProvider previous = cache.bindProvider(noise);
+        if (ownsScalarCache) {
+            scalarCache.beginUse();
+        }
         try {
-            double min = getNoise(method, x, z, h, cache.minView());
-            double max = getNoise(method, x, z, h, cache.maxView());
+            double min = dispatch(method, x, z, h, cache.minView());
+            double max = dispatch(method, x, z, h, cache.replayMaxView());
             return new NoiseBounds(min, max);
         } finally {
+            if (ownsScalarCache) {
+                scalarCache.endUse();
+            }
             cache.bindProvider(previous);
             cache.endUse();
         }

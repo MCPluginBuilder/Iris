@@ -53,7 +53,7 @@ public final class GenerationSemanticIndex {
     private static final String JOURNAL_SUFFIX = ".iswal";
     private static final String CATALOG_FILE_NAME = "index.isix";
     private static final int MAGIC = 0x4953454D;
-    private static final int FORMAT_VERSION = 5;
+    private static final int FORMAT_VERSION = 6;
     private static final int CATALOG_MAGIC = 0x49534958;
     private static final int CATALOG_FORMAT_VERSION = 1;
     private static final int CATALOG_FIXED_BODY_BYTES = 12;
@@ -199,6 +199,54 @@ public final class GenerationSemanticIndex {
             }
             journalEntries.addTo(regionKey, 1);
             return true;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public int discardUnstoredClaims(WorldChunkInventory stored, Set<Long> activationIds) throws IOException {
+        Objects.requireNonNull(stored, "stored chunks");
+        Set<Long> selected = Set.copyOf(activationIds);
+        for (long activation : selected) {
+            if (activation <= 0L) {
+                throw new IllegalArgumentException("Generation activation IDs must be positive.");
+            }
+        }
+        lock.writeLock().lock();
+        try {
+            compactJournals();
+            int removed = 0;
+            for (long regionKey : allRegionKeys()) {
+                RegionSummary summary = loadSummaryLocked(regionKey);
+                boolean relevant = false;
+                for (long activation : selected) {
+                    if (summary.activations.contains(activation)) {
+                        relevant = true;
+                        break;
+                    }
+                }
+                if (!relevant) {
+                    continue;
+                }
+                int regionX = regionX(regionKey);
+                int regionZ = regionZ(regionKey);
+                RegionShard previous = loadRegionLocked(regionKey, regionX, regionZ);
+                RegionShard replacement = previous.retainingStoredClaims(stored, selected);
+                int count = previous.recordCount() - replacement.recordCount();
+                if (count == 0) {
+                    continue;
+                }
+                byte[] encoded = replacement.encode();
+                String hash = sha256(encoded);
+                publisher.publish(directory, regionX, regionZ, encoded);
+                pointerPublisher.publish(directory, regionX, regionZ, hash);
+                String previousHash = shardHashes.put(regionKey, hash);
+                regionRecordCounts.put(regionKey, replacement.recordCount());
+                cacheRegion(regionKey, replacement);
+                removed += count;
+                deleteUnreferencedShard(regionX, regionZ, previousHash, hash);
+            }
+            return removed;
         } finally {
             lock.writeLock().unlock();
         }
@@ -2095,7 +2143,7 @@ public final class GenerationSemanticIndex {
                 validateRegionCoordinate(file, regionX);
                 validateRegionCoordinate(file, regionZ);
                 int recordCount = input.readInt();
-                if (recordCount <= 0 || recordCount > CHUNKS_PER_REGION) {
+                if (recordCount < 0 || recordCount > CHUNKS_PER_REGION) {
                     throw invalid(file, "invalid record count " + recordCount);
                 }
                 int paletteSize = input.readInt();
@@ -2138,7 +2186,7 @@ public final class GenerationSemanticIndex {
                 validateRegionCoordinate(file, regionX);
                 validateRegionCoordinate(file, regionZ);
                 int recordCount = input.readInt();
-                if (recordCount <= 0 || recordCount > CHUNKS_PER_REGION) {
+                if (recordCount < 0 || recordCount > CHUNKS_PER_REGION) {
                     throw invalid(file, "invalid record count " + recordCount);
                 }
                 int paletteSize = input.readInt();
@@ -2191,7 +2239,7 @@ public final class GenerationSemanticIndex {
                 validateRegionCoordinate(source, regionX);
                 validateRegionCoordinate(source, regionZ);
                 int recordCount = input.readInt();
-                if (recordCount <= 0 || recordCount > CHUNKS_PER_REGION) {
+                if (recordCount < 0 || recordCount > CHUNKS_PER_REGION) {
                     throw invalid(source, "invalid record count " + recordCount);
                 }
                 int paletteSize = input.readInt();
@@ -2237,6 +2285,7 @@ public final class GenerationSemanticIndex {
                     readKeys(source, input, palette, paletteUsed, builder, SemanticKind.OBJECT);
                     readRiverFeatures(source, input, palette, paletteUsed, builder);
                     readStructures(source, input, palette, paletteUsed, builder);
+                    readPointsOfInterest(source, input, palette, paletteUsed, builder);
                     if ((recordFlags & 1) != 0) {
                         builder.seal();
                     }
@@ -2278,6 +2327,19 @@ public final class GenerationSemanticIndex {
                 return null;
             }
             return records[localIndex(chunkX, chunkZ)];
+        }
+
+        private RegionShard retainingStoredClaims(WorldChunkInventory stored, Set<Long> activationIds) {
+            RegionShard replacement = new RegionShard(regionX, regionZ);
+            for (int index = 0; index < records.length; index++) {
+                ChunkGenerationSemantics record = records[index];
+                if (record != null && (!activationIds.contains(record.activationId())
+                        || stored.contains(record.chunkX(), record.chunkZ()))) {
+                    replacement.records[index] = record;
+                    replacement.recordCount++;
+                }
+            }
+            return replacement;
         }
 
         private RegionShard withRecord(ChunkGenerationSemantics semantics) {
@@ -2362,6 +2424,9 @@ public final class GenerationSemanticIndex {
                 for (ChunkGenerationSemantics.StructureOccurrence occurrence : semantics.structures()) {
                     addPaletteKey(paletteKeys, occurrence.key());
                 }
+                for (ChunkGenerationSemantics.PointOfInterest point : semantics.pointsOfInterest()) {
+                    addPaletteKey(paletteKeys, point.key());
+                }
             }
             List<String> palette = new ArrayList<>(paletteKeys);
             Map<String, Integer> paletteIndexes = new HashMap<>(palette.size());
@@ -2417,6 +2482,13 @@ public final class GenerationSemanticIndex {
                         output.writeInt(occurrence.position().x());
                         output.writeInt(occurrence.position().y());
                         output.writeInt(occurrence.position().z());
+                    }
+                    output.writeShort(semantics.pointsOfInterest().size());
+                    for (ChunkGenerationSemantics.PointOfInterest point : semantics.pointsOfInterest()) {
+                        output.writeShort(paletteIndexes.get(point.key()));
+                        output.writeInt(point.position().x());
+                        output.writeInt(point.position().y());
+                        output.writeInt(point.position().z());
                     }
                     if (bodyBytes.size() > MAX_FILE_BYTES - CHECKSUM_BYTES) {
                         throw new IOException("Generation semantic shard exceeds its size limit");
@@ -2548,6 +2620,42 @@ public final class GenerationSemanticIndex {
                     throw invalid(file, "structure occurrences are not in canonical order");
                 }
                 builder.addStructure(occurrence);
+                previous = occurrence;
+            }
+        }
+
+        private static void readPointsOfInterest(
+                Path file,
+                DataInputStream input,
+                String[] palette,
+                boolean[] paletteUsed,
+                ChunkGenerationSemantics.Builder builder
+        ) throws IOException {
+            int count = input.readUnsignedShort();
+            if (count > ChunkGenerationSemantics.MAX_STRUCTURES) {
+                throw invalid(file, "too many points of interest");
+            }
+            ChunkGenerationSemantics.PointOfInterest previous = null;
+            for (int index = 0; index < count; index++) {
+                int paletteIndex = input.readUnsignedShort();
+                if (paletteIndex >= palette.length) {
+                    throw invalid(file, "point of interest key palette index is out of range");
+                }
+                paletteUsed[paletteIndex] = true;
+                ChunkGenerationSemantics.PointOfInterest occurrence =
+                        new ChunkGenerationSemantics.PointOfInterest(
+                                palette[paletteIndex],
+                                new ChunkGenerationSemantics.BlockPosition(
+                                        input.readInt(),
+                                        input.readInt(),
+                                        input.readInt()
+                                )
+                        );
+                if (previous != null
+                        && ChunkGenerationSemantics.pointComparator().compare(previous, occurrence) >= 0) {
+                    throw invalid(file, "points of interest are not in canonical order");
+                }
+                builder.addPointOfInterest(occurrence);
                 previous = occurrence;
             }
         }

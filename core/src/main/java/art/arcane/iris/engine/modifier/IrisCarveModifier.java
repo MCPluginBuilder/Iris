@@ -25,6 +25,7 @@ import art.arcane.iris.engine.UpperDimensionContext;
 import art.arcane.iris.engine.actuator.IrisDecorantActuator;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.EngineAssignedModifier;
+import art.arcane.iris.engine.mantle.TerrainMatterView;
 import art.arcane.iris.engine.object.InferredType;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDecorationPart;
@@ -55,6 +56,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import lombok.Data;
 import art.arcane.iris.spi.PlatformBlockState;
 
+import java.util.HashMap;
 import java.util.Map;
 
 public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState> {
@@ -129,14 +131,14 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
                     chunkBlockZ
             );
             CarveResolver carveResolver = new CarveResolver(resolutionContext);
-            mantleChunk.iterate(MatterCavern.class, (xx, yy, zz, cavern) -> carveResolver.apply(
+            TerrainMatterView.iterate(mantleChunk, MatterCavern.class, (xx, yy, zz, cavern) -> carveResolver.apply(
                     xx,
                     yy,
                     zz,
                     cavern,
                     dataIfPresent(mantleChunk, xx, yy, zz, HydrologyCaveCell.class)
             ));
-            mantleChunk.iterate(HydrologyCaveCell.class, (xx, yy, zz, hydrology) -> {
+            TerrainMatterView.iterate(mantleChunk, HydrologyCaveCell.class, (xx, yy, zz, hydrology) -> {
                 if (dataIfPresent(mantleChunk, xx, yy, zz, MatterCavern.class) == null) {
                     carveResolver.apply(xx, yy, zz, null, hydrology);
                 }
@@ -570,15 +572,7 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
     }
 
     private static <T> T dataIfPresent(MantleChunk<Matter> mantleChunk, int x, int y, int z, Class<T> type) {
-        int section = y >> 4;
-        if (y < 0 || !mantleChunk.exists(section)) {
-            return null;
-        }
-        Matter matter = mantleChunk.get(section);
-        if (matter == null || !matter.hasSlice(type)) {
-            return null;
-        }
-        return matter.<T>getSlice(type).get(x & 15, y & 15, z & 15);
+        return TerrainMatterView.get(mantleChunk, x, y, z, type);
     }
 
     private void processColumnFromMask(
@@ -802,17 +796,6 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             output.setRaw(rx, zone.ceiling, rz, AIR);
         }
 
-        // Seed-derived and position-keyed, never Math.random(): these markers persist into the
-        // mantle and drive cave spawning, so the same seed must stamp the same markers on
-        // every run and every platform. Inline mix, no allocation on this hot path.
-        if (markerRoll(xx, zone.ceiling, zz, 0x9E3779B97F4A7C15L)) {
-            mantle.set(xx, zone.ceiling, zz, MarkerMatter.CAVE_CEILING);
-        }
-
-        if (markerRoll(xx, zone.floor, zz, 0xC2B2AE3D27D4EB4FL)) {
-            mantle.set(xx, zone.floor, zz, MarkerMatter.CAVE_FLOOR);
-        }
-
         IrisBiome floorBiome = resolveCaveBoundaryBiome(mc, rx, zone.floor, rz, xx, zz, resolverState, caveBiomeCache, customBiomeCache);
         IrisBiome ceilingBiome = resolveCaveBoundaryBiome(mc, rx, zone.ceiling, rz, xx, zz, resolverState, caveBiomeCache, customBiomeCache);
         if (floorBiome == null && ceilingBiome == null) {
@@ -882,6 +865,58 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             }
         }
 
+        normalizeCaveZoneWaterlogging(output, mc, zone, rx, rz, xx, zz);
+    }
+
+    public void decorateNaturalCaves(int blockX, int blockZ, Hunk<PlatformBlockState> output) {
+        Mantle<Matter> mantle = getEngine().getMantle().getMantle();
+        MantleChunk<Matter> chunk = mantle.getChunk(blockX >> 4, blockZ >> 4).use();
+        IrisDimensionCarvingResolver.State resolver = new IrisDimensionCarvingResolver.State();
+        Long2ObjectOpenHashMap<IrisBiome> caveBiomes = new Long2ObjectOpenHashMap<>(256);
+        Map<String, IrisBiome> customBiomes = new HashMap<>();
+        try {
+            for (int localX = 0; localX < output.getWidth(); localX++) {
+                for (int localZ = 0; localZ < output.getDepth(); localZ++) {
+                    int worldX = blockX + localX;
+                    int worldZ = blockZ + localZ;
+                    int floor = -1;
+                    for (int y = 1; y < output.getHeight(); y++) {
+                        PlatformBlockState state = output.getRaw(localX, y, localZ);
+                        if (B.isSolid(state)) {
+                            if (floor >= 0) {
+                                CaveZone zone = new CaveZone();
+                                zone.setFloor(floor);
+                                zone.setCeiling(y - 1);
+                                if (zone.isValid(getEngine())) {
+                                    if (markerRoll(worldX, zone.ceiling, worldZ, 0x9E3779B97F4A7C15L)) {
+                                        mantle.set(worldX, zone.ceiling, worldZ, MarkerMatter.CAVE_CEILING);
+                                    }
+                                    if (markerRoll(worldX, zone.floor, worldZ, 0xC2B2AE3D27D4EB4FL)) {
+                                        mantle.set(worldX, zone.floor, worldZ, MarkerMatter.CAVE_FLOOR);
+                                    }
+                                    IrisBiome floorBiome = resolveCaveBoundaryBiome(chunk, localX, floor, localZ,
+                                            worldX, worldZ, resolver, caveBiomes, customBiomes);
+                                    IrisBiome ceilingBiome = resolveCaveBoundaryBiome(chunk, localX, y - 1, localZ,
+                                            worldX, worldZ, resolver, caveBiomes, customBiomes);
+                                    decorateZone(output, zone, localX, localZ, worldX, worldZ,
+                                            floorBiome, ceilingBiome);
+                                }
+                                floor = -1;
+                            }
+                        } else if (floor < 0 && B.isSolid(output.getRaw(localX, y - 1, localZ))) {
+                            floor = y;
+                        }
+                    }
+                }
+            }
+        } finally {
+            chunk.release();
+        }
+    }
+
+    private void decorateZone(Hunk<PlatformBlockState> output, CaveZone zone,
+                              int rx, int rz, int xx, int zz, IrisBiome floorBiome, IrisBiome ceilingBiome) {
+        int maxY = output.getHeight();
         IrisDecorator[] surfaceDecorators = floorBiome == null
                 ? new IrisDecorator[0]
                 : floorBiome.getDecoratorBucket(IrisDecorationPart.NONE);
@@ -896,7 +931,6 @@ public class IrisCarveModifier extends EngineAssignedModifier<PlatformBlockState
             decorant.getCeilingDecorator().decorate(rx, rz, xx, xx, xx, zz, zz, zz, output, ceilingBiome, InferredType.CAVE, zone.getCeiling(), zone.airThickness());
         }
 
-        normalizeCaveZoneWaterlogging(output, mc, zone, rx, rz, xx, zz);
     }
 
     private void normalizeCaveZoneWaterlogging(

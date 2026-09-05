@@ -20,7 +20,7 @@ import java.util.Set;
 import java.util.TreeMap;
 
 public final class GenerationManifest {
-    public static final int CURRENT_SCHEMA_VERSION = 1;
+    public static final int CURRENT_SCHEMA_VERSION = 2;
 
     private final int schemaVersion;
     private final NavigableMap<String, GenerationEpoch> epochs;
@@ -189,7 +189,7 @@ public final class GenerationManifest {
 
         JsonArray epochArray = new JsonArray(epochs.size());
         for (GenerationEpoch epoch : epochs.values()) {
-            epochArray.add(epoch.toJson());
+            epochArray.add(epoch.epochId());
         }
         json.add("epochs", epochArray);
 
@@ -207,7 +207,7 @@ public final class GenerationManifest {
         return json;
     }
 
-    static GenerationManifest fromJson(JsonObject json) {
+    static GenerationManifest fromJson(JsonObject json, List<GenerationEpoch> epochRecords) {
         JsonSchema.requireFields(
                 json,
                 "generation manifest",
@@ -231,10 +231,17 @@ public final class GenerationManifest {
                 "generation manifest"
         );
 
+        if (epochArray.size() != epochRecords.size()) {
+            throw new IllegalArgumentException("Generation manifest epoch references do not match metadata.");
+        }
         TreeMap<String, GenerationEpoch> epochs = new TreeMap<>();
         for (int index = 0; index < epochArray.size(); index++) {
-            JsonObject epochJson = JsonSchema.requireObject(epochArray.get(index), "epochs[" + index + "]");
-            GenerationEpoch epoch = GenerationEpoch.fromJson(epochJson);
+            GenerationEpoch epoch = epochRecords.get(index);
+            if (!epochArray.get(index).isJsonPrimitive()
+                    || !epochArray.get(index).getAsJsonPrimitive().isString()
+                    || !epoch.epochId().equals(epochArray.get(index).getAsString())) {
+                throw new IllegalArgumentException("Generation manifest epoch reference does not match metadata.");
+            }
             if (epochs.putIfAbsent(epoch.epochId(), epoch) != null) {
                 throw new IllegalArgumentException("Generation manifest contains duplicate epoch IDs.");
             }

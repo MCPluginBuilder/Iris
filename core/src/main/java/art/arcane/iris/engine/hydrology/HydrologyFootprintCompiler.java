@@ -1694,7 +1694,7 @@ final class HydrologyFootprintCompiler {
         if (cached != null) {
             return cached;
         }
-        HydrologyTerrainSample sampled = naturalSampler.sampleBasis(x, z);
+        HydrologyTerrainSample sampled = naturalSampler.sampleBasisWithoutSlope(x, z);
         if (sampled != null) {
             terrainBases.put(packed, sampled);
         }

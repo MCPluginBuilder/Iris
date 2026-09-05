@@ -12,6 +12,7 @@ import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCavePlan;
 import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.mantle.MatterGenerationPhase;
 import art.arcane.iris.engine.mantle.ComponentFlag;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.IrisMantleComponent;
@@ -61,6 +62,11 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
     }
 
     @Override
+    public MatterGenerationPhase getGenerationPhase() {
+        return MatterGenerationPhase.TERRAIN;
+    }
+
+    @Override
     public MantleFlag[] getPrerequisiteFlags() {
         return PREREQUISITES;
     }
@@ -74,7 +80,7 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
     public void generateLayer(MantleWriter writer, int chunkX, int chunkZ, ChunkContext context) {
         IrisComplex complex = context.getComplex();
         IrisHydrologyRuntime runtime = complex.getHydrologyRuntime();
-        if (runtime == null || !complex.allowsNewGenerationChunk(chunkX, chunkZ)) {
+        if (runtime == null || !complex.allowsMantleChunkWrite(chunkX, chunkZ)) {
             return;
         }
         int minimumX = chunkX << 4;
@@ -218,6 +224,7 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
         addAcceptedGuards(
                 caveCells,
                 cavePlans,
+                samples,
                 publishedCaveCells,
                 minimumX,
                 minimumZ,
@@ -529,6 +536,7 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
     private static void addAcceptedGuards(
             Map<CavePosition, PlannedCell> caveCells,
             Collection<HydrologyCavePlan> cavePlans,
+            Map<Long, HydrologyColumnSample> samples,
             Map<CavePosition, HydrologyCaveCell> published,
             int minimumX,
             int minimumZ,
@@ -550,6 +558,9 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
             for (CavePosition position : guardPositions) {
                 PlannedCell owner = guardOwner(position, plan, caveCells);
                 if (owner == null) {
+                    if (guardOutsidePublication(position, plan, samples)) {
+                        continue;
+                    }
                     throw new IllegalStateException("Accepted containment guard has no adjacent cave volume at "
                             + position);
                 }
@@ -590,6 +601,34 @@ public final class MantleHydrologyComponent extends IrisMantleComponent {
             }
         }
         return null;
+    }
+
+    private static boolean guardOutsidePublication(
+            CavePosition guard,
+            HydrologyCavePlan plan,
+            Map<Long, HydrologyColumnSample> samples
+    ) {
+        boolean hasPlannedVolume = false;
+        for (int[] offset : NEIGHBORS) {
+            CavePosition position = guard.offset(-offset[0], -offset[1], -offset[2]);
+            HydrologyCaveAction action = plan.actions().get(position);
+            if (action == null || action == HydrologyCaveAction.SEAL_GUARD) {
+                continue;
+            }
+            hasPlannedVolume = true;
+            HydrologyColumnSample sample = samples.get(pack(position.x(), position.z()));
+            if (sample == null) {
+                continue;
+            }
+            for (HydrologyColumnLayer layer : sample.layers()) {
+                if (layer.feature().courseId() == plan.source().sourceId()
+                        && layer.channel() && layer.terrainOwned() && !layer.oceanApron()
+                        && isCaveLayer(layer)) {
+                    return false;
+                }
+            }
+        }
+        return hasPlannedVolume;
     }
 
     private static boolean preconditionsHold(

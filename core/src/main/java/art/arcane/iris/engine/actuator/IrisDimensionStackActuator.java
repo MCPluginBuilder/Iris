@@ -33,6 +33,7 @@ import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.iris.util.project.matter.TileWrapper;
+import art.arcane.iris.util.project.matter.PreObjectMatterCell;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.documentation.BlockCoordinates;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
@@ -81,8 +82,8 @@ public final class IrisDimensionStackActuator extends EngineAssignedActuator<Pla
         if (getEngine().getDimensionStackContext() == null) {
             return;
         }
-        MantleChunk<Matter> mantleChunk = getEngine().getMantle().getMantle()
-                .getChunk(x >> 4, z >> 4).use();
+        MantleChunk<Matter> mantleChunk = context.isSpeculativeTerrain() ? null
+                : getEngine().getMantle().getMantle().getChunk(x >> 4, z >> 4).use();
         try {
             MetadataCleaner metadata = new MetadataCleaner(mantleChunk, blocks.getHeight());
             for (int localX = 0; localX < blocks.getWidth(); localX++) {
@@ -100,7 +101,26 @@ public final class IrisDimensionStackActuator extends EngineAssignedActuator<Pla
                 }
             }
         } finally {
-            mantleChunk.release();
+            if (mantleChunk != null) {
+                mantleChunk.release();
+            }
+        }
+    }
+
+    public static void clearNaturalMetadata(MantleChunk<Matter> chunk, ChunkContext context, int height) {
+        MetadataCleaner metadata = new MetadataCleaner(chunk, height);
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                DimensionStackLayout layout = context.getDimensionStackLayout(x, z);
+                if (layout == null) {
+                    continue;
+                }
+                for (int y = 0; y < height; y++) {
+                    if (layout.isHostFeatureProtectedY(y)) {
+                        metadata.clear(x, y, z);
+                    }
+                }
+            }
         }
     }
 
@@ -229,15 +249,44 @@ public final class IrisDimensionStackActuator extends EngineAssignedActuator<Pla
         }
 
         void clear(int x, int y, int z) {
-            int sectionIndex = y >> 4;
-            List<MatterSlice<?>> slices = slicesBySection[sectionIndex];
-            if (slices == null) {
-                slices = resolveSlices(sectionIndex);
-                slicesBySection[sectionIndex] = slices;
+            if (chunk == null) {
+                return;
             }
-            for (MatterSlice<?> slice : slices) {
-                slice.set(x, y & 15, z, null);
+            synchronized (chunk) {
+                int sectionIndex = y >> 4;
+                captureNaturalFacts(sectionIndex, x, y & 15, z);
+                List<MatterSlice<?>> slices = slicesBySection[sectionIndex];
+                if (slices == null) {
+                    slices = resolveSlices(sectionIndex);
+                    slicesBySection[sectionIndex] = slices;
+                }
+                for (MatterSlice<?> slice : slices) {
+                    slice.set(x, y & 15, z, null);
+                }
             }
+        }
+
+        private void captureNaturalFacts(int sectionIndex, int x, int y, int z) {
+            Matter section = chunk.get(sectionIndex);
+            if (section == null) {
+                return;
+            }
+            MatterSlice<MatterCavern> caverns = section.getSlice(MatterCavern.class);
+            MatterSlice<HydrologyCaveCell> hydrology = section.getSlice(HydrologyCaveCell.class);
+            MatterCavern cavern = caverns == null ? null : caverns.get(x, y, z);
+            HydrologyCaveCell cell = hydrology == null ? null : hydrology.get(x, y, z);
+            if (cavern == null && cell == null) {
+                return;
+            }
+            MatterSlice<PreObjectMatterCell> journal = section.slice(PreObjectMatterCell.class);
+            PreObjectMatterCell previous = journal.get(x, y, z);
+            if (cavern != null) {
+                previous = previous == null ? PreObjectMatterCell.cavern(cavern) : previous.captureCavern(cavern);
+            }
+            if (cell != null) {
+                previous = previous == null ? PreObjectMatterCell.hydrology(cell) : previous.captureHydrology(cell);
+            }
+            journal.set(x, y, z, previous);
         }
 
         private List<MatterSlice<?>> resolveSlices(int sectionIndex) {

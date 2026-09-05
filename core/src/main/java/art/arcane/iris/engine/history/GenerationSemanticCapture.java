@@ -15,6 +15,7 @@ import art.arcane.volmlib.util.mantle.flag.ReservedFlag;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.matter.Matter;
 import art.arcane.volmlib.util.matter.MatterCavern;
+import art.arcane.volmlib.util.matter.MatterStructurePOI;
 
 import java.util.HashSet;
 import java.util.Objects;
@@ -30,13 +31,22 @@ public final class GenerationSemanticCapture {
             Engine engine,
             GenerationHistory.GenerationStage stage
     ) {
+        return capture(engine, stage, (x, y, z) -> true);
+    }
+
+    public static ChunkGenerationSemantics capture(
+            Engine engine,
+            GenerationHistory.GenerationStage stage,
+            CaveSpace caveSpace
+    ) {
         Engine requiredEngine = Objects.requireNonNull(engine, "engine");
         GenerationHistory.GenerationStage requiredStage = Objects.requireNonNull(stage, "stage");
         return capture(
                 requiredEngine,
                 requiredStage.chunkX(),
                 requiredStage.chunkZ(),
-                requiredStage.activation().activationId()
+                requiredStage.activation().activationId(),
+                caveSpace
         );
     }
 
@@ -46,6 +56,17 @@ public final class GenerationSemanticCapture {
             int chunkZ,
             long activationId
     ) {
+        return capture(engine, chunkX, chunkZ, activationId, (x, y, z) -> true);
+    }
+
+    private static ChunkGenerationSemantics capture(
+            Engine engine,
+            int chunkX,
+            int chunkZ,
+            long activationId,
+            CaveSpace caveSpace
+    ) {
+        Objects.requireNonNull(caveSpace, "cave space");
         Engine requiredEngine = Objects.requireNonNull(engine, "engine");
         ChunkGenerationSemantics.Builder semantics = ChunkGenerationSemantics.builder(
                 chunkX,
@@ -53,7 +74,7 @@ public final class GenerationSemanticCapture {
                 activationId
         );
         captureColumns(requiredEngine, chunkX, chunkZ, semantics);
-        captureMantleFacts(requiredEngine, chunkX, chunkZ, semantics);
+        captureMantleFacts(requiredEngine, chunkX, chunkZ, semantics, caveSpace);
         captureStructures(requiredEngine, chunkX, chunkZ, semantics);
         return semantics.seal().build();
     }
@@ -110,13 +131,17 @@ public final class GenerationSemanticCapture {
             Engine engine,
             int chunkX,
             int chunkZ,
-            ChunkGenerationSemantics.Builder semantics
+            ChunkGenerationSemantics.Builder semantics,
+            CaveSpace caveSpace
     ) {
         Mantle<Matter> mantle = engine.getMantle().getMantle();
         int minimumX = Math.multiplyExact(chunkX, CHUNK_SIZE);
         int minimumZ = Math.multiplyExact(chunkZ, CHUNK_SIZE);
         Set<CavePosition> resolvedCaves = new HashSet<>();
         mantle.iterateChunk(chunkX, chunkZ, MatterCavern.class, (localX, y, localZ, cavern) -> {
+            if (!caveSpace.isOpen(localX, y, localZ)) {
+                return;
+            }
             captureCave(
                     engine,
                     semantics,
@@ -128,6 +153,9 @@ public final class GenerationSemanticCapture {
             );
         });
         mantle.iterateChunk(chunkX, chunkZ, HydrologyCaveCell.class, (localX, y, localZ, cell) -> {
+            if (!caveSpace.isOpen(localX, y, localZ)) {
+                return;
+            }
             int blockX = minimumX + localX;
             int blockZ = minimumZ + localZ;
             if (!hasFullHydrologyWeight(engine.getComplex(), blockX, blockZ)) {
@@ -144,6 +172,13 @@ public final class GenerationSemanticCapture {
             );
             if (cell != null && cell.fluidProfileKey() != null && !cell.fluidProfileKey().isBlank()) {
                 semantics.addRiverProfile(cell.fluidProfileKey());
+            }
+        });
+        mantle.iterateChunk(chunkX, chunkZ, MatterStructurePOI.class, (localX, y, localZ, point) -> {
+            if (point != null) {
+                semantics.addPointOfInterest(new ChunkGenerationSemantics.PointOfInterest(point.getType(),
+                        new ChunkGenerationSemantics.BlockPosition(Math.addExact(minimumX, localX), y,
+                                Math.addExact(minimumZ, localZ))));
             }
         });
         mantle.iterateChunk(chunkX, chunkZ, String.class, (localX, y, localZ, marker) -> {
@@ -217,6 +252,11 @@ public final class GenerationSemanticCapture {
                     resolved.originZ()
             );
         }
+    }
+
+    @FunctionalInterface
+    public interface CaveSpace {
+        boolean isOpen(int localX, int internalY, int localZ);
     }
 
     private record CavePosition(int x, int y, int z) {

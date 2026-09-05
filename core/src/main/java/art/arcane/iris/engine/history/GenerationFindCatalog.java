@@ -1,23 +1,16 @@
 package art.arcane.iris.engine.history;
 
-import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.loader.IrisRegistrant;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.object.IrisBiome;
-import art.arcane.iris.engine.object.IrisDimension;
-import art.arcane.iris.engine.object.IrisObjectPlacement;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.engine.object.IrisStructurePlacement;
 import art.arcane.volmlib.util.collection.KList;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.file.Path;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -55,7 +48,7 @@ public final class GenerationFindCatalog {
     }
 
     public static boolean hasObjectPlacement(Engine engine, String key) {
-        return engine.hasObjectPlacement(key) || retained(engine).objects.contains(normalizeObjectKey(key));
+        return engine.hasObjectPlacement(key) || containsKey(retained(engine).objects, normalizeObjectKey(key));
     }
 
     public static KList<String> retainedStructureKeys(Engine engine) {
@@ -63,7 +56,7 @@ public final class GenerationFindCatalog {
     }
 
     public static boolean hasRetainedStructurePlacement(Engine engine, String key) {
-        return retained(engine).structures.contains(normalizeKey(key));
+        return containsKey(retained(engine).structures, normalizeKey(key));
     }
 
     private static RetainedCatalog retained(Engine engine) {
@@ -90,87 +83,48 @@ public final class GenerationFindCatalog {
 
     private static RetainedCatalog loadRetained(GenerationHistory history, GenerationManifest manifest) {
         RetainedCatalog catalog = new RetainedCatalog(manifest.activeActivation().activationId());
-        Set<String> loadedPacks = new HashSet<>();
-        Long activationId = manifest.activeActivation().parentActivationId();
-        while (activationId != null) {
-            GenerationActivation activation = manifest.activation(activationId).orElseThrow();
-            GenerationEpoch epoch = manifest.epoch(activation.epochId()).orElseThrow();
-            String dimensionKey = epoch.dimensionContract().dimensionKey();
-            if (loadedPacks.add(epoch.packFingerprint() + ":" + dimensionKey)) {
-                try {
-                    loadPack(catalog, history.packRoot(activationId), dimensionKey);
-                } catch (IOException error) {
-                    throw new UncheckedIOException("Unable to read retained Iris find catalog for activation "
-                            + activationId, error);
-                }
-            }
-            activationId = activation.parentActivationId();
+        try {
+            history.forEachRecordedSemantic(semantics -> addRecorded(catalog, semantics));
+        } catch (IOException error) {
+            throw new UncheckedIOException("Unable to read recorded Iris find catalog", error);
         }
         return catalog;
     }
 
-    private static void loadPack(RetainedCatalog catalog, Path packRoot, String dimensionKey) {
-        IrisData data = IrisData.openDatapackCompiler(packRoot.toFile());
-        try {
-            IrisDimension dimension = data.getDimensionLoader().load(dimensionKey, false);
-            if (dimension == null) {
-                throw new IllegalStateException("Retained Iris dimension is absent: " + dimensionKey);
+    private static void addRecorded(RetainedCatalog catalog, ChunkGenerationSemantics semantics) {
+        if (!semantics.sealed() || semantics.activationId() == catalog.activeActivationId) {
+            return;
+        }
+        for (String key : semantics.surfaceBiomeKeys()) {
+            addBiome(catalog, key);
+        }
+        for (String key : semantics.caveBiomeKeys()) {
+            addBiome(catalog, key);
+        }
+        for (String key : semantics.regionKeys()) {
+            String normalized = normalizeKey(key);
+            if (!catalog.regions.containsKey(normalized)) {
+                IrisRegion region = new IrisRegion().setName(key);
+                region.setLoadKey(key);
+                catalog.regions.put(normalized, region);
             }
-            addStructures(catalog.structures, dimension.getStructures());
-            for (IrisBiome biome : dimension.getReachableBiomes(() -> data)) {
-                catalog.biomes.putIfAbsent(normalizeKey(biome.getLoadKey()), biome);
-                addObjects(catalog.objects, biome.getObjects());
-                addStructures(catalog.structures, biome.getStructures());
-            }
-            for (IrisRegion region : dimension.getAllRegions(() -> data)) {
-                catalog.regions.putIfAbsent(normalizeKey(region.getLoadKey()), region);
-                addObjects(catalog.objects, region.getObjects());
-                addStructures(catalog.structures, region.getStructures());
-            }
-            if (dimension.hasUpperDimension() && !dimensionKey.equals(dimension.getUpperDimension())) {
-                IrisDimension upper = data.getDimensionLoader().load(dimension.getUpperDimension(), false);
-                if (upper == null) {
-                    throw new IllegalStateException("Retained Iris upper dimension is absent: "
-                            + dimension.getUpperDimension());
-                }
-                for (IrisBiome biome : upper.getReachableBiomes(() -> data)) {
-                    addObjects(catalog.objects, biome.getSurfaceObjects());
-                }
-                for (IrisRegion region : upper.getAllRegions(() -> data)) {
-                    addObjects(catalog.objects, region.getSurfaceObjects());
-                }
-            }
-        } finally {
-            data.close();
+        }
+        for (String key : semantics.objectKeys()) {
+            catalog.objects.add(normalizeObjectKey(key));
+        }
+        for (ChunkGenerationSemantics.StructureOccurrence occurrence : semantics.structures()) {
+            catalog.structures.add(normalizeKey(occurrence.key()));
         }
     }
 
-    private static void addStructures(Set<String> structures, Iterable<IrisStructurePlacement> placements) {
-        for (IrisStructurePlacement placement : placements) {
-            if (placement == null) {
-                continue;
-            }
-            for (String key : placement.getStructures()) {
-                String normalized = normalizeKey(key);
-                if (!normalized.isEmpty()) {
-                    structures.add(normalized);
-                }
-            }
+    private static void addBiome(RetainedCatalog catalog, String key) {
+        String normalized = normalizeKey(key);
+        if (catalog.biomes.containsKey(normalized)) {
+            return;
         }
-    }
-
-    private static void addObjects(Set<String> objects, Iterable<IrisObjectPlacement> placements) {
-        for (IrisObjectPlacement placement : placements) {
-            if (placement == null || placement.getPlace() == null) {
-                continue;
-            }
-            for (String key : placement.getPlace()) {
-                String normalized = normalizeObjectKey(key);
-                if (!normalized.isEmpty()) {
-                    objects.add(normalized);
-                }
-            }
-        }
+        IrisBiome biome = new IrisBiome().setName(key);
+        biome.setLoadKey(key);
+        catalog.biomes.put(normalized, biome);
     }
 
     private static <T extends IrisRegistrant> KList<T> merge(Iterable<T> active, Map<String, T> historical) {
@@ -184,16 +138,33 @@ public final class GenerationFindCatalog {
 
     private static <T extends IrisRegistrant> T find(Iterable<T> entries, String key) {
         String normalized = normalizeKey(key);
+        T caseInsensitiveMatch = null;
         for (T entry : entries) {
-            if (normalizeKey(entry.getLoadKey()).equals(normalized)) {
+            String entryKey = normalizeKey(entry.getLoadKey());
+            if (entryKey.equals(normalized)) {
                 return entry;
             }
+            if (caseInsensitiveMatch == null && entryKey.equalsIgnoreCase(normalized)) {
+                caseInsensitiveMatch = entry;
+            }
         }
-        return null;
+        return caseInsensitiveMatch;
+    }
+
+    private static boolean containsKey(Set<String> keys, String key) {
+        if (keys.contains(key)) {
+            return true;
+        }
+        for (String candidate : keys) {
+            if (candidate.equalsIgnoreCase(key)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String normalizeKey(String key) {
-        return key == null ? "" : key.trim().toLowerCase(Locale.ROOT);
+        return key == null ? "" : key.trim();
     }
 
     private static String normalizeObjectKey(String key) {

@@ -63,7 +63,7 @@ public class JarCompactorTest {
             writeEntry(output, "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nMulti-Release: true\r\n\r\n"
                     .getBytes(StandardCharsets.UTF_8));
             writeEntry(output, "JarCompactorTest.class", classResource.readAllBytes());
-            writeEntry(output, "META-INF/iris/generation-kernels/abi-1.seal", "registry fixture".getBytes(StandardCharsets.UTF_8));
+            writeEntry(output, "META-INF/iris/generation-kernels/abi-1.revision", "registry fixture".getBytes(StandardCharsets.UTF_8));
             writeEntry(output, "example/caf\u00e9.txt", "unicode name".getBytes(StandardCharsets.UTF_8));
             for (int index = 0; index < 100; index++) {
                 writeEntry(output, "example/item-" + index + ".txt", ("value-" + index).getBytes(StandardCharsets.UTF_8));

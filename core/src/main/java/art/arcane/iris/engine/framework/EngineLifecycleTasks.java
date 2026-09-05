@@ -3,6 +3,7 @@ package art.arcane.iris.engine.framework;
 import art.arcane.iris.util.project.context.IrisContext;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 public final class EngineLifecycleTasks {
@@ -13,10 +14,16 @@ public final class EngineLifecycleTasks {
         Objects.requireNonNull(engine);
         Objects.requireNonNull(operation);
         Objects.requireNonNull(task);
-        try (GenerationSessionLease lease = engine.acquireGenerationLease(operation);
-             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-            task.run();
-            return true;
+        try {
+            Optional<GenerationSessionLease> admitted = tryAcquire(engine, operation);
+            if (admitted.isEmpty()) {
+                return false;
+            }
+            try (GenerationSessionLease lease = admitted.get();
+                 IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                task.run();
+                return true;
+            }
         } catch (GenerationSessionException exception) {
             if (engine.isClosing() || engine.isClosed() || exception.isExpectedTeardown()) {
                 return false;
@@ -27,14 +34,29 @@ public final class EngineLifecycleTasks {
 
     public static <T> T call(Engine engine, String operation, Supplier<T> task, T unavailable) {
         Objects.requireNonNull(task);
-        try (GenerationSessionLease lease = engine.acquireGenerationLease(operation);
-             IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-            return task.get();
+        Objects.requireNonNull(engine);
+        Objects.requireNonNull(operation);
+        try {
+            Optional<GenerationSessionLease> admitted = tryAcquire(engine, operation);
+            if (admitted.isEmpty()) {
+                return unavailable;
+            }
+            try (GenerationSessionLease lease = admitted.get();
+                 IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
+                return task.get();
+            }
         } catch (GenerationSessionException exception) {
             if (engine.isClosing() || engine.isClosed() || exception.isExpectedTeardown()) {
                 return unavailable;
             }
             throw new IllegalStateException("Iris lifecycle rejected " + operation + ".", exception);
         }
+    }
+
+    private static Optional<GenerationSessionLease> tryAcquire(Engine engine, String operation)
+            throws GenerationSessionException {
+        GenerationSessionManager sessions = engine.getGenerationSessions();
+        return sessions == null ? Optional.of(GenerationSessionLease.noop())
+                : sessions.tryAcquireForEngine(engine, operation);
     }
 }

@@ -24,18 +24,18 @@ import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-public final class GenerationKernelSeal {
-    public static final String FORMAT = "iris-generation-kernel-seal-v1";
+public final class GenerationBuildRevision {
+    public static final String FORMAT = "iris-generation-build-revision-v1";
     private static final Pattern HASH = Pattern.compile("[0-9a-f]{64}");
-    private static final long MAXIMUM_SEAL_BYTES = 8L * 1024L * 1024L;
+    private static final long MAXIMUM_REVISION_BYTES = 8L * 1024L * 1024L;
     private static final int MAXIMUM_ENTRIES = 30_000;
 
-    private GenerationKernelSeal() {
+    private GenerationBuildRevision() {
     }
 
     public static void main(String[] arguments) throws IOException {
         if (arguments.length < 4 || arguments.length % 2 != 0 || !arguments[0].equals("verify-dependencies")) {
-            throw new IllegalArgumentException("Expected verify-dependencies <seal> <identity> <artifact> pairs.");
+            throw new IllegalArgumentException("Expected verify-dependencies <revision> <identity> <artifact> pairs.");
         }
         Map<String, Path> dependencies = new TreeMap<>();
         for (int index = 2; index < arguments.length; index += 2) {
@@ -46,8 +46,8 @@ public final class GenerationKernelSeal {
         verifyDependencySubset(Path.of(arguments[1]), dependencies);
     }
 
-    public static void verifyDependencySubset(Path seal, Map<String, Path> dependencies) throws IOException {
-        SourceManifest expected = read(seal);
+    public static void verifyDependencySubset(Path revision, Map<String, Path> dependencies) throws IOException {
+        SourceManifest expected = read(revision);
         for (Map.Entry<String, String> dependency : dependencyHashes(dependencies).entrySet()) {
             if (!Objects.equals(expected.dependencies().get(dependency.getKey()), dependency.getValue())) {
                 throw new IOException("Resolved platform dependency does not match generation ABI " + expected.abi()
@@ -75,7 +75,7 @@ public final class GenerationKernelSeal {
             AlgorithmVersion algorithms = new AlgorithmVersion(positive(current[2]), positive(current[3]));
             SourceManifest selected = manifests.get(currentAbi);
             if (selected == null || !selected.algorithms().contains(algorithms)) {
-                throw new IllegalArgumentException("Current generation version has no matching sealed factory.");
+                throw new IllegalArgumentException("Current generation version has no matching build factory.");
             }
             TreeSet<Integer> registered = new TreeSet<>();
             int previous = 0;
@@ -92,7 +92,7 @@ public final class GenerationKernelSeal {
                 registered.add(abi);
             }
             if (!registered.equals(manifests.keySet())) {
-                throw new IllegalArgumentException("Kernel catalog must register exactly the retained sealed kernels.");
+                throw new IllegalArgumentException("Kernel catalog must register exactly the packaged kernels.");
             }
         } catch (IllegalArgumentException failure) {
             throw new IOException("Invalid generation kernel catalog.", failure);
@@ -116,33 +116,32 @@ public final class GenerationKernelSeal {
                 sourceHashes, dependencyHashes(dependencies));
     }
 
-    public static void verify(Path repository, Path seal, Map<String, Path> dependencies) throws IOException {
-        SourceManifest expected = read(seal);
+    public static void verifySnapshot(Path repository, Path revision, Map<String, Path> dependencies) throws IOException {
+        SourceManifest expected = read(revision);
         SourceManifest actual = capture(new CaptureOptions(repository, expected.abi(), expected.factoryClass(), expected.algorithms(),
                 expected.roots(), expected.exclusions()), dependencies);
         List<String> failures = new ArrayList<>();
         differences("source", expected.sources(), actual.sources(), failures);
         differences("dependency", expected.dependencies(), actual.dependencies(), failures);
         if (!failures.isEmpty()) {
-            throw new IOException("Generation ABI " + expected.abi() + " no longer matches its sealed implementation:\n"
-                    + String.join("\n", failures)
-                    + "\nRetain this kernel's implementation and add a separately versioned kernel for changed generation.");
+            throw new IOException("Generation build inputs changed after revision capture:\n"
+                    + String.join("\n", failures));
         }
     }
 
-    public static void writeNew(Path destination, SourceManifest manifest) throws IOException {
+    public static void write(Path destination, SourceManifest manifest) throws IOException {
         Files.createDirectories(destination.toAbsolutePath().getParent());
         Files.writeString(destination, encode(manifest), StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
     }
 
     public static SourceManifest read(Path path) throws IOException {
-        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.size(path) > MAXIMUM_SEAL_BYTES) {
-            throw new IOException("Missing or oversized generation kernel seal: " + path);
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.size(path) > MAXIMUM_REVISION_BYTES) {
+            throw new IOException("Missing or oversized generation build revision: " + path);
         }
         List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
         if (lines.size() < 4 || !FORMAT.equals(lines.getFirst()) || lines.size() > MAXIMUM_ENTRIES) {
-            throw new IOException("Invalid generation kernel seal: " + path);
+            throw new IOException("Invalid generation build revision: " + path);
         }
         int abi = 0;
         String factory = null;
@@ -155,7 +154,7 @@ public final class GenerationKernelSeal {
             for (int index = 1; index < lines.size(); index++) {
                 String[] entry = lines.get(index).split("\t", -1);
                 if (entry.length < 2 || entry.length > 3) {
-                    throw new IllegalArgumentException("Invalid seal entry.");
+                    throw new IllegalArgumentException("Invalid revision entry.");
                 }
                 switch (entry[0]) {
                     case "abi" -> {
@@ -180,16 +179,16 @@ public final class GenerationKernelSeal {
                     case "exclude" -> addPath(exclusions, entry);
                     case "source" -> addHash(sources, entry, true);
                     case "dependency" -> addHash(dependencies, entry, false);
-                    default -> throw new IllegalArgumentException("Unknown generation kernel seal entry.");
+                    default -> throw new IllegalArgumentException("Unknown generation build revision entry.");
                 }
             }
             SourceManifest manifest = new SourceManifest(abi, factory, algorithms, roots, exclusions, sources, dependencies);
             if (!Files.readString(path, StandardCharsets.UTF_8).equals(encode(manifest))) {
-                throw new IllegalArgumentException("Generation kernel seal is not canonical.");
+                throw new IllegalArgumentException("Generation build revision is not canonical.");
             }
             return manifest;
         } catch (RuntimeException failure) {
-            throw new IOException("Invalid generation kernel seal: " + path, failure);
+            throw new IOException("Invalid generation build revision: " + path, failure);
         }
     }
 
@@ -352,11 +351,11 @@ public final class GenerationKernelSeal {
 
     private static void addHash(Map<String, String> hashes, String[] entry, boolean path) {
         if (entry.length != 3 || !HASH.matcher(entry[2]).matches()) {
-            throw new IllegalArgumentException("Invalid sealed hash.");
+            throw new IllegalArgumentException("Invalid revision hash.");
         }
         String key = path ? relative(entry[1]) : token(entry[1]);
         if (hashes.putIfAbsent(key, entry[2]) != null) {
-            throw new IllegalArgumentException("Duplicate sealed entry.");
+            throw new IllegalArgumentException("Duplicate revision entry.");
         }
     }
 
@@ -377,9 +376,9 @@ public final class GenerationKernelSeal {
     }
 
     private static String token(String value) {
-        String required = Objects.requireNonNull(value, "seal token");
+        String required = Objects.requireNonNull(value, "revision token");
         if (required.isBlank() || required.chars().anyMatch(Character::isWhitespace)) {
-            throw new IllegalArgumentException("Invalid generation seal token.");
+            throw new IllegalArgumentException("Invalid generation revision token.");
         }
         return required;
     }
@@ -442,7 +441,7 @@ public final class GenerationKernelSeal {
             sources = Map.copyOf(sources);
             dependencies = Map.copyOf(dependencies);
             if (sources.isEmpty() || dependencies.isEmpty() || sources.size() + dependencies.size() > MAXIMUM_ENTRIES) {
-                throw new IllegalArgumentException("Invalid generation kernel seal entry count.");
+                throw new IllegalArgumentException("Invalid generation build revision entry count.");
             }
         }
     }

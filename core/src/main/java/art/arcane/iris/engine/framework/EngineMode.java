@@ -19,6 +19,8 @@
 package art.arcane.iris.engine.framework;
 
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.actuator.IrisBiomeActuator;
+import art.arcane.volmlib.util.collection.KList;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.util.project.context.ChunkContext;
@@ -31,6 +33,21 @@ import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.spi.PlatformBlockState;
 
 public interface EngineMode extends Staged {
+    KList<EngineStage> getTerrainStages();
+
+    void registerTerrainStage(EngineStage stage);
+
+    EngineStage getTransitionStage();
+
+    default void generateTerrain(int x, int z, Hunk<PlatformBlockState> blocks, Hunk<PlatformBiome> biomes,
+                                 boolean multicore, ChunkContext context) {
+        context.setTerrainBiomeOutput(biomes);
+        for (EngineStage stage : getTerrainStages()) {
+            stage.generate(x, z, blocks, biomes, multicore, context);
+        }
+        getTransitionStage().generate(x, z, blocks, biomes, multicore, context);
+    }
+
     void close();
 
     Engine getEngine();
@@ -159,8 +176,12 @@ public interface EngineMode extends Staged {
         return getEngine().getMantle();
     }
 
-    default void generateMatter(int x, int z, boolean multicore, ChunkContext context) {
-        getMantle().generateMatter(x, z, multicore, context);
+    default void generateTerrainMatter(int x, int z, boolean multicore, ChunkContext context) {
+        getMantle().generateTerrainMatter(x, z, multicore, context);
+    }
+
+    default void generateContentMatter(int x, int z, boolean multicore, ChunkContext context) {
+        getMantle().generateContentMatter(x, z, multicore, context);
     }
 
     @BlockCoordinates
@@ -180,6 +201,9 @@ public interface EngineMode extends Staged {
 
         EngineStage[] stages = getStages().toArray(new EngineStage[0]);
         try (IrisContext.Scope chunkScope = IrisContext.open(getEngine(), generationSessionId, ctx)) {
+            getComplex().getResolvedTerrain().generate(this, x, z, blocks, biomes, multicore, ctx);
+            IrisBiomeActuator.publishNaturalMetadata(getEngine(), x, z, biomes, ctx);
+            ctx.beginContent();
             for (EngineStage i : stages) {
                 i.generate(x, z, blocks, biomes, multicore, ctx);
             }

@@ -19,6 +19,16 @@
 package art.arcane.iris.modded;
 
 import art.arcane.volmlib.util.collection.KSet;
+import art.arcane.iris.core.nms.datapack.v1217.DataFixerV1217;
+import art.arcane.iris.engine.history.GenerationEpochContractFactory;
+import art.arcane.iris.engine.history.GenerationRegistryContract;
+import art.arcane.iris.engine.history.GenerationRegistryContractFactory;
+import art.arcane.iris.engine.object.IrisCustomBiomeAliasResolver;
+import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.object.IrisDimensionType;
+import art.arcane.iris.spi.PlatformGenerationRegistry;
+import java.lang.reflect.Constructor;
+import java.util.Set;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -39,6 +49,33 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class ModdedForcedDatapackTest {
+    @Test
+    public void retainedDimensionSourceRendersBeforeNativeRegistryExists() throws Exception {
+        DataFixerV1217 fixer = new DataFixerV1217();
+        IrisDimensionType type = new IrisDimension().getDimensionType();
+        String source = type.toJson(fixer);
+        GenerationRegistryContract.PhysicalResourceKey key = new GenerationRegistryContract.PhysicalResourceKey(
+                GenerationRegistryContractFactory.DIMENSION_TYPE_REGISTRY, "iris:test_type");
+        GenerationRegistryContract.GeneratedSource saved = new GenerationRegistryContract.GeneratedSource(
+                GenerationRegistryContractFactory.DIMENSION_TYPE_EFFECTIVE_SOURCE_SCHEMA,
+                GenerationEpochContractFactory.fingerprintDimensionType(type),
+                GenerationEpochContractFactory.dimensionTypeSemanticJson(type), "test-renderer",
+                GenerationRegistryContractFactory.fingerprintDefinition(
+                        key, PlatformGenerationRegistry.Definition.exactJson(source), "generated"), source);
+        GenerationRegistryContract contract = GenerationRegistryContract.fromDefinitionsAndGeneratedSources(
+                Map.of(key, GenerationRegistryContractFactory.fingerprintGeneratedSemantic(key, saved)),
+                Map.of(key, saved));
+        Class<?> stageType = Class.forName(ModdedForcedDatapack.class.getName() + "$PackStageContext");
+        Constructor<?> constructor = stageType.getDeclaredConstructor(Path.class, String.class, String.class,
+                String.class, boolean.class, boolean.class, boolean.class, Set.class, GenerationRegistryContract.class);
+        constructor.setAccessible(true);
+        IrisCustomBiomeAliasResolver resolver = (IrisCustomBiomeAliasResolver) constructor.newInstance(
+                Path.of("retained"), "test", "test", "iris:test_type", false, false, true, Set.of(), contract);
+        assertEquals(source, resolver.generatedSource(key.registryKey(), key.resourceKey(), "{}", fixer));
+        assertThrows(IOException.class, () -> resolver.generatedSource(
+                key.registryKey(), "iris:missing_type", "{}", fixer));
+    }
+
     @Test
     public void packScopedIdsCannotCollideAndHaveReadableLabels() {
         String first = ModdedWorldgenIds.presetRef("overworld", "overworld");

@@ -14,6 +14,7 @@ public class ChunkedDoubleDataCache {
     private final ProceduralStream<Double> stream;
     private final boolean cache;
     private final double[] data;
+    private double[] overrides;
 
     @BlockCoordinates
     public ChunkedDoubleDataCache(ProceduralStream<Double> stream, int x, int z) {
@@ -75,8 +76,26 @@ public class ChunkedDoubleDataCache {
         }
     }
 
+    public void setDouble(int localX, int localZ, double value) {
+        if (localX < 0 || localX >= 16 || localZ < 0 || localZ >= 16 || !Double.isFinite(value)) {
+            throw new IllegalArgumentException("Invalid chunk height override");
+        }
+        if (cache) {
+            data[(localZ << 4) + localX] = value;
+            return;
+        }
+        if (overrides == null) {
+            overrides = new double[256];
+            Arrays.fill(overrides, Double.NaN);
+        }
+        overrides[(localZ << 4) + localX] = value;
+    }
+
     @BlockCoordinates
     public double getDouble(int x, int z) {
+        if (overrides != null && !Double.isNaN(overrides[(z << 4) + x])) {
+            return overrides[(z << 4) + x];
+        }
         if (!cache) {
             return stream.getDouble(this.x + x, this.z + z);
         }

@@ -8,17 +8,17 @@ IncludedBuild coreBuild = gradle.includedBuilds.find { IncludedBuild candidate -
     candidate.projectDir.canonicalFile == file('../..').canonicalFile
 }
 if (coreBuild == null) {
-    throw new GradleException('The modded artifact requires the included Iris core build and its generation seal.')
+    throw new GradleException('The modded artifact requires the included Iris core build and its generation build revision.')
 }
-TaskReference kernelSealVerification = coreBuild.task(':core:verifyGenerationKernelSeals')
-TaskProvider<JavaExec> resolvedSealVerification = tasks.register('verifyResolvedGenerationKernelDependencies', JavaExec) {
+TaskReference buildRevisionVerification = coreBuild.task(':core:verifyGenerationBuildRevision')
+TaskProvider<JavaExec> resolvedRevisionVerification = tasks.register('verifyResolvedGenerationKernelDependencies', JavaExec) {
     group = 'verification'
-    description = 'Checks the actual bundled generation library contents against the retained kernel seal.'
-    dependsOn(kernelSealVerification)
+    description = 'Checks the actual bundled generation library contents against the current build revision.'
+    dependsOn(buildRevisionVerification)
     classpath = files('../../buildSrc/build/libs/buildSrc.jar')
-    mainClass.set('art.arcane.iris.buildtools.GenerationKernelSeal')
+    mainClass.set('art.arcane.iris.buildtools.GenerationBuildRevision')
     doFirst {
-        List<String> arguments = ['verify-dependencies', file('../../core/generation-kernels/abi-1.seal').absolutePath]
+        List<String> arguments = ['verify-dependencies', file('../../core/build/generated/generation-revision/META-INF/iris/generation-kernels/abi-1.revision').absolutePath]
         for (ResolvedArtifact artifact : configurations.bundle.resolvedConfiguration.resolvedArtifacts) {
             String group = artifact.moduleVersion.id.group
             String name = artifact.moduleVersion.id.name
@@ -45,7 +45,7 @@ TaskProvider<JavaExec> resolvedSealVerification = tasks.register('verifyResolved
     }
 }
 gradle.projectsEvaluated {
-    resolvedSealVerification.configure { dependsOn(configurations.bundle) }
+    resolvedRevisionVerification.configure { dependsOn(configurations.bundle) }
 }
-tasks.withType(Jar).configureEach { dependsOn(resolvedSealVerification) }
-tasks.named('check').configure { dependsOn(resolvedSealVerification) }
+tasks.withType(Jar).configureEach { dependsOn(resolvedRevisionVerification) }
+tasks.named('check').configure { dependsOn(resolvedRevisionVerification) }

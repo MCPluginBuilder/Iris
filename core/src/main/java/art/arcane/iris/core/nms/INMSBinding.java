@@ -18,6 +18,8 @@
 
 package art.arcane.iris.core.nms;
 
+import art.arcane.iris.engine.history.SavedTerrainChunk;
+import java.util.concurrent.CompletableFuture;
 import art.arcane.iris.core.datapack.DatapackStructureScopeIndex;
 import art.arcane.iris.engine.object.IrisImportedStructureControl;
 import art.arcane.iris.core.lifecycle.WorldLifecycleCaller;
@@ -57,9 +59,19 @@ import org.bukkit.inventory.ItemStack;
 import java.awt.Color;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 
 public interface INMSBinding {
+    default CompletableFuture<Void> flushSavedTerrainCapture(World world) {
+        return CompletableFuture.failedFuture(new UnsupportedOperationException(
+                "Native saved terrain checkpoints are unavailable."));
+    }
+
+    default CompletableFuture<SavedTerrainChunk> captureSavedTerrainChunk(
+            World world, int chunkX, int chunkZ, int minimumY, int height) {
+        return CompletableFuture.failedFuture(new UnsupportedOperationException(
+                "Native saved terrain capture is unavailable."));
+    }
+
     default PlatformGenerationRegistry generationRegistry() {
         throw new UnsupportedOperationException(
                 "The active NMS binding does not expose generation registry definitions."

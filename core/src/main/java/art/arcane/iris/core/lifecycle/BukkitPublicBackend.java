@@ -32,9 +32,8 @@ final class BukkitPublicBackend implements WorldLifecycleBackend {
             WorldLifecycleStaging.stageStemGenerator(request.worldName(), request.generator());
         }
 
-        INMS.get().ensureServerLevelInjection();
-
         try {
+            INMS.get().ensureServerLevelInjection();
             World world = creator.createWorld();
             return CompletableFuture.completedFuture(world);
         } catch (Throwable e) {

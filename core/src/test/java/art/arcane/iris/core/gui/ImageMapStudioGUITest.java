@@ -1,30 +1,20 @@
 package art.arcane.iris.core.gui;
 
-import art.arcane.iris.core.loader.IrisData;
-import art.arcane.iris.core.loader.ResourceLoader;
 import art.arcane.iris.engine.framework.Engine;
-import art.arcane.iris.engine.object.IrisImageMap;
 import org.junit.Test;
-import org.mockito.InOrder;
 
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 public class ImageMapStudioGUITest {
     @Test
-    public void invalidatesPresetKeysBeforeHotloadingTheActiveEngine() {
+    public void exportRequestsHotloadWithoutMutatingTheActiveGenerationData() {
         Engine engine = mock(Engine.class);
-        IrisData data = mock(IrisData.class);
-        @SuppressWarnings("unchecked")
-        ResourceLoader<IrisImageMap> loader = mock(ResourceLoader.class);
-        when(engine.getData()).thenReturn(data);
-        when(data.getImageMapLoader()).thenReturn(loader);
 
         ImageMapStudioGUI.reloadActiveEngine(engine);
 
-        InOrder order = inOrder(loader, engine);
-        order.verify(loader).clearCache();
-        order.verify(engine).hotloadSilently();
+        verify(engine).hotloadSilently();
+        verifyNoMoreInteractions(engine);
     }
 }

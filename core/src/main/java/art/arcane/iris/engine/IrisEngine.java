@@ -37,6 +37,7 @@ import art.arcane.iris.engine.framework.GenerationSessionManager;
 import art.arcane.iris.engine.history.GenerationBoundarySignatureSampler;
 import art.arcane.iris.engine.history.GenerationHistory;
 import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
+import art.arcane.iris.engine.history.ChunkGenerationSemantics;
 import art.arcane.iris.engine.history.GenerationKernelRegistry;
 import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.framework.SeedManager;
@@ -46,10 +47,7 @@ import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisDimensionCarvingResolver;
 import art.arcane.iris.engine.object.IrisEngineData;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.core.compat.PackCompatReport;
 import art.arcane.iris.core.pack.PackValidationCache;
-import art.arcane.iris.core.pack.PackValidationResult;
-import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.spi.IrisLogging;
 import com.google.common.util.concurrent.AtomicDouble;
 import art.arcane.iris.spi.IrisPlatforms;
@@ -78,20 +76,17 @@ import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -118,6 +113,11 @@ public class IrisEngine implements Engine {
     private final EngineMetrics metrics;
     private final CompletableFuture<Void> generationCacheWarm;
     private final boolean studio;
+    @Setter(AccessLevel.NONE)
+    private volatile Path studioGenerationSource;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    boolean studioGenerationTransition;
     private final AtomicRollingSequence wallClock;
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
@@ -163,6 +163,9 @@ public class IrisEngine implements Engine {
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     final EngineMetricsReport metricsReport = new EngineMetricsReport(this);
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final EngineDiagnostics diagnostics = new EngineDiagnostics(this);
     private final AtomicBoolean cleaning;
     private final ChronoLatch cleanLatch;
     private final SeedManager seedManager;
@@ -267,7 +270,7 @@ public class IrisEngine implements Engine {
         this.initialKernelVersion = Objects.requireNonNull(kernelVersion, "generation kernel version");
         this.initialTransitionPlan = transitionPlan;
         this.platformHooks = IrisServices.get(EnginePlatformHooks.class);
-        this.generationSessions = new GenerationSessionManager();
+        this.generationSessions = new GenerationSessionManager(requiredMode.studio());
         this.closing = new AtomicBoolean(true);
         this.nativeStructureVolumeQueriesEnabled = new AtomicBoolean(!requiredMode.studio());
         this.lifecycleState = LifecycleState.INITIALIZING;
@@ -313,7 +316,7 @@ public class IrisEngine implements Engine {
             String studioCacheIdentity = currentStudioCacheIdentity();
             getData().loadPrefetch(this);
             IrisLogging.debug("[IrisEngine timing] loadPrefetch=" + (M.ms() - _t0) + "ms");
-            logStudioInitializationPhase("load_prefetch", phaseStartedAt, false);
+            diagnostics.logStudioInitializationPhase("load_prefetch", phaseStartedAt, false);
             try {
                 StructureIndexService.writeOnce(getData());
             } catch (Throwable e) {
@@ -326,8 +329,8 @@ public class IrisEngine implements Engine {
             enableStableStudioCache(initialRuntime, studioCacheIdentity);
             runtimeBuilder.publishRuntime(initialRuntime, null);
             IrisLogging.debug("[IrisEngine timing] setupEngine total=" + (M.ms() - _t0) + "ms");
-            logPackCompatSummary();
-            logStudioInitializationPhase("build_runtime", phaseStartedAt, false);
+            diagnostics.logPackCompatSummary();
+            diagnostics.logStudioInitializationPhase("build_runtime", phaseStartedAt, false);
             phaseStartedAt = System.nanoTime();
             if (requiredMode.warmGenerationCaches()) {
                 if (requiredMode.studio()) {
@@ -337,7 +340,7 @@ public class IrisEngine implements Engine {
                 }
             } else {
                 generationCacheWarm.complete(null);
-                logStudioInitializationPhase("generation_cache_warm", phaseStartedAt, true);
+                diagnostics.logStudioInitializationPhase("generation_cache_warm", phaseStartedAt, true);
             }
             EngineTickRegistry.registerTicking(this);
         } catch (Throwable e) {
@@ -345,38 +348,6 @@ public class IrisEngine implements Engine {
             throw new IllegalStateException("Failed to initialize Iris engine for world '" + requiredTarget.getWorld().name() + "'.", e);
         }
         IrisLogging.debug("Engine Initialized " + getCacheID());
-    }
-
-    /**
-     * One line per engine naming what this pack cannot generate on the running Minecraft version. The published
-     * validation result is complete (validation force-loads the whole pack), so it is preferred; an unvalidated pack
-     * falls back to what this engine has gated while building its runtime (dimension, regions, biomes). Never throws:
-     * a report failure must not take an otherwise working world down with it.
-     */
-    private void logPackCompatSummary() {
-        try {
-            File folder = getData().getDataFolder();
-            // A world engine reads its snapshot copy under <world>/iris/pack, so the dimension key is the pack's name.
-            String pack = getDimension().getLoadKey();
-            String world = target.getWorld().name();
-            String version = IrisPlatforms.isBound() ? IrisPlatforms.get().minecraftVersion() : null;
-            PackValidationResult published = PackValidationRegistry.get(folder.toPath());
-            if (published == null) {
-                published = PackValidationRegistry.get(folder.getName());
-            }
-            PackCompatReport report = published != null && !published.getCompatFindings().isEmpty()
-                    ? PackCompatReport.of(published.getCompatFindings())
-                    : getData().getCompatReport();
-            if (!report.isEmpty()) {
-                IrisLogging.info("World '" + world + "' pack '" + pack + "' " + report.summaryLine(version));
-            }
-            if (getDimension().isCompatExcluded()) {
-                IrisLogging.error("World '" + world + "' pack '" + pack + "' cannot generate on Minecraft "
-                        + (version == null || version.isBlank() ? "unknown" : version));
-            }
-        } catch (Throwable e) {
-            IrisLogging.debug("Pack compat summary failed: " + e.getMessage());
-        }
     }
 
     public void awaitGenerationCacheWarm() {
@@ -392,18 +363,6 @@ public class IrisEngine implements Engine {
 
     public boolean isGenerationCacheWarmPending() {
         return !generationCacheWarm.isDone();
-    }
-
-    private void logStudioInitializationPhase(String phase, long startedAtNanos, boolean skipped) {
-        if (!studio) {
-            return;
-        }
-        IrisLogging.info("[Studio engine timing] world=%s kind=%s phase=%s duration=%dms skipped=%s",
-                target.getWorld().name(),
-                initializationMode.name().toLowerCase(Locale.ROOT),
-                phase,
-                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos),
-                Boolean.toString(skipped));
     }
 
     private String currentStudioCacheIdentity() {
@@ -447,6 +406,36 @@ public class IrisEngine implements Engine {
         return packRoot.resolve(".iris").resolve("studio-hydrology");
     }
 
+    public void startStudioEntryHydrology(int blockX, int blockZ) {
+        GenerationRuntimeBinding binding = getActiveGenerationRuntimeBinding();
+        if (!backgroundTasks.scheduleTrackedTask(() -> prepareStudioEntryHydrology(binding, blockX, blockZ))) {
+            throw new IllegalStateException("Iris background task admission closed before Studio entry preparation.");
+        }
+    }
+
+    private void prepareStudioEntryHydrology(GenerationRuntimeBinding binding, int blockX, int blockZ) {
+        if (closing.get()) {
+            return;
+        }
+        GenerationSessionLease lease;
+        try {
+            lease = acquireGenerationLease("studio_entry_hydrology");
+        } catch (GenerationSessionException failure) {
+            if (closing.get()) {
+                return;
+            }
+            throw new IllegalStateException("Studio entry hydrology preparation could not acquire its generation session.", failure);
+        }
+        try (lease;
+             GenerationRuntimeScope runtimeScope = generationRuntimeScopes.open(binding);
+             IrisContext.Scope context = IrisContext.open(this, lease.sessionId(), null)) {
+            getComplex().getHydrologyRuntime().prepareChunkColumns(blockX, blockZ);
+        } catch (Exception failure) {
+            throw new IllegalStateException("Studio entry hydrology preparation failed at "
+                    + blockX + "," + blockZ + ".", failure);
+        }
+    }
+
     private void startGenerationCacheWarm(long phaseStartedAtNanos) {
         if (!backgroundTasks.scheduleTrackedTask(() -> warmGenerationCaches(phaseStartedAtNanos))) {
             throw new IllegalStateException("Iris background task admission closed before generation cache warming.");
@@ -469,7 +458,7 @@ public class IrisEngine implements Engine {
             throw new IllegalStateException("Generation cache warming failed.", failure);
         } finally {
             IrisLogging.debug("[IrisEngine timing] cache warm total=" + (M.ms() - startedAtMillis) + "ms");
-            logStudioInitializationPhase("generation_cache_warm", phaseStartedAtNanos, false);
+            diagnostics.logStudioInitializationPhase("generation_cache_warm", phaseStartedAtNanos, false);
         }
     }
 
@@ -575,6 +564,9 @@ public class IrisEngine implements Engine {
     @BlockCoordinates
     @Override
     public IrisBiome getCaveBiome(int x, int z) {
+        if (usesScopedNaturalTerrain()) {
+            return Engine.super.getCaveBiome(x, z);
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
                      openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a cave biome")) {
             return Engine.super.getCaveBiome(x, z);
@@ -595,6 +587,9 @@ public class IrisEngine implements Engine {
             int z,
             IrisDimensionCarvingResolver.State state
     ) {
+        if (usesScopedNaturalTerrain()) {
+            return Engine.super.getCaveBiome(x, y, z, state);
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
                      openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a vertical cave biome")) {
             return Engine.super.getCaveBiome(x, y, z, state);
@@ -604,6 +599,9 @@ public class IrisEngine implements Engine {
     @BlockCoordinates
     @Override
     public IrisBiome getSurfaceBiome(int x, int z) {
+        if (usesScopedNaturalTerrain()) {
+            return Engine.super.getSurfaceBiome(x, z);
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
                      openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a surface biome")) {
             return Engine.super.getSurfaceBiome(x, z);
@@ -637,6 +635,10 @@ public class IrisEngine implements Engine {
     @ChunkCoordinates
     @Override
     public Set<String> getObjectsAt(int x, int z) {
+        Optional<ChunkGenerationSemantics> recorded = recordedChunkSemantics(x, z);
+        if (recorded.isPresent()) {
+            return recorded.get().objectKeys();
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
                      openGenerationHistoryCoordinateScopeUnchecked(x << 4, z << 4, "resolve chunk objects")) {
             return getMantle().getObjectComponent().guess(x, z);
@@ -646,6 +648,15 @@ public class IrisEngine implements Engine {
     @ChunkCoordinates
     @Override
     public Set<Pair<String, BlockPos>> getPOIsAt(int chunkX, int chunkZ) {
+        Optional<ChunkGenerationSemantics> recorded = recordedChunkSemantics(chunkX, chunkZ);
+        if (recorded.isPresent()) {
+            Set<Pair<String, BlockPos>> points = new HashSet<>();
+            for (ChunkGenerationSemantics.PointOfInterest point : recorded.get().pointsOfInterest()) {
+                ChunkGenerationSemantics.BlockPosition position = point.position();
+                points.add(new Pair<>(point.key(), new BlockPos(position.x(), position.y(), position.z())));
+            }
+            return points;
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
                      openGenerationHistoryCoordinateScopeUnchecked(
                              chunkX << 4, chunkZ << 4, "resolve chunk points of interest")) {
@@ -654,9 +665,17 @@ public class IrisEngine implements Engine {
                     chunkX,
                     chunkZ,
                     MatterStructurePOI.class,
-                    (x, y, z, data) -> pois.add(new Pair<>(data.getType(), new BlockPos(x, y, z))));
+                    (x, y, z, data) -> pois.add(new Pair<>(data.getType(), new BlockPos(
+                            Math.addExact(Math.multiplyExact(chunkX, 16), x), y,
+                            Math.addExact(Math.multiplyExact(chunkZ, 16), z)))));
             return pois;
         }
+    }
+
+    private Optional<ChunkGenerationSemantics> recordedChunkSemantics(int chunkX, int chunkZ) {
+        GenerationHistoryRuntimeRouter router = getGenerationHistoryRuntimeRouter().orElse(null);
+        return router == null ? Optional.empty()
+                : router.history().semantics(chunkX, chunkZ).filter(ChunkGenerationSemantics::sealed);
     }
 
     private void warmupChunk(int x, int z) {
@@ -673,6 +692,30 @@ public class IrisEngine implements Engine {
     @Override
     public void hotload() {
         hotloader.hotload();
+    }
+
+    public void configureStudioGenerationSource(Path source) {
+        if (!studio) {
+            throw new IllegalStateException("An authoring pack source requires a Studio engine.");
+        }
+        Path required = Objects.requireNonNull(source, "Studio generation source").toAbsolutePath().normalize();
+        synchronized (lifecycleLock) {
+            requireRunning("configure the Studio authoring pack");
+            if (studioGenerationSource != null && !studioGenerationSource.equals(required)) {
+                throw new IllegalStateException("The Studio authoring pack is already configured.");
+            }
+            studioGenerationSource = required;
+        }
+    }
+
+    public Path getStudioGenerationSource() {
+        return Objects.requireNonNull(studioGenerationSource, "Studio authoring pack is not configured");
+    }
+
+    @Override
+    public Path getPackSource() {
+        Path source = studioGenerationSource;
+        return source == null ? getData().getDataFolder().toPath() : source;
     }
 
     public void hotloadComplex() {
@@ -827,6 +870,10 @@ public class IrisEngine implements Engine {
         return generationRuntimeScopes.current() != null;
     }
 
+    private boolean usesScopedNaturalTerrain() {
+        return hasGenerationRuntimeScope() && getComplex().isNaturalTerrainContext();
+    }
+
     private GenerationHistoryRuntimeRouter.CoordinateScope openGenerationHistoryCoordinateScopeUnchecked(
             int blockX,
             int blockZ,
@@ -956,7 +1003,7 @@ public class IrisEngine implements Engine {
         EngineTarget requiredTarget = Objects.requireNonNull(runtimeTarget, "detached generation target");
         Path requiredMantleStorageDirectory = IrisEngineMantle.normalizeStorageDirectory(mantleStorageDirectory);
         synchronized (lifecycleLock) {
-            requireRunning("build a detached generation runtime");
+            requireGenerationRuntimeMutation("build a detached generation runtime");
             GenerationRuntime active = runtime.generation();
             if (requiredTarget.getWorld() != active.target().getWorld()) {
                 throw new IllegalArgumentException("Detached generation runtime must target this Iris world.");
@@ -1066,7 +1113,7 @@ public class IrisEngine implements Engine {
     public void setDefaultGenerationRuntime(GenerationRuntimeBinding binding) {
         GenerationRuntimeBinding required = Objects.requireNonNull(binding, "generation runtime binding");
         synchronized (lifecycleLock) {
-            requireRunning("select the default generation runtime");
+            requireGenerationRuntimeMutation("select the default generation runtime");
             if (required.engine != this) {
                 throw new IllegalArgumentException("Generation runtime binding belongs to a different Iris engine.");
             }
@@ -1439,6 +1486,14 @@ public class IrisEngine implements Engine {
         }
     }
 
+    private void requireGenerationRuntimeMutation(String operation) {
+        if (!closed && studio && studioGenerationTransition && lifecycleState == LifecycleState.HOTLOADING
+                && generationHistoryRuntimeRouter != null) {
+            return;
+        }
+        requireRunning(operation);
+    }
+
     private boolean EngineSafe() {
         // Todo: this has potential if done right
         int EngineMCVersion = getEngineData().getStatistics().getMCVersion();
@@ -1466,6 +1521,7 @@ public class IrisEngine implements Engine {
     public enum InitializationMode {
         RUNTIME(false, true),
         STUDIO(true, true),
+        OBJECT_STUDIO(true, false),
         JIGSAW_STUDIO(true, false);
 
         private final boolean studio;

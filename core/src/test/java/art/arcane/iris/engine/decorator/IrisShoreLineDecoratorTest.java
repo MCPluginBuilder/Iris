@@ -2,6 +2,7 @@ package art.arcane.iris.engine.decorator;
 
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.framework.SeedManager;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -10,23 +11,50 @@ import art.arcane.iris.engine.object.IrisDecorator;
 import art.arcane.iris.engine.object.IrisDimension;
 import art.arcane.iris.engine.object.IrisSlopeClip;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import org.bukkit.block.BlockSupport;
 import org.bukkit.block.data.BlockData;
 import org.junit.Test;
+import org.junit.BeforeClass;
+import org.junit.AfterClass;
 
 import static org.junit.Assert.assertSame;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class IrisShoreLineDecoratorTest {
     private static final int FLUID_HEIGHT = 4;
+
+    @BeforeClass
+    public static void bindPlatform() {
+        IrisPlatforms.unbind();
+        PlatformBlockState air = mock(PlatformBlockState.class);
+        doReturn(true).when(air).isAir();
+        doReturn("minecraft:air").when(air).key();
+        PlatformRegistries registries = mock(PlatformRegistries.class);
+        doReturn(air).when(registries).block(anyString());
+        doReturn(air).when(registries).air();
+        IrisPlatform platform = mock(IrisPlatform.class);
+        doReturn(registries).when(platform).registries();
+        IrisPlatforms.bind(platform);
+    }
+
+    @AfterClass
+    public static void unbindPlatform() {
+        IrisPlatforms.unbind();
+    }
 
     @Test
     public void carvedSurfaceRejectsShorelineDecoration() {
@@ -180,7 +208,7 @@ public class IrisShoreLineDecoratorTest {
         IrisSlopeClip slope = mock(IrisSlopeClip.class);
         PlatformBlockState decorant = mock(PlatformBlockState.class);
         ProceduralStream<Double> heightStream = mock(ProceduralStream.class);
-        ProceduralStream<Double> fluidStream = mock(ProceduralStream.class);
+        EngineMantle mantle = mock(EngineMantle.class);
 
         when(engine.getCacheID()).thenReturn(1);
         when(engine.getSeedManager()).thenReturn(seedManager);
@@ -190,11 +218,11 @@ public class IrisShoreLineDecoratorTest {
         when(engine.getComplex()).thenReturn(complex);
         when(complex.getFluidHeight()).thenReturn((double) FLUID_HEIGHT);
         when(complex.getHeightStream()).thenReturn(heightStream);
-        when(complex.getRiverWaterSurfaceStream()).thenReturn(fluidStream);
+        when(engine.getMantle()).thenReturn(mantle);
+        when(mantle.getFluidHeight(anyInt(), anyInt())).thenReturn(FLUID_HEIGHT);
         when(heightStream.get(anyDouble(), anyDouble())).thenReturn(
                 naturalShore ? (double) FLUID_HEIGHT - 1 : (double) FLUID_HEIGHT
         );
-        when(fluidStream.get(anyDouble(), anyDouble())).thenReturn((double) FLUID_HEIGHT);
         when(engine.getData()).thenReturn(data);
         when(biome.getDecoratorBucket(IrisDecorationPart.SHORE_LINE))
                 .thenReturn(new IrisDecorator[]{decorator});

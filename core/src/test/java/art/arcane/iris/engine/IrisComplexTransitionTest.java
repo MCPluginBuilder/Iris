@@ -1,7 +1,5 @@
 package art.arcane.iris.engine;
 
-import art.arcane.iris.engine.history.TerrainBoundarySignature;
-import art.arcane.iris.engine.history.TransitionGenerationPlan;
 import art.arcane.iris.engine.hydrology.HydrologyColumnLayer;
 import art.arcane.iris.engine.hydrology.HydrologyColumnSample;
 import art.arcane.iris.engine.hydrology.HydrologyFeatureRef;
@@ -9,56 +7,15 @@ import art.arcane.iris.engine.hydrology.HydrologyFeatureType;
 import org.junit.Test;
 
 import java.util.List;
-import java.util.OptionalInt;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
 
 public class IrisComplexTransitionTest {
     @Test
-    public void blendsDryBoundaryTerrainFromTheFrozenSurface() {
-        TransitionGenerationPlan.TerrainSample sample = new TransitionGenerationPlan.TerrainSample(
-                8D,
-                0.5D,
-                0D,
-                signature(OptionalInt.empty()),
-                64D,
-                55D,
-                0D
-        );
-
-        assertEquals(82D, IrisComplex.blendNaturalTerrainHeight(100D, sample), 0D);
-    }
-
-    @Test
-    public void blendsSubmergedBoundaryTerrainFromTheFrozenOceanFloor() {
-        TransitionGenerationPlan.TerrainSample sample = new TransitionGenerationPlan.TerrainSample(
-                8D,
-                0.5D,
-                0D,
-                signature(OptionalInt.of(63)),
-                64D,
-                55D,
-                0D
-        );
-
-        assertEquals(75D, IrisComplex.blendNaturalTerrainHeight(95D, sample), 0D);
-    }
-
-    @Test
-    public void preservesNewTerrainAndHydrologyObjectsAtFullWeight() {
-        TransitionGenerationPlan.TerrainSample terrain = new TransitionGenerationPlan.TerrainSample(
-                32D,
-                1D,
-                1D,
-                signature(OptionalInt.empty()),
-                64D,
-                55D,
-                0D
-        );
+    public void preservesHydrologyObjectsAtFullWeight() {
         HydrologyColumnSample hydrology = hydrologySample();
 
-        assertEquals(101.25D, IrisComplex.blendNaturalTerrainHeight(101.25D, terrain), 0D);
         assertSame(hydrology, IrisComplex.taperHydrologySample(hydrology, 1D));
     }
 
@@ -74,20 +31,42 @@ public class IrisComplexTransitionTest {
         assertEquals("river", layer.profileKey());
     }
 
-    private static TerrainBoundarySignature signature(OptionalInt fluidHeight) {
-        return new TerrainBoundarySignature(
-                new TerrainBoundarySignature.Column(15, 8, 64, 55, fluidHeight, OptionalInt.empty()),
-                new TerrainBoundarySignature.Samples(
-                        new TerrainBoundarySignature.VerticalLayout(0, 1, 1),
-                        new TerrainBoundarySignature.BiomeEncoding(List.of("iris:frozen"), new short[]{0})
-                )
-        );
+    @Test
+    public void preservesCaveContainmentCoordinatesThroughoutTransition() {
+        for (HydrologyFeatureType type : HydrologyFeatureType.values()) {
+            if (!type.isUnderground() && !type.isDeepFluid()) {
+                continue;
+            }
+            HydrologyColumnSample sample = hydrologySample(type);
+            for (double weight : new double[]{0D, 0.01D, 0.25D, 0.5D, 0.99D, 1D}) {
+                HydrologyColumnSample tapered = IrisComplex.taperHydrologySample(sample, weight);
+                assertSame(type + " at " + weight, sample.layers().getFirst(), tapered.layers().getFirst());
+            }
+        }
+    }
+
+    @Test
+    public void tapersSurfaceLayerWithoutMovingOverlappingCave() {
+        HydrologyColumnLayer cave = hydrologySample(HydrologyFeatureType.UNDERGROUND_POOL).layers().getFirst();
+        HydrologyColumnLayer surface = hydrologySample().layers().getFirst();
+        HydrologyColumnSample sample = new HydrologyColumnSample(4, 6, 80, 63, false, "parent", List.of(surface, cave));
+
+        HydrologyColumnSample tapered = IrisComplex.taperHydrologySample(sample, 0.5D);
+
+        assertSame(cave, tapered.layers().getFirst());
+        assertEquals(73, tapered.layers().getLast().bedY());
+        assertEquals(75, tapered.layers().getLast().fluidHeadY());
+        assertEquals(75, tapered.layers().getLast().ceilingY());
     }
 
     private static HydrologyColumnSample hydrologySample() {
+        return hydrologySample(HydrologyFeatureType.SURFACE_POOL);
+    }
+
+    private static HydrologyColumnSample hydrologySample(HydrologyFeatureType type) {
         HydrologyFeatureRef feature = new HydrologyFeatureRef(
                 1L,
-                HydrologyFeatureType.SURFACE_POOL,
+                type,
                 2L,
                 3L,
                 4,

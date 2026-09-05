@@ -8,10 +8,10 @@ import java.nio.file.Path;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertFalse;
 
-public class NMSBindingShutdownBoundaryContractTest {
+public class NmsWorldLifecycleShutdownBoundaryContractTest {
     @Test
     public void shutdownClassificationUsesTheServerStopFlagInsteadOfPluginEnablement() throws Exception {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource")).resolveSibling("NmsWorldLifecycle.java"));
         String stopping = section(source, "public boolean isServerStopping()", "public ServerShutdownBoundary createServerShutdownBoundary");
 
         assertTrue(stopping.contains("((CraftServer) Bukkit.getServer()).getServer().hasStopped()"));
@@ -21,10 +21,10 @@ public class NMSBindingShutdownBoundaryContractTest {
 
     @Test
     public void pluginLoaderGuardUsesSystemAgentIdentityAndIsRemovedAtRelease() throws Exception {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource")));
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource")).resolveSibling("NmsWorldLifecycle.java"));
         String injection = section(source, "public boolean injectBukkit()", "public void ensureServerLevelInjection()");
-        String guard = section(source, "private static class PluginClassLoaderCloseAdvice", "private static class ChunkAccessAdvice");
-        String release = section(source, "public void releasePluginClassLoaderClose()", "public KMap<Material, List<BlockProperty>> getBlockProperties");
+        String guard = section(source, "private static class PluginClassLoaderCloseAdvice", "private static class LevelStorageAccessAdvice");
+        String release = section(source, "public void releasePluginClassLoaderClose()", "private static final class PluginClassLoaderInjectionListener");
 
         assertTrue(injection.contains("Agent.requireClassLoaderCloseDeferral()"));
         assertTrue(injection.contains("getMethod(\"close\").getDeclaringClass()"));
@@ -40,8 +40,8 @@ public class NMSBindingShutdownBoundaryContractTest {
 
     @Test
     public void shutdownBoundaryUsesPaperFullyShutdownStateAndServerThread() throws Exception {
-        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource"))).replace("\r\n", "\n");
-        String boundary = section(source, "public ServerShutdownBoundary createServerShutdownBoundary", "public KMap<Material, List<BlockProperty>> getBlockProperties");
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsBindingSource")).resolveSibling("NmsWorldLifecycle.java")).replace("\r\n", "\n");
+        String boundary = section(source, "public ServerShutdownBoundary createServerShutdownBoundary", "private static final class PluginClassLoaderInjectionListener");
 
         assertTrue(boundary.contains("new ServerShutdownBoundary("));
         assertTrue(boundary.contains("server.hasFullyShutdown"));

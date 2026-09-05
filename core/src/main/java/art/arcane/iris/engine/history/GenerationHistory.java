@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
 public final class GenerationHistory {
@@ -380,9 +381,44 @@ public final class GenerationHistory {
         }
     }
 
+    LiveCutover beginLiveCutover() {
+        return new LiveCutover(admission.beginCutover());
+    }
+
+    final class LiveCutover implements AutoCloseable {
+        private final GenerationAdmission.CutoverLease lease;
+        private final Thread owner = Thread.currentThread();
+        private boolean closed;
+
+        private LiveCutover(GenerationAdmission.CutoverLease lease) {
+            this.lease = lease;
+        }
+
+        GenerationActivation promote(BoundarySignatureCapture signatureCapture) throws IOException {
+            requireOpen();
+            synchronized (GenerationHistory.this) {
+                return promotePendingLocked(Objects.requireNonNull(signatureCapture, "signature capture"));
+            }
+        }
+
+        private void requireOpen() {
+            if (closed || Thread.currentThread() != owner) {
+                throw new IllegalStateException("Generation cutover is closed or belongs to another thread.");
+            }
+        }
+
+        @Override
+        public void close() {
+            requireOpen();
+            closed = true;
+            lease.close();
+        }
+    }
+
     private GenerationActivation promotePendingLocked(
             BoundarySignatureCapture signatureCapture
     ) throws IOException {
+        WorldChunkInventory inventory = recoverUnstoredClaims();
         validateReferencedState();
         Optional<GenerationActivation> pending = store.pendingActivation();
         if (pending.isEmpty()) {
@@ -390,16 +426,9 @@ public final class GenerationHistory {
         }
 
         long outgoingActivationId = store.activeActivation().activationId();
-        semantics.compactJournals();
-        WorldChunkInventory inventory = WorldChunkInventory.scan(paths.dimensionRoot());
         ownership.assignUnassigned(inventory, outgoingActivationId);
-        semantics.forEachSealedClaim(
-                outgoingActivationId,
-                (chunkX, chunkZ) -> ownership.assign(chunkX, chunkZ, outgoingActivationId)
-        );
         ownership.persist();
         requireExplicitOwnership(inventory);
-        requireExplicitSemanticOwnership(outgoingActivationId);
         GenerationBoundary boundary = boundaries.publishOwnership(
                 pending.get().activationId(),
                 ownership
@@ -440,6 +469,13 @@ public final class GenerationHistory {
         return kernels.current();
     }
 
+    public synchronized boolean usesCurrentGenerator() throws IOException {
+        GenerationEpoch active = store.activeEpoch();
+        return active.kernelVersion().equals(kernels.current())
+                && active.kernelImplementationFingerprint().equals(
+                        kernels.requireSupported(kernels.current()).implementationFingerprint());
+    }
+
     public synchronized GenerationActivation stageCurrentKernel(
             int transitionWidthBlocks
     ) throws IOException {
@@ -453,6 +489,49 @@ public final class GenerationHistory {
                 transitionWidthBlocks,
                 kernels.current()
         );
+    }
+
+    public void prepareCurrentGenerator(int transitionWidthBlocks) throws IOException {
+        try (GenerationAdmission.CutoverLease ignored = admission.beginStartupCutover()) {
+            synchronized (this) {
+                if (store.pendingActivation().isEmpty() && usesCurrentGenerator()) {
+                    recoverUnstoredClaims();
+                    validateReferencedState();
+                } else {
+                    if (store.pendingActivation().isEmpty()) {
+                        stageCurrentKernel(transitionWidthBlocks);
+                    }
+                    promoteSavedBoundary();
+                    if (!usesCurrentGenerator()) {
+                        stageCurrentKernel(transitionWidthBlocks);
+                        promoteSavedBoundary();
+                    }
+                }
+                packs.releaseArchivedPacks(store.manifest());
+            }
+        }
+    }
+
+    private void promoteSavedBoundary() throws IOException {
+        GenerationEpoch.DimensionContract contract = activeEpoch().dimensionContract();
+        promotePendingLocked(boundary -> new DiskBoundaryCapture(paths.dimensionRoot(), contract.minHeight(), contract.height()));
+    }
+
+    private WorldChunkInventory recoverUnstoredClaims() throws IOException {
+        long outgoing = store.activeActivation().activationId();
+        Set<Long> selected = store.pendingActivation()
+                .map(pending -> Set.of(outgoing, pending.activationId()))
+                .orElseGet(() -> Set.of(outgoing));
+        WorldChunkInventory inventory = WorldChunkInventory.scan(paths.dimensionRoot()).filter((chunkX, chunkZ) -> {
+            if (ownership.isExplicitlyAssigned(chunkX, chunkZ)
+                    && !selected.contains(ownership.resolve(chunkX, chunkZ, outgoing))) {
+                return true;
+            }
+            return SavedTerrainChunk.hasTerrain(SavedTerrainChunk.readStatus(paths.dimensionRoot(), chunkX, chunkZ));
+        });
+        semantics.discardUnstoredClaims(inventory, selected);
+        ownership.discardUnstoredClaims(inventory, selected);
+        return inventory;
     }
 
     public synchronized Optional<GenerationActivation> pendingActivation() {
@@ -482,7 +561,7 @@ public final class GenerationHistory {
         GenerationAdmission.StageLease lease = admission.enterStage();
         try {
             synchronized (this) {
-                GenerationActivation activation = resolveActivation(chunkX, chunkZ);
+                GenerationActivation activation = store.activeActivation();
                 GenerationEpoch epoch = requireEpoch(activation.epochId());
                 return new GenerationStage(
                         this,
@@ -524,6 +603,10 @@ public final class GenerationHistory {
             throw new IllegalArgumentException("Generated semantics activation does not match the open stage.");
         }
         return semantics.claimAndPersist(requiredUpdate);
+    }
+
+    public synchronized void forEachRecordedSemantic(GenerationSemanticIndex.RecordConsumer consumer) throws IOException {
+        semantics.forEachRecord(consumer);
     }
 
     public synchronized Optional<ChunkGenerationSemantics> semantics(int chunkX, int chunkZ) {
@@ -652,13 +735,11 @@ public final class GenerationHistory {
 
     private void validateReferencedState() throws IOException {
         validateRuntimeVersions();
-        Collection<GenerationEpoch> epochs = store.manifest().epochs();
-        for (GenerationEpoch epoch : epochs) {
-            packs.requireExactPack(
-                    epoch.epochId(),
-                    epoch.packFingerprint(),
-                    epoch.packFingerprintVersion()
-            );
+        GenerationEpoch active = store.activeEpoch();
+        packs.requireExactPack(active.epochId(), active.packFingerprint(), active.packFingerprintVersion());
+        if (store.pendingEpoch().isPresent()) {
+            GenerationEpoch pending = store.pendingEpoch().orElseThrow();
+            packs.requireExactPack(pending.epochId(), pending.packFingerprint(), pending.packFingerprintVersion());
         }
         for (GenerationActivation activation : store.manifest().activations()) {
             requireSafeDirectoryIfPresent(paths.activationRoot(activation.activationId()));
@@ -698,14 +779,6 @@ public final class GenerationHistory {
 
     private void validateRuntimeVersions() throws IOException {
         for (GenerationEpoch epoch : store.manifest().epochs()) {
-            kernels.requireSupported(
-                    new GenerationKernelRegistry.Version(
-                            epoch.generatorAbi(),
-                            epoch.rngVersion(),
-                            epoch.seedDerivationVersion()
-                    ),
-                    epoch.kernelImplementationFingerprint()
-            );
             GenerationPackFingerprint.requireSupported(epoch.packFingerprintVersion());
         }
     }
@@ -716,7 +789,6 @@ public final class GenerationHistory {
         GenerationBoundary expectedBoundary = active.isInitial() ? null : boundary(activeActivationId);
         boolean pendingCutover = store.pendingActivation().isPresent();
         int[] assignedCount = new int[1];
-        WorldChunkInventory[] inventory = new WorldChunkInventory[1];
         ownership.forEachAssignment((chunkX, chunkZ, activationId) -> {
             assignedCount[0] = Math.addExact(assignedCount[0], 1);
             if (store.activation(activationId).isEmpty()) {
@@ -738,14 +810,6 @@ public final class GenerationHistory {
                 throw new IOException("Pending generation cutover contains an invalid outgoing claim for chunk "
                         + chunkX + "," + chunkZ + ": expected activation "
                         + activeActivationId + " but found " + activationId + ".");
-            }
-            if (inventory[0] == null) {
-                inventory[0] = WorldChunkInventory.scan(paths.dimensionRoot());
-            }
-            if (!inventory[0].contains(chunkX, chunkZ)
-                    && !semantics.hasSealedClaim(chunkX, chunkZ, activationId)) {
-                throw new IOException("Pending generation cutover claims an ungenerated chunk "
-                        + chunkX + "," + chunkZ + " without matching sealed semantics.");
             }
         });
 
@@ -789,24 +853,6 @@ public final class GenerationHistory {
         boolean[] missing = new boolean[1];
         long[] firstMissing = new long[1];
         inventory.forEach((chunkX, chunkZ) -> {
-            if (!missing[0] && !ownership.isExplicitlyAssigned(chunkX, chunkZ)) {
-                missing[0] = true;
-                firstMissing[0] = ChunkGenerationOwnership.packChunk(chunkX, chunkZ);
-            }
-        });
-        if (!missing[0]) {
-            return;
-        }
-        long first = firstMissing[0];
-        throw new IOException("Generated chunk " + ChunkGenerationOwnership.chunkX(first)
-                + "," + ChunkGenerationOwnership.chunkZ(first)
-                + " was not durably assigned before generation activation promotion.");
-    }
-
-    private void requireExplicitSemanticOwnership(long activationId) throws IOException {
-        boolean[] missing = new boolean[1];
-        long[] firstMissing = new long[1];
-        semantics.forEachSealedClaim(activationId, (chunkX, chunkZ) -> {
             if (!missing[0] && !ownership.isExplicitlyAssigned(chunkX, chunkZ)) {
                 missing[0] = true;
                 firstMissing[0] = ChunkGenerationOwnership.packChunk(chunkX, chunkZ);

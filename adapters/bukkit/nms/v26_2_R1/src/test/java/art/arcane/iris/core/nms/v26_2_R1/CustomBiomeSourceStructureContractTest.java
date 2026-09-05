@@ -25,6 +25,31 @@ public class CustomBiomeSourceStructureContractTest {
     }
 
     @Test
+    public void authoringBiomesBypassTerrainResolutionBeforeDestinationChunksGenerate() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.customBiomeSource")));
+        int visibleStart = source.indexOf("private Holder<Biome> getVisibleNoiseBiomeWithActiveGenerationLease(");
+        int visibleEnd = source.indexOf("private boolean isBiomeCacheable(", visibleStart);
+        String visible = source.substring(visibleStart, visibleEnd);
+        int constantBiome = visible.indexOf("platformGenerator.usesFlatStudioTerrain()");
+        int terrainResolution = visible.indexOf("resolveVisibleBiomeHolder(");
+
+        assertTrue(source.contains("platformGenerator.usesFlatStudioTerrain()"));
+        assertTrue(constantBiome >= 0);
+        assertTrue(visible.indexOf("return fallbackBiome;", constantBiome) < terrainResolution);
+        assertTrue(terrainResolution > constantBiome);
+
+        int structureStart = source.indexOf("private Holder<Biome> getStructureNoiseBiomeWithActiveGenerationLease(");
+        int structureEnd = source.indexOf("boolean cacheable", structureStart);
+        assertTrue(source.substring(structureStart, structureEnd).contains("platformGenerator.usesFlatStudioTerrain()"));
+
+        String generator = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int createBiomes = generator.indexOf("public CompletableFuture<ChunkAccess> createBiomes(");
+        int buildSurface = generator.indexOf("public void buildSurface(", createBiomes);
+        assertTrue(generator.substring(createBiomes, buildSurface)
+                .contains("customBiomeSource.getVisibleNoiseBiomeWithActiveGenerationLease("));
+    }
+
+    @Test
     public void nativeStructuresUseTerrainSafeDerivativeAtEveryBiomeBoundary() throws IOException {
         String source = Files.readString(Path.of(System.getProperty("iris.customBiomeSource")));
 

@@ -248,6 +248,39 @@ final class EngineRuntimeBuilder {
         IrisLogging.debug("Engine Setup Complete " + next.generation().cacheId());
     }
 
+    void refreshStudioRuntimeServices() {
+        EngineRuntime previous = requireRuntime("refresh Studio runtime services");
+        EngineEffects effects = null;
+        EngineWorldManager worldManager = null;
+        try {
+            effects = Objects.requireNonNull(IrisServices.get(EngineEffectsProvider.class).create(engine),
+                    "Studio engine effects");
+            worldManager = Objects.requireNonNull(IrisServices.get(EngineWorldManagerProvider.class).create(engine),
+                    "Studio world manager");
+        } catch (Throwable failure) {
+            if (effects != null) {
+                EngineEffects createdEffects = effects;
+                EngineShutdownSequence.runCleanup(failure, createdEffects::close);
+            }
+            throw propagate(failure);
+        }
+        EngineRuntime next = new EngineRuntime(previous.generation(), effects, worldManager);
+        Throwable retirementFailure = EngineShutdownSequence.runCleanup(null, previous.worldManager()::close);
+        retirementFailure = EngineShutdownSequence.runCleanup(retirementFailure, previous.effects()::close);
+        if (retirementFailure != null) {
+            retirementFailure = EngineShutdownSequence.runCleanup(retirementFailure, worldManager::close);
+            retirementFailure = EngineShutdownSequence.runCleanup(retirementFailure, effects::close);
+            throw new IllegalStateException("Failed to retire Studio runtime services.", retirementFailure);
+        }
+        engine.runtime = next;
+        worldManager.start();
+        engine.getGenerationSessions().activateNextSession();
+        engine.lifecycleState = LifecycleState.RUNNING;
+        engine.getClosing().set(false);
+        engine.backgroundTasks.openBackgroundTaskAdmission();
+        scheduleRuntimeTasks(next);
+    }
+
     private void scheduleRuntimeTasks(EngineRuntime engineRuntime) {
         schedulePackHash(engineRuntime.generation());
         try {

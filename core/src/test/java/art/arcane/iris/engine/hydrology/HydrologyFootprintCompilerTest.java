@@ -68,6 +68,51 @@ public class HydrologyFootprintCompilerTest {
     }
 
     @Test
+    public void slopeFreeBasisPreservesCompleteSurfaceAndCaveFootprints() {
+        List<HydrologyFeatureType> types = List.of(
+                HydrologyFeatureType.SURFACE_POOL,
+                HydrologyFeatureType.MOUTH,
+                HydrologyFeatureType.UNDERGROUND_POOL,
+                HydrologyFeatureType.COASTAL_GROTTO
+        );
+        for (HydrologyFeatureType type : types) {
+            int head = type == HydrologyFeatureType.MOUTH || type == HydrologyFeatureType.COASTAL_GROTTO
+                    ? 63 : 70;
+            HydraulicSegment segment = new HydraulicSegment(
+                    9001L, 9000L, type, head, head, 6, 3, false, false,
+                    List.of(new HydrologyPoint(-12, head, -3), new HydrologyPoint(32, head, 5)));
+            RiverCourse course = course(9000L,
+                    type.isSurface() ? RiverCourseType.SURFACE : RiverCourseType.UNDERGROUND, segment);
+            SlopeCountingSampler original = new SlopeCountingSampler(false);
+            SlopeCountingSampler slopeFree = new SlopeCountingSampler(true);
+            HydrologyFootprintCompiler baseline = new HydrologyFootprintCompiler(
+                    HydrologyPlannerSettings.defaults(),
+                    new HydrologyFootprintCompiler.Sampling(original, request -> request.minimum(), original));
+            HydrologyFootprintCompiler optimized = new HydrologyFootprintCompiler(
+                    HydrologyPlannerSettings.defaults(),
+                    new HydrologyFootprintCompiler.Sampling(slopeFree, request -> request.minimum(), slopeFree));
+
+            HydrologyFootprintCompiler.ValidationRaster expectedValidation = baseline.compileValidation(List.of(course));
+            HydrologyFootprintCompiler.ValidationRaster actualValidation = optimized.compileValidation(List.of(course));
+            RiverFootprint expected = baseline.compile(List.of(course));
+            RiverFootprint actual = optimized.compile(List.of(course));
+
+            assertFalse(type.toString(), expected.isEmpty());
+            assertEquals(type.toString(), expected, actual);
+            assertEquals(type.toString(), expectedValidation.columns(), actualValidation.columns());
+            for (HydrologyColumnSample column : expected.columns().values()) {
+                assertEquals(type.toString(),
+                        expectedValidation.plannedSurface().resolve(column.x(), column.z(), column.naturalHeight()),
+                        actualValidation.plannedSurface().resolve(column.x(), column.z(), column.naturalHeight()));
+            }
+            assertTrue(type.toString(), original.basisCalls > 0);
+            assertEquals(type.toString(), 0, slopeFree.basisCalls);
+            assertEquals(type.toString(), original.basisCalls, slopeFree.slopeFreeCalls);
+            assertEquals(type.toString(), original.detailedCalls, slopeFree.detailedCalls);
+        }
+    }
+
+    @Test
     public void surfaceChannelNeverRaisesTerrainOrPublishesUnsupportedFluid() {
         HydraulicSegment segment = new HydraulicSegment(
                 9L,
@@ -2288,6 +2333,56 @@ public class HydrologyFootprintCompilerTest {
             }
         }
         return visited.size();
+    }
+
+    private static final class SlopeCountingSampler implements HydrologyNaturalTerrainSampler, HydrologyTerrainSampler {
+        private final boolean omitSlope;
+        private int basisCalls;
+        private int slopeFreeCalls;
+        private int detailedCalls;
+
+        private SlopeCountingSampler(boolean omitSlope) {
+            this.omitSlope = omitSlope;
+        }
+
+        @Override
+        public HydrologyTerrainSample sample(int x, int z) {
+            detailedCalls++;
+            return terrain(x, z);
+        }
+
+        @Override
+        public HydrologyTerrainSample sampleBasis(int x, int z) {
+            basisCalls++;
+            return terrain(x, z);
+        }
+
+        @Override
+        public HydrologyTerrainSample sampleBasisWithoutSlope(int x, int z) {
+            if (!omitSlope) {
+                return sampleBasis(x, z);
+            }
+            slopeFreeCalls++;
+            return terrain(x, z).withSlope(0D);
+        }
+
+        @Override
+        public HydrologyTerrainSample[] sampleGrid(GridRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public NaturalClassification classifyNatural(int x, int z) {
+            return x >= 24 ? NaturalClassification.OCEAN : NaturalClassification.LAND;
+        }
+
+        private HydrologyTerrainSample terrain(int x, int z) {
+            double slope = 1D + Math.floorMod(x * 13 - z * 7, 101) * 0.5D;
+            int relief = Math.floorMod(x * 3 + z * 5, 7);
+            return x >= 24
+                    ? HydrologyTerrainSample.ocean(52 + relief, "ocean").withSlope(slope)
+                    : HydrologyTerrainSample.openLand(80 + relief, slope, z < 0 ? "north" : "south");
+        }
     }
 
     private static final class CountingNaturalSampler implements HydrologyNaturalTerrainSampler {

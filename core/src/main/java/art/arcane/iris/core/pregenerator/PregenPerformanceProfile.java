@@ -21,22 +21,15 @@ package art.arcane.iris.core.pregenerator;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.framework.Engine;
-import art.arcane.iris.engine.framework.MeteredCache;
-import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.platform.PlatformChunkGenerator;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.iris.util.project.stream.utility.CachedDoubleStream2D;
-import art.arcane.iris.util.project.stream.utility.CachedStream2D;
 
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Objects;
 
 public final class PregenPerformanceProfile {
-    private static final long HOTLOAD_ACQUISITION_TIMEOUT_SECONDS = 30L;
-    private static final AtomicBoolean JVM_HINT_LOGGED = new AtomicBoolean(false);
-
     private PregenPerformanceProfile() {
     }
 
@@ -44,7 +37,6 @@ public final class PregenPerformanceProfile {
         IrisSettings.IrisSettingsPerformance performance = IrisSettings.get().getPerformance();
         int previousNoiseCacheSize = performance.getNoiseCacheSize();
         int targetNoiseCacheSize = Math.max(previousNoiseCacheSize, 4_096);
-        boolean fastCacheEnabledBefore = Boolean.getBoolean("iris.cache.fast");
         boolean changed = false;
 
         if (targetNoiseCacheSize != previousNoiseCacheSize) {
@@ -52,16 +44,8 @@ public final class PregenPerformanceProfile {
             changed = true;
         }
 
-        if (!fastCacheEnabledBefore) {
-            System.setProperty("iris.cache.fast", "true");
-            changed = true;
-        }
         if (MultiBurst.burst.raiseParallelism(pregenBurstParallelism(Runtime.getRuntime().availableProcessors()))) {
             changed = true;
-        }
-
-        if (JVM_HINT_LOGGED.compareAndSet(false, true) && !fastCacheEnabledBefore) {
-            IrisLogging.info("For startup-wide cache-fast coverage, set JVM argument: -Diris.cache.fast=true");
         }
 
         return changed;
@@ -69,56 +53,32 @@ public final class PregenPerformanceProfile {
 
     public static void apply(Engine engine) {
         apply();
-        if (!prepareNoiseCacheInPlace(engine)) {
-            engine.hotloadComplex();
-            logApplied();
+        if (engine != null) {
+            prepareNoiseCacheInPlace(engine);
+            IrisLogging.info("Pregen profile applied: noiseCacheSize="
+                    + IrisSettings.get().getPerformance().getNoiseCacheSize());
         }
     }
 
     public static void applyToGenerator(PlatformChunkGenerator generator) {
-        apply();
-        Engine engine = generator == null ? null : generator.getEngine();
-        if (!prepareNoiseCacheInPlace(engine)) {
-            generator.hotloadComplexAsync(HOTLOAD_ACQUISITION_TIMEOUT_SECONDS, TimeUnit.SECONDS).join();
-            logApplied();
-        }
+        apply(generator == null ? null : generator.getEngine());
     }
 
     static int pregenBurstParallelism(int availableProcessors) {
         return Math.max(4, availableProcessors * 2);
     }
 
-    private static boolean prepareNoiseCacheInPlace(Engine engine) {
-        if (engine == null) {
-            return true;
-        }
-        IrisComplex complex = engine.getComplex();
-        if (complex == null) {
-            return false;
-        }
-        ProceduralStream<IrisBiome> caveBiomeStream = complex.getCaveBiomeStream();
-        if (!(caveBiomeStream instanceof CachedStream2D<?> cachedStream) || !cachedStream.usesFastCache()) {
-            return false;
-        }
+    private static void prepareNoiseCacheInPlace(Engine engine) {
+        IrisComplex complex = Objects.requireNonNull(engine.getComplex(), "Pregeneration requires an active biome complex");
         int configuredChunks = IrisSettings.get().getPerformance().getNoiseCacheSize();
-        if (!resizeNoiseCache(complex.getNaturalHeightStream(), configuredChunks)) {
-            return false;
-        }
-        return resizeNoiseCache(complex.getHeightStream(), configuredChunks);
+        resizeNoiseCache(complex.getNaturalHeightStream(), configuredChunks);
+        resizeNoiseCache(complex.getRawHeightStream(), configuredChunks);
     }
 
-    private static boolean resizeNoiseCache(ProceduralStream<Double> stream, int configuredChunks) {
-        if (stream instanceof CachedDoubleStream2D cachedStream) {
-            cachedStream.setMaximumChunks(configuredChunks);
-            return true;
+    private static void resizeNoiseCache(ProceduralStream<Double> stream, int configuredChunks) {
+        if (!(stream instanceof CachedDoubleStream2D cachedStream)) {
+            throw new IllegalStateException("Pregeneration requires a mutable double terrain cache");
         }
-        if (!(stream instanceof MeteredCache cache)) {
-            return false;
-        }
-        return cache.getMaxSize() == (long) configuredChunks * 256L;
-    }
-
-    private static void logApplied() {
-        IrisLogging.info("Pregen profile applied: noiseCacheSize=" + IrisSettings.get().getPerformance().getNoiseCacheSize() + " iris.cache.fast=" + Boolean.getBoolean("iris.cache.fast"));
+        cachedStream.setMaximumChunks(configuredChunks);
     }
 }

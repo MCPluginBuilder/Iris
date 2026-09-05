@@ -4,6 +4,11 @@
   "package": "art.arcane.iris.modded.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "WorldGenerationWriteGuardMixin",
+    "ChunkMapTerrainReceiptAccess",
+    "ChunkTerrainReceiptMixin",
+    "LevelChunkTerrainReceiptMixin",
+    "SerializableTerrainReceiptMixin",
     "EntityPersistenceMixin",
     "LivingEntityLootMixin",
     "MobAwarenessMixin",

@@ -1,6 +1,7 @@
 package art.arcane.iris.util.project.matter.slices;
 
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.engine.hydrology.cave.HydrologyCaveCell;
 import art.arcane.iris.util.common.data.B;
 import art.arcane.iris.util.project.matter.PreObjectMatterCell;
 import art.arcane.volmlib.util.data.palette.Palette;
@@ -24,6 +25,9 @@ public final class PreObjectMatter extends MappedHunk<PreObjectMatterCell>
     private static final int STRING_PRESENT = 1 << 3;
     private static final int CAVERN_CAPTURED = 1 << 4;
     private static final int CAVERN_PRESENT = 1 << 5;
+    private static final int HYDROLOGY_CAPTURED = 1 << 6;
+    private static final int HYDROLOGY_PRESENT = 1 << 7;
+    private static final HydrologyCaveMatter HYDROLOGY_CODEC = new HydrologyCaveMatter();
 
     public PreObjectMatter() {
         this(1, 1, 1);
@@ -68,6 +72,9 @@ public final class PreObjectMatter extends MappedHunk<PreObjectMatterCell>
             output.writeUTF(cell.cavern().getCustomBiome());
             output.writeByte(cell.cavern().getLiquid());
         }
+        if ((flags & HYDROLOGY_PRESENT) != 0) {
+            HYDROLOGY_CODEC.writeNode(cell.hydrology(), output);
+        }
     }
 
     @Override
@@ -79,13 +86,16 @@ public final class PreObjectMatter extends MappedHunk<PreObjectMatterCell>
         MatterCavern cavern = (flags & CAVERN_PRESENT) == 0
                 ? null
                 : new MatterCavern(input.readBoolean(), input.readUTF(), input.readByte());
+        HydrologyCaveCell hydrology = (flags & HYDROLOGY_PRESENT) == 0 ? null : HYDROLOGY_CODEC.readNode(input);
         return new PreObjectMatterCell(
                 (flags & BLOCK_CAPTURED) != 0,
                 block,
                 (flags & STRING_CAPTURED) != 0,
                 string,
                 (flags & CAVERN_CAPTURED) != 0,
-                cavern
+                cavern,
+                (flags & HYDROLOGY_CAPTURED) != 0,
+                hydrology
         );
     }
 
@@ -109,16 +119,22 @@ public final class PreObjectMatter extends MappedHunk<PreObjectMatterCell>
                 flags |= CAVERN_PRESENT;
             }
         }
+        if (cell.hydrologyCaptured()) {
+            flags |= HYDROLOGY_CAPTURED;
+            if (cell.hydrology() != null) {
+                flags |= HYDROLOGY_PRESENT;
+            }
+        }
         return flags;
     }
 
     private void validateFlags(int flags) throws IOException {
         int knownFlags = BLOCK_CAPTURED | BLOCK_PRESENT | STRING_CAPTURED | STRING_PRESENT
-                | CAVERN_CAPTURED | CAVERN_PRESENT;
+                | CAVERN_CAPTURED | CAVERN_PRESENT | HYDROLOGY_CAPTURED | HYDROLOGY_PRESENT;
         if ((flags & ~knownFlags) != 0) {
             throw new IOException("Unknown pre-object matter flags " + flags);
         }
-        if ((flags & (BLOCK_CAPTURED | STRING_CAPTURED | CAVERN_CAPTURED)) == 0) {
+        if ((flags & (BLOCK_CAPTURED | STRING_CAPTURED | CAVERN_CAPTURED | HYDROLOGY_CAPTURED)) == 0) {
             throw new IOException("Pre-object matter cell captures no values");
         }
         if ((flags & BLOCK_PRESENT) != 0 && (flags & BLOCK_CAPTURED) == 0) {
@@ -126,6 +142,9 @@ public final class PreObjectMatter extends MappedHunk<PreObjectMatterCell>
         }
         if ((flags & STRING_PRESENT) != 0 && (flags & STRING_CAPTURED) == 0) {
             throw new IOException("Pre-object string value is not captured");
+        }
+        if ((flags & HYDROLOGY_PRESENT) != 0 && (flags & HYDROLOGY_CAPTURED) == 0) {
+            throw new IOException("Pre-object hydrology value is not captured");
         }
         if ((flags & CAVERN_PRESENT) != 0 && (flags & CAVERN_CAPTURED) == 0) {
             throw new IOException("Pre-object cavern value is not captured");

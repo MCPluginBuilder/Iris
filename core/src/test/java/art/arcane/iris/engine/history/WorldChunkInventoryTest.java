@@ -7,10 +7,14 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
+import java.util.zip.DeflaterOutputStream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -57,6 +61,86 @@ public final class WorldChunkInventoryTest {
 
         assertEquals(1, inventory.size());
         assertTrue(inventory.contains(7, 11));
+    }
+
+    @Test
+    public void liveRegionMayEndImmediatelyAfterACompressedChunk() throws Exception {
+        Path world = temporaryFolder.newFolder("world-unpadded").toPath();
+        Path regionDirectory = Files.createDirectory(world.resolve("region"));
+        Path region = regionDirectory.resolve("r.0.0.mca");
+        byte[] payload = compressedChunk(10_000);
+        writeUnpaddedRegion(region, payload, 2);
+
+        assertTrue(Files.size(region) % SECTOR_BYTES != 0L);
+        WorldChunkInventory inventory = WorldChunkInventory.scan(world);
+        assertEquals(1, inventory.size());
+        assertTrue(inventory.contains(7, 11));
+        assertTrue(WorldChunkInventory.isDurablyAllocated(world, 7, 11));
+        assertFalse(WorldChunkInventory.isDurablyAllocated(world, 8, 11));
+    }
+
+    @Test
+    public void unpaddedExternalChunkStubStillOwnsItsChunk() throws Exception {
+        Path regionDirectory = temporaryFolder.newFolder("region-external").toPath();
+        Path region = regionDirectory.resolve("r.0.0.mca");
+        writeUnpaddedRegion(region, new byte[0], 0x82);
+
+        WorldChunkInventory inventory = WorldChunkInventory.scanRegionDirectory(regionDirectory);
+
+        assertEquals(1, inventory.size());
+        assertTrue(inventory.contains(7, 11));
+    }
+
+    @Test
+    public void missingPayloadBytesInTheFinalSectorFailClosed() throws Exception {
+        Path regionDirectory = temporaryFolder.newFolder("region-partial-payload").toPath();
+        Path region = regionDirectory.resolve("r.0.0.mca");
+        writeUnpaddedRegion(region, compressedChunk(32), 2);
+        try (RandomAccessFile output = new RandomAccessFile(region.toFile(), "rw")) {
+            output.setLength(output.length() - 1L);
+        }
+
+        IOException error = assertThrows(IOException.class,
+                () -> WorldChunkInventory.scanRegionDirectory(regionDirectory));
+        assertTrue(error.getMessage().contains("Truncated chunk payload"));
+    }
+
+    @Test
+    public void invalidFinalSectorPayloadLengthsFailClosed() throws Exception {
+        Path regionDirectory = temporaryFolder.newFolder("region-invalid-payload").toPath();
+        Path region = regionDirectory.resolve("r.0.0.mca");
+        writeUnpaddedRegion(region, compressedChunk(32), 2);
+        for (int invalidLength : new int[]{-1, 0, Integer.MAX_VALUE, SECTOR_BYTES}) {
+            try (RandomAccessFile output = new RandomAccessFile(region.toFile(), "rw")) {
+                output.seek(2L * SECTOR_BYTES);
+                output.writeInt(invalidLength);
+            }
+            assertThrows(IOException.class,
+                    () -> WorldChunkInventory.scanRegionDirectory(regionDirectory));
+        }
+    }
+
+    @Test
+    public void incompleteFinalSectorLengthPrefixFailsClosed() throws Exception {
+        Path regionDirectory = temporaryFolder.newFolder("region-incomplete-length").toPath();
+        Path region = regionDirectory.resolve("r.0.0.mca");
+        try (RandomAccessFile output = new RandomAccessFile(region.toFile(), "rw")) {
+            output.setLength(SECTOR_BYTES * 2L + Integer.BYTES);
+            writeLocation(output, 7, 11, 2, 1);
+        }
+
+        assertThrows(IOException.class,
+                () -> WorldChunkInventory.scanRegionDirectory(regionDirectory));
+    }
+
+    @Test
+    public void newlyOpenedEmptyRegionHasNoDurableAllocations() throws Exception {
+        Path world = temporaryFolder.newFolder("world-empty-region").toPath();
+        Path regionDirectory = Files.createDirectory(world.resolve("region"));
+        Files.createFile(regionDirectory.resolve("r.0.0.mca"));
+
+        assertTrue(WorldChunkInventory.scan(world).isEmpty());
+        assertFalse(WorldChunkInventory.isDurablyAllocated(world, 0, 0));
     }
 
     @Test
@@ -196,6 +280,34 @@ public final class WorldChunkInventoryTest {
                 writeLocation(output, chunks[index][0], chunks[index][1], 2 + index, 1);
             }
         }
+    }
+
+    private static void writeUnpaddedRegion(Path path, byte[] payload, int compression) throws IOException {
+        try (RandomAccessFile output = new RandomAccessFile(path.toFile(), "rw")) {
+            output.setLength(2L * SECTOR_BYTES);
+            int sectors = (payload.length + Integer.BYTES + 1 + SECTOR_BYTES - 1) / SECTOR_BYTES;
+            output.seek(2L * SECTOR_BYTES);
+            output.writeInt(payload.length + 1);
+            output.writeByte(compression);
+            output.write(payload);
+            writeLocation(output, 7, 11, 2, sectors);
+        }
+    }
+
+    private static byte[] compressedChunk(int dataLength) throws IOException {
+        byte[] values = new byte[dataLength];
+        new Random(19L).nextBytes(values);
+        ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+        try (DataOutputStream nbt = new DataOutputStream(new DeflaterOutputStream(compressed))) {
+            nbt.writeByte(10);
+            nbt.writeUTF("");
+            nbt.writeByte(7);
+            nbt.writeUTF("data");
+            nbt.writeInt(values.length);
+            nbt.write(values);
+            nbt.writeByte(0);
+        }
+        return compressed.toByteArray();
     }
 
     private static void writeLocation(

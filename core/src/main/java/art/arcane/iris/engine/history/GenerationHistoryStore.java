@@ -3,6 +3,8 @@ package art.arcane.iris.engine.history;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.google.gson.Strictness;
@@ -27,6 +29,8 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Clock;
 import java.util.Objects;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 public final class GenerationHistoryStore {
@@ -97,7 +101,7 @@ public final class GenerationHistoryStore {
                     requiredClock.millis()
             );
             DirectorySync requiredDirectorySync = Objects.requireNonNull(directorySync, "directorySync");
-            writeManifestAtomically(directory, manifestPath, manifest, false, requiredDirectorySync);
+            writeManifestAtomically(directory, manifestPath, manifest, null, false, requiredDirectorySync);
             return new GenerationHistoryStore(directory, manifest, requiredClock, requiredDirectorySync);
         }
     }
@@ -207,7 +211,7 @@ public final class GenerationHistoryStore {
 
     private void writeUpdatedManifest(GenerationManifest updated) throws IOException {
         try {
-            writeManifestAtomically(generationDirectory, manifestPath, updated, true, directorySync);
+            writeManifestAtomically(generationDirectory, manifestPath, updated, manifest, true, directorySync);
         } catch (IOException error) {
             reconcileAfterWriteFailure(error);
             throw error;
@@ -233,7 +237,16 @@ public final class GenerationHistoryStore {
             if (reader.peek() != JsonToken.END_DOCUMENT) {
                 throw new IllegalArgumentException("Generation manifest contains trailing content.");
             }
-            return GenerationManifest.fromJson(parsed.getAsJsonObject());
+            JsonObject index = parsed.getAsJsonObject();
+            JsonArray references = GenerationManifest.JsonSchema.requireArray(index, "epochs", "generation manifest");
+            List<GenerationEpoch> epochs = new ArrayList<>(references.size());
+            for (JsonElement reference : references) {
+                if (!reference.isJsonPrimitive() || !reference.getAsJsonPrimitive().isString()) {
+                    throw new IOException("Generation epoch reference must be a digest.");
+                }
+                epochs.add(readEpoch(manifestPath.getParent(), reference.getAsString()));
+            }
+            return GenerationManifest.fromJson(index, epochs);
         } catch (JsonParseException | IllegalArgumentException | ArithmeticException exception) {
             throw new IOException("Invalid generation manifest: " + manifestPath, exception);
         }
@@ -243,12 +256,21 @@ public final class GenerationHistoryStore {
             Path generationDirectory,
             Path manifestPath,
             GenerationManifest manifest,
+            GenerationManifest previous,
             boolean replaceExisting,
             DirectorySync directorySync
     ) throws IOException {
         requireSafeParent(generationDirectory);
         requireDirectory(generationDirectory);
         byte[] content = GSON.toJson(manifest.toJson()).getBytes(StandardCharsets.UTF_8);
+        if (content.length > MAX_MANIFEST_BYTES) {
+            throw new IOException("Generation manifest exceeds the supported size: " + manifestPath);
+        }
+        for (GenerationEpoch epoch : manifest.epochs()) {
+            if (previous == null || previous.epoch(epoch.epochId()).isEmpty()) {
+                publishEpoch(generationDirectory, epoch);
+            }
+        }
         Path temporary = Files.createTempFile(generationDirectory, ".manifest-", ".tmp");
         try {
             try (FileChannel channel = FileChannel.open(
@@ -280,6 +302,74 @@ public final class GenerationHistoryStore {
         } finally {
             Files.deleteIfExists(temporary);
         }
+    }
+
+    private static GenerationEpoch readEpoch(Path generationDirectory, String epochId) throws IOException {
+        Path epochDirectory = epochDirectory(generationDirectory, epochId);
+        requireDirectory(generationDirectory.resolve("epochs"));
+        requireDirectory(epochDirectory);
+        Path metadata = epochDirectory.resolve("epoch.json");
+        requireRegularFile(metadata);
+        if (Files.size(metadata) > MAX_MANIFEST_BYTES) {
+            throw new IOException("Generation epoch metadata exceeds the supported size: " + metadata);
+        }
+        try (JsonReader reader = new JsonReader(Files.newBufferedReader(metadata, StandardCharsets.UTF_8))) {
+            reader.setStrictness(Strictness.STRICT);
+            JsonElement parsed = JsonParser.parseReader(reader);
+            if (!parsed.isJsonObject() || reader.peek() != JsonToken.END_DOCUMENT) {
+                throw new IOException("Invalid generation epoch metadata: " + metadata);
+            }
+            GenerationEpoch epoch = GenerationEpoch.fromJson(parsed.getAsJsonObject());
+            if (!epoch.epochId().equals(epochId)) {
+                throw new IOException("Generation epoch metadata identity differs from its reference: " + metadata);
+            }
+            return epoch;
+        } catch (JsonParseException | IllegalArgumentException exception) {
+            throw new IOException("Invalid generation epoch metadata: " + metadata, exception);
+        }
+    }
+
+    private static void publishEpoch(Path generationDirectory, GenerationEpoch epoch) throws IOException {
+        Path epochsDirectory = generationDirectory.resolve("epochs");
+        ensureDirectory(epochsDirectory);
+        Path epochDirectory = epochDirectory(generationDirectory, epoch.epochId());
+        ensureDirectory(epochDirectory);
+        Path metadata = epochDirectory.resolve("epoch.json");
+        if (Files.exists(metadata, LinkOption.NOFOLLOW_LINKS)) {
+            if (!readEpoch(generationDirectory, epoch.epochId()).equals(epoch)) {
+                throw new IOException("Generation epoch metadata is immutable: " + metadata);
+            }
+            return;
+        }
+        byte[] content = GSON.toJson(epoch.toJson()).getBytes(StandardCharsets.UTF_8);
+        if (content.length > MAX_MANIFEST_BYTES) {
+            throw new IOException("Generation epoch metadata exceeds the supported size: " + metadata);
+        }
+        Path temporary = Files.createTempFile(epochDirectory, ".epoch-", ".tmp");
+        try {
+            try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+                ByteBuffer buffer = ByteBuffer.wrap(content);
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer);
+                }
+                channel.force(true);
+            }
+            try {
+                Files.move(temporary, metadata, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException exception) {
+                throw new IOException("Generation history requires atomic epoch publication.", exception);
+            }
+            forceDirectory(epochDirectory);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private static Path epochDirectory(Path generationDirectory, String epochId) throws IOException {
+        if (!epochId.matches("[0-9a-f]{64}")) {
+            throw new IOException("Generation epoch reference must be a digest.");
+        }
+        return generationDirectory.resolve("epochs").resolve(epochId);
     }
 
     private static Path normalizeDirectory(Path directory) {

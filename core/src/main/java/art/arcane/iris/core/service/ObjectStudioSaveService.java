@@ -91,7 +91,7 @@ public class ObjectStudioSaveService implements IrisService {
 
         Map<String, File> objectsDirs = new ConcurrentHashMap<>();
         for (Map.Entry<String, IrisData> e : sources.entrySet()) {
-            File dir = resolveObjectsDir(e.getValue());
+            File dir = resolveObjectsDir(e.getValue(), engine);
             if (dir != null) {
                 objectsDirs.put(e.getKey(), dir);
             }
@@ -200,9 +200,13 @@ public class ObjectStudioSaveService implements IrisService {
         return false;
     }
 
-    private static File resolveObjectsDir(IrisData data) {
+    static File resolveObjectsDir(IrisData data, Engine engine) {
         File root = data.getDataFolder();
         if (root == null) return null;
+        if (root.toPath().toAbsolutePath().normalize().equals(
+                engine.getData().getDataFolder().toPath().toAbsolutePath().normalize())) {
+            root = engine.getPackSource().toFile();
+        }
         File objects = new File(root, "objects");
         if (!objects.exists()) {
             objects.mkdirs();

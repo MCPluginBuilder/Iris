@@ -89,7 +89,25 @@ public final class TransitionGenerationPlan {
     }
 
     public boolean allowsNewDiscreteContentAt(int blockX, int blockZ) {
-        return terrainSampleAt(blockX, blockZ).newEpochWeight() == 1D;
+        return !boundary.isHistoricalBlock(blockX, blockZ);
+    }
+
+    public boolean hasTransitionAtChunk(int chunkX, int chunkZ) {
+        if (boundary.isHistoricalChunk(chunkX, chunkZ)) {
+            return false;
+        }
+        int minimumX = Math.multiplyExact(chunkX, GenerationBoundary.CHUNK_SIZE);
+        int minimumZ = Math.multiplyExact(chunkZ, GenerationBoundary.CHUNK_SIZE);
+        return terrainSampler.intersectsTerrainBand(minimumX, minimumZ,
+                Math.addExact(minimumX, GenerationBoundary.CHUNK_SIZE - 1),
+                Math.addExact(minimumZ, GenerationBoundary.CHUNK_SIZE - 1));
+    }
+
+    public BoundaryGeometryInfluence geometryAt(int blockX, int blockZ) {
+        if (boundary.isHistoricalBlock(blockX, blockZ)) {
+            return BoundaryGeometryInfluence.none();
+        }
+        return terrainSampler.geometryAt(blockX, blockZ);
     }
 
     public TerrainSample terrainSampleAt(int blockX, int blockZ) {
@@ -100,19 +118,30 @@ public final class TransitionGenerationPlan {
     }
 
     public Optional<String> historicalPhysicalBiomeKeyAt(int blockX, int blockY, int blockZ) {
-        TerrainSample sample = terrainSampleAt(blockX, blockZ);
+        return historicalPhysicalBiomeKeyAt(blockX, blockY, blockZ, terrainSampleAt(blockX, blockZ));
+    }
+
+    public Optional<String> historicalPhysicalBiomeKeyAt(
+            int blockX,
+            int blockY,
+            int blockZ,
+            TerrainSample sample
+    ) {
+        Objects.requireNonNull(sample, "Terrain sample");
         if (sample.newEpochWeight() == 1D) {
             return Optional.empty();
         }
-        return sample.historicalPhysicalBiomeKeyAt(blockY);
+        double weight = GenerationBlend.newEpochWeight(
+                Math.max(0D, sample.distanceToHistoricalTerrain() - 1D), Math.max(1, widthBlocks() - 1));
+        return GenerationBlend.usesHistoricalMaterial(blockX, blockY, blockZ, weight)
+                ? sample.historicalPhysicalBiomeKeyAt(blockY) : Optional.empty();
     }
 
     public boolean allowsNewFootprint(int minimumX, int minimumZ, int maximumX, int maximumZ) {
         if (minimumX > maximumX || minimumZ > maximumZ) {
             throw new IllegalArgumentException("Generation footprint bounds are inverted");
         }
-        return !boundary.intersectsHistoricalBlocks(minimumX, minimumZ, maximumX, maximumZ)
-                && !terrainSampler.intersectsTerrainBand(minimumX, minimumZ, maximumX, maximumZ);
+        return !boundary.intersectsHistoricalBlocks(minimumX, minimumZ, maximumX, maximumZ);
     }
 
     long terrainCatalogProbeCount() {

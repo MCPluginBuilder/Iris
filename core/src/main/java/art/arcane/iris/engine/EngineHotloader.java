@@ -19,6 +19,7 @@
 package art.arcane.iris.engine;
 
 import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.protocol.IrisProtocolServer;
 import art.arcane.iris.engine.GenerationRuntime.BiomeMaxes;
 import art.arcane.iris.engine.EngineRuntimeBuilder.RuntimeAssembly;
@@ -27,6 +28,10 @@ import art.arcane.iris.engine.framework.EngineTarget;
 import art.arcane.iris.engine.framework.IrisStructureLocator;
 import art.arcane.iris.engine.framework.StructureReachability;
 import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.engine.history.GenerationHistory;
+import art.arcane.iris.engine.history.IrisBoundarySignatureSampler;
+import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
+import art.arcane.iris.engine.history.GenerationManifest;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.util.project.context.IrisContext;
@@ -34,12 +39,13 @@ import art.arcane.iris.util.project.context.IrisContext;
 import static art.arcane.iris.engine.EngineShutdownSequence.runCleanup;
 
 /**
- * Performs the two supported live reload transitions for an {@link IrisEngine}: a full pack hotload
- * and a biome-complex-only rebuild. Both run entirely under the engine lifecycle lock, seal and
- * drain generation before swapping anything, and roll the previous runtime back on failure.
+ * Reloads mutable engine runtimes and publishes immutable Studio generation activations.
+ * Studio transitions drain sessions outside the lifecycle lock before freezing chunk ownership.
+ * Failures before publication preserve the previous runtime; durable publication failures stop generation.
  */
 final class EngineHotloader {
     private final IrisEngine engine;
+    private final Object studioTransitionLock = new Object();
 
     EngineHotloader(IrisEngine engine) {
         this.engine = engine;
@@ -51,6 +57,10 @@ final class EngineHotloader {
     }
 
     void hotloadComplex() {
+        if (engine.isStudio() && engine.getGenerationHistoryRuntimeRouter().isPresent()) {
+            hotloadSilently();
+            return;
+        }
         synchronized (engine.lifecycleLock) {
             engine.requireRunning("rebuild the biome complex");
             requireMutableGenerationRuntime("rebuild the biome complex");
@@ -114,6 +124,11 @@ final class EngineHotloader {
     }
 
     void hotloadSilently() {
+        GenerationHistoryRuntimeRouter router = engine.getGenerationHistoryRuntimeRouter().orElse(null);
+        if (engine.isStudio() && router != null) {
+            hotloadStudio(router);
+            return;
+        }
         synchronized (engine.lifecycleLock) {
             engine.requireRunning("hotload");
             requireMutableGenerationRuntime("hotload");
@@ -192,6 +207,95 @@ final class EngineHotloader {
         }
     }
 
+    private void hotloadStudio(GenerationHistoryRuntimeRouter router) {
+        synchronized (studioTransitionLock) {
+            EngineRuntime previous = null;
+            GenerationManifest previousManifest = router.history().manifest();
+            GenerationHistoryRuntimeRouter.StudioCutover cutover = null;
+            StudioGenerationUpdate update = null;
+            boolean backgroundAdmissionClosed = false;
+            try {
+                engine.requireRunning("hotload the Studio pack");
+                GenerationHistory history = router.history();
+                update = StudioGenerationUpdate.prepare(engine, history);
+                if (update == null) {
+                    return;
+                }
+                engine.awaitNativeStructureBootstrap("Studio generation cutover");
+                engine.backgroundTasks.closeBackgroundTaskAdmission();
+                backgroundAdmissionClosed = true;
+                engine.backgroundTasks.drainBackgroundTasks("Studio generation cutover")
+                        .requireComplete("Studio generation cutover");
+                cutover = router.beginStudioCutover(IrisEngine.SESSION_DRAIN_TIMEOUT_MILLIS);
+                synchronized (engine.lifecycleLock) {
+                    engine.requireRunning("prepare the Studio pack cutover");
+                    previous = engine.runtime;
+                    engine.studioGenerationTransition = true;
+                    engine.lifecycleState = LifecycleState.HOTLOADING;
+                }
+                engine.sealForTransition("Studio generation cutover", false);
+                IrisBoundarySignatureSampler.checkpoint(engine);
+                synchronized (engine.lifecycleLock) {
+                    if (engine.lifecycleState != LifecycleState.HOTLOADING || engine.runtime != previous) {
+                        throw new IllegalStateException("Studio engine changed while its generation cutover was draining.");
+                    }
+                    engine.prepareRuntimeHotload();
+                    history.stageUpdate(update.source(), update.fingerprint(), update.dimensionContract(),
+                            update.registryContract(), IrisSettings.get().getGenerator().getGenerationTransitionWidthBlocks());
+                    cutover.promotePending();
+                    IrisStructureLocator.invalidate(engine);
+                    StructureReachability.invalidate(engine);
+                    engine.runtimeBuilder.refreshStudioRuntimeServices();
+                    engine.getPrefetchSaveStarted().set(false);
+                    engine.getEngineData().getStatistics().hotloaded();
+                    engine.getPlatformHooks().applyWorldBoundary(engine);
+                }
+                broadcastStudioHotload(false, "");
+            } catch (Throwable failure) {
+                if (previous != null) {
+                    synchronized (engine.lifecycleLock) {
+                        if (engine.lifecycleState == LifecycleState.HOTLOADING
+                                || engine.lifecycleState == LifecycleState.RUNNING) {
+                            boolean unchanged = false;
+                            try {
+                                unchanged = router.history().manifest() == previousManifest;
+                            } catch (Throwable historyFailure) {
+                                failure.addSuppressed(historyFailure);
+                            }
+                            if (unchanged) {
+                                engine.runtimeBuilder.restoreRuntimeAfterFailedTransition(previous);
+                            } else {
+                                engine.lifecycleState = LifecycleState.FAILED;
+                                engine.getClosing().set(true);
+                                engine.backgroundTasks.closeBackgroundTaskAdmission();
+                            }
+                        }
+                    }
+                } else if (backgroundAdmissionClosed && engine.lifecycleState == LifecycleState.RUNNING
+                        && !engine.getClosing().get()) {
+                    engine.backgroundTasks.openBackgroundTaskAdmission();
+                }
+                IrisLogging.reportError("Studio generation update failed for '" + engine.getWorld().name() + "'.", failure);
+                broadcastStudioHotload(true, failure.getClass().getSimpleName() + ": " + failure.getMessage());
+                throw EngineShutdownSequence.propagate(failure);
+            } finally {
+                synchronized (engine.lifecycleLock) {
+                    engine.studioGenerationTransition = false;
+                }
+                if (cutover != null) {
+                    cutover.close();
+                }
+                if (update != null) {
+                    try {
+                        update.close();
+                    } catch (Throwable cleanupFailure) {
+                        IrisLogging.reportError("Failed to remove the staged Studio pack after its update.", cleanupFailure);
+                    }
+                }
+            }
+        }
+    }
+
     private void requireMutableGenerationRuntime(String operation) {
         if (engine.getGenerationHistoryRuntimeRouter().isPresent()) {
             throw new IllegalStateException("Cannot " + operation
@@ -210,7 +314,7 @@ final class EngineHotloader {
             if (protocolServer == null) {
                 return;
             }
-            String packKey = engine.getData().getDataFolder().getName();
+            String packKey = engine.getPackSource().getFileName().toString();
             protocolServer.broadcastStudioHotload(packKey, 0, failed, message);
         } catch (Throwable broadcastFailure) {
             IrisLogging.error("Iris studio hotload broadcast failed: " + broadcastFailure.getClass().getSimpleName()

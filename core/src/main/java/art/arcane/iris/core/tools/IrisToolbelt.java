@@ -33,6 +33,7 @@ import art.arcane.iris.core.pregenerator.PregenPerformanceProfile;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
 import art.arcane.iris.core.pregenerator.cache.PregenCache;
+import art.arcane.iris.core.pregenerator.cache.PregenSavedChunkStatus;
 import art.arcane.iris.core.pack.PackDirectoryResolver;
 import art.arcane.iris.core.pack.PackDownloader;
 import art.arcane.iris.core.project.IrisProject;
@@ -316,7 +317,8 @@ public class IrisToolbelt {
             useCachedWrapper = runtimeSchedulerMode != IrisRuntimeSchedulerMode.FOLIA;
         }
         PregeneratorMethod activeMethod = useCachedWrapper
-                ? new CachedPregenMethod(method, resolvePregenCache(engine.getWorld()), task)
+                ? new CachedPregenMethod(new CachedPregenMethod.Configuration(method, resolvePregenCache(engine.getWorld()), task,
+                        PregenSavedChunkStatus.fromWorld(engine.getWorld().worldFolder().toPath())))
                 : method;
         return new PregeneratorJob(new PregeneratorJob.Configuration(
                 task,

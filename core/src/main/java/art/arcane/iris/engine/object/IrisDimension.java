@@ -1018,11 +1018,17 @@ public class IrisDimension extends IrisRegistrant {
     }
 
     private static String sanitizeRegistryNamespace(String value) {
+        if (isCanonicalRegistryValue(value, false)) {
+            return value;
+        }
         String sanitized = value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_.-]", "_");
         return sanitized.isBlank() ? "dimension" : sanitized;
     }
 
     private static String sanitizeRegistryPath(String value, String fallback) {
+        if (isCanonicalRegistryValue(value, true)) {
+            return value;
+        }
         if (value == null || value.isBlank()) {
             return fallback;
         }
@@ -1035,6 +1041,29 @@ public class IrisDimension extends IrisRegistrant {
             sanitized = sanitized.replace("..", "_");
         }
         return sanitized.isBlank() ? fallback : sanitized;
+    }
+
+    private static boolean isCanonicalRegistryValue(String value, boolean path) {
+        if (value == null || value.isEmpty()) {
+            return false;
+        }
+        char previous = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char current = value.charAt(i);
+            if (current == '/') {
+                if (!path || i == 0 || i == value.length() - 1 || previous == '/') {
+                    return false;
+                }
+            } else if (!((current >= 'a' && current <= 'z') || (current >= '0' && current <= '9')
+                    || current == '_' || current == '-' || current == '.')) {
+                return false;
+            }
+            if (path && current == '.' && previous == '.') {
+                return false;
+            }
+            previous = current;
+        }
+        return true;
     }
 
     public IrisDimensionType getDimensionType() {

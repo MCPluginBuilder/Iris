@@ -129,4 +129,88 @@ public class IrisStartupValidationTest {
 
         assertEquals("pack registry unavailable", IrisStartupValidation.denialReason().orElseThrow());
     }
+
+    @Test
+    public void runtimeValidationMustCompleteBeforeCreation() {
+        IrisStartupValidation.begin();
+        IrisStartupValidation.markDatapacksReady();
+        IrisStartupValidation.markPacksReady();
+        IrisStartupValidation.beginRuntimeValidation();
+
+        assertFalse(IrisStartupValidation.isReady());
+        assertEquals("Iris is still validating runtime injection.", IrisStartupValidation.denialReason().orElseThrow());
+        assertThrows(IllegalStateException.class, IrisStartupValidation::requireWorldCreationReady);
+
+        IrisStartupValidation.markRuntimeReady();
+
+        assertTrue(IrisStartupValidation.isReady());
+        IrisStartupValidation.requireWorldCreationReady();
+    }
+
+    @Test
+    public void packRevalidationCannotClearRuntimeFailure() {
+        IrisStartupValidation.begin();
+        IrisStartupValidation.beginRuntimeValidation();
+        IrisStartupValidation.markRuntimeInvalid("Java agent unavailable");
+        IrisStartupValidation.markDatapacksReady();
+        IrisStartupValidation.markPacksReady();
+        IrisStartupValidation.beginDatapackValidation();
+        IrisStartupValidation.markDatapacksInvalid("temporary datapack failure");
+        IrisStartupValidation.markDatapacksReady();
+        IrisStartupValidation.markPacksInvalid(List.of("temporary pack failure"));
+        IrisStartupValidation.markPacksReady();
+
+        assertFalse(IrisStartupValidation.isReady());
+        assertEquals("Java agent unavailable", IrisStartupValidation.denialReason().orElseThrow());
+    }
+
+    @Test
+    public void forcedStudioAndReplacementCannotBypassRuntimeFailure() {
+        IrisStartupValidation.begin();
+        IrisStartupValidation.markDatapacksReady();
+        IrisStartupValidation.markPacksReady();
+        IrisStartupValidation.requireRestart("restart boundary");
+        IrisStartupValidation.beginRuntimeValidation();
+
+        assertFalse(IrisStartupValidation.studioDenialReason(true).isEmpty());
+        assertThrows(IllegalStateException.class, IrisStartupValidation::requireWorldReplacementStagingReady);
+
+        IrisStartupValidation.markRuntimeInvalid("Java agent unavailable");
+
+        assertEquals("Java agent unavailable", IrisStartupValidation.studioDenialReason(true).orElseThrow());
+        assertThrows(IllegalStateException.class, IrisStartupValidation::requireWorldReplacementStagingReady);
+
+        IrisStartupValidation.markRuntimeReady();
+
+        assertTrue(IrisStartupValidation.studioDenialReason(true).isEmpty());
+        IrisStartupValidation.requireWorldReplacementStagingReady();
+        assertThrows(IllegalStateException.class, IrisStartupValidation::requireWorldCreationReady);
+    }
+
+    @Test
+    public void repeatedRuntimeValidationRevokesPreviousReadiness() {
+        IrisStartupValidation.begin();
+        IrisStartupValidation.markDatapacksReady();
+        IrisStartupValidation.markPacksReady();
+        IrisStartupValidation.beginRuntimeValidation();
+        IrisStartupValidation.markRuntimeReady();
+        IrisStartupValidation.beginRuntimeValidation();
+
+        assertFalse(IrisStartupValidation.isReady());
+        assertThrows(IllegalStateException.class, IrisStartupValidation::requireWorldCreationReady);
+
+        IrisStartupValidation.markRuntimeInvalid("injection retry failed");
+
+        assertEquals("injection retry failed", IrisStartupValidation.denialReason().orElseThrow());
+    }
+
+    @Test
+    public void runtimeFailureCannotEnableDisabledValidation() {
+        IrisStartupValidation.disable();
+        IrisStartupValidation.beginRuntimeValidation();
+        IrisStartupValidation.markRuntimeInvalid("Java agent unavailable");
+
+        assertTrue(IrisStartupValidation.isReady());
+        IrisStartupValidation.requireWorldCreationReady();
+    }
 }

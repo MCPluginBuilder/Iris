@@ -72,7 +72,7 @@ String fabricArtifactName = irisArtifactName('Fabric', "${minecraftVersion}+${lo
 String forgeArtifactName = irisArtifactName('Forge', "${minecraftVersion}+${loaderDisplayVersion(forgeVersion)}")
 String neoForgeArtifactName = irisArtifactName('NeoForge', "${minecraftVersion}+${loaderDisplayVersion(neoForgeVersion)}")
 File pluginOutDirectory = layout.projectDirectory.dir('../PluginOuts').asFile
-long maximumBukkitArtifactBytes = 7_500_000L
+long maximumBukkitArtifactBytes = 8_000_000L
 apply plugin: ApiGenerator
 
 // Where `buildAll` drops the per-platform jars for a local test server. Use the approved sibling
@@ -113,6 +113,7 @@ nmsBindings.each { key, value ->
             compileOnly(rootProject.libs.annotations)
             compileOnly(rootProject.libs.byteBuddy.core)
             testImplementation('junit:junit:4.13.2')
+            testImplementation('org.mockito:mockito-core:5.23.0')
             testImplementation(project(':core'))
             testCompileOnly(volmLibCoordinate) {
                 transitive = false
@@ -427,7 +428,7 @@ tasks.named('neoforgeJar').configure {
 
 List<String> commonModdedArtifactEntries = [
     'META-INF/iris/generation-kernels/catalog.tsv',
-    'META-INF/iris/generation-kernels/abi-1.seal',
+    'META-INF/iris/generation-kernels/abi-1.revision',
     'art/arcane/iris/engine/IrisEngine.class',
     'art/arcane/iris/spi/IrisPlatform.class',
     'art/arcane/volmlib/util/mantle/io/Lz4IOWorkerCodecSupport.class',
@@ -533,7 +534,7 @@ tasks.register('verifyModdedArtifacts') {
 // them, so a shadowJar exclude that drops one is silent until a server hits that path.
 List<String> requiredBukkitArtifactEntries = [
     'META-INF/iris/generation-kernels/catalog.tsv',
-    'META-INF/iris/generation-kernels/abi-1.seal',
+    'META-INF/iris/generation-kernels/abi-1.revision',
     'plugin.yml',
     'paper-plugin.yml',
     'slimjar.dat',

@@ -10,25 +10,50 @@ public final class IrisStartupValidation {
     }
 
     public static synchronized void begin() {
-        snapshot = new Snapshot(true, ValidationState.PENDING, ValidationState.PENDING, List.of(), List.of());
+        snapshot = new Snapshot(true, ValidationState.PENDING, ValidationState.PENDING, List.of(), List.of(), ValidationState.DISABLED, "");
     }
 
     public static synchronized void disable() {
         snapshot = Snapshot.disabled();
     }
 
+    public static synchronized void beginRuntimeValidation() {
+        if (!snapshot.enforced()) {
+            return;
+        }
+        snapshot = new Snapshot(true, snapshot.datapacks(), snapshot.packs(),
+                snapshot.datapackFailures(), snapshot.packFailures(), ValidationState.PENDING, "");
+    }
+
+    public static synchronized void markRuntimeReady() {
+        if (!snapshot.enforced()) {
+            return;
+        }
+        snapshot = new Snapshot(true, snapshot.datapacks(), snapshot.packs(),
+                snapshot.datapackFailures(), snapshot.packFailures(), ValidationState.READY, "");
+    }
+
+    public static synchronized void markRuntimeInvalid(String failure) {
+        if (!snapshot.enforced()) {
+            return;
+        }
+        snapshot = new Snapshot(true, snapshot.datapacks(), snapshot.packs(),
+                snapshot.datapackFailures(), snapshot.packFailures(), ValidationState.INVALID,
+                normalizeFailure(failure, "Iris runtime injection failed. Resolve the startup errors and restart the server."));
+    }
+
     public static synchronized void beginDatapackValidation() {
         if (!snapshot.enforced() || snapshot.datapacks() == ValidationState.RESTART_REQUIRED) {
             return;
         }
-        snapshot = new Snapshot(true, ValidationState.PENDING, snapshot.packs(), List.of(), snapshot.packFailures());
+        snapshot = new Snapshot(true, ValidationState.PENDING, snapshot.packs(), List.of(), snapshot.packFailures(), snapshot.runtime(), snapshot.runtimeFailure());
     }
 
     public static synchronized void markDatapacksReady() {
         if (!snapshot.enforced() || snapshot.datapacks() == ValidationState.RESTART_REQUIRED) {
             return;
         }
-        snapshot = new Snapshot(true, ValidationState.READY, snapshot.packs(), List.of(), snapshot.packFailures());
+        snapshot = new Snapshot(true, ValidationState.READY, snapshot.packs(), List.of(), snapshot.packFailures(), snapshot.runtime(), snapshot.runtimeFailure());
     }
 
     public static synchronized void markDatapacksInvalid(String failure) {
@@ -40,7 +65,7 @@ public final class IrisStartupValidation {
                 ValidationState.INVALID,
                 snapshot.packs(),
                 List.of(normalizeFailure(failure, "External datapack validation failed.")),
-                snapshot.packFailures());
+                snapshot.packFailures(), snapshot.runtime(), snapshot.runtimeFailure());
     }
 
     public static synchronized void requireRestart(String reason) {
@@ -52,14 +77,14 @@ public final class IrisStartupValidation {
                 ValidationState.RESTART_REQUIRED,
                 snapshot.packs(),
                 List.of(normalizeFailure(reason, "A restart is required to load validated datapacks.")),
-                snapshot.packFailures());
+                snapshot.packFailures(), snapshot.runtime(), snapshot.runtimeFailure());
     }
 
     public static synchronized void markPacksReady() {
         if (!snapshot.enforced()) {
             return;
         }
-        snapshot = new Snapshot(true, snapshot.datapacks(), ValidationState.READY, snapshot.datapackFailures(), List.of());
+        snapshot = new Snapshot(true, snapshot.datapacks(), ValidationState.READY, snapshot.datapackFailures(), List.of(), snapshot.runtime(), snapshot.runtimeFailure());
     }
 
     public static synchronized void markPacksInvalid(List<String> failures) {
@@ -72,7 +97,7 @@ public final class IrisStartupValidation {
                 .map(failure -> normalizeFailure(failure, "Iris dimension-pack validation failed."))
                 .toList();
         snapshot = new Snapshot(true, snapshot.datapacks(), ValidationState.INVALID,
-                snapshot.datapackFailures(), normalized);
+                snapshot.datapackFailures(), normalized, snapshot.runtime(), snapshot.runtimeFailure());
     }
 
     public static boolean isReady() {
@@ -92,6 +117,7 @@ public final class IrisStartupValidation {
         Snapshot current = snapshot;
         if (force
                 && current.enforced()
+                && isRuntimeReady(current)
                 && current.datapacks() == ValidationState.RESTART_REQUIRED
                 && current.packs() == ValidationState.READY) {
             return Optional.empty();
@@ -102,6 +128,11 @@ public final class IrisStartupValidation {
     private static Optional<String> denialReason(Snapshot current) {
         if (!current.enforced() || isReady(current)) {
             return Optional.empty();
+        }
+        if (!isRuntimeReady(current)) {
+            return Optional.of(current.runtime() == ValidationState.INVALID
+                    ? current.runtimeFailure()
+                    : "Iris is still validating runtime injection.");
         }
         if (current.datapacks() == ValidationState.RESTART_REQUIRED) {
             return Optional.of(firstFailure(current.datapackFailures(),
@@ -131,6 +162,7 @@ public final class IrisStartupValidation {
     public static void requireWorldReplacementStagingReady() {
         Snapshot current = snapshot;
         if (current.enforced()
+                && isRuntimeReady(current)
                 && current.datapacks() == ValidationState.RESTART_REQUIRED
                 && current.packs() == ValidationState.READY) {
             return;
@@ -150,9 +182,14 @@ public final class IrisStartupValidation {
         return failures == null || failures.isEmpty() ? fallback : failures.getFirst();
     }
 
+    private static boolean isRuntimeReady(Snapshot current) {
+        return current.runtime() == ValidationState.DISABLED || current.runtime() == ValidationState.READY;
+    }
+
     private static boolean isReady(Snapshot current) {
         return !current.enforced()
-                || current.datapacks() == ValidationState.READY
+                || isRuntimeReady(current)
+                && current.datapacks() == ValidationState.READY
                 && current.packs() == ValidationState.READY;
     }
 
@@ -169,7 +206,9 @@ public final class IrisStartupValidation {
             ValidationState datapacks,
             ValidationState packs,
             List<String> datapackFailures,
-            List<String> packFailures
+            List<String> packFailures,
+            ValidationState runtime,
+            String runtimeFailure
     ) {
         Snapshot {
             datapackFailures = List.copyOf(datapackFailures);
@@ -177,7 +216,7 @@ public final class IrisStartupValidation {
         }
 
         private static Snapshot disabled() {
-            return new Snapshot(false, ValidationState.DISABLED, ValidationState.DISABLED, List.of(), List.of());
+            return new Snapshot(false, ValidationState.DISABLED, ValidationState.DISABLED, List.of(), List.of(), ValidationState.DISABLED, "");
         }
     }
 }

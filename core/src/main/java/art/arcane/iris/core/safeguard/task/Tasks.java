@@ -1,6 +1,7 @@
 package art.arcane.iris.core.safeguard.task;
 
 import art.arcane.iris.BuildConstants;
+import art.arcane.iris.core.IrisStartupValidation;
 import art.arcane.iris.platform.bukkit.BukkitPlatform;
 import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.IrisWorldStorage;
@@ -119,18 +120,22 @@ public final class Tasks {
 
     private static final Task INJECTION = Task.of("injection", () -> {
         if (!Agent.install()) {
+            IrisStartupValidation.markRuntimeInvalid("Iris Java agent is unavailable. Add -javaagent:"
+                    + Agent.AGENT_JAR.getPath() + " to the JVM arguments before -jar and restart the server.");
             return withDiagnostics(Mode.UNSTABLE,
                     Diagnostic.Logger.ERROR.create("Java Agent"),
-                    Diagnostic.Logger.ERROR.create("- Please enable dynamic agent loading by adding -XX:+EnableDynamicAgentLoading to your jvm arguments."),
-                    Diagnostic.Logger.ERROR.create("- or add the jvm argument -javaagent:" + Agent.AGENT_JAR.getPath()));
+                    Diagnostic.Logger.ERROR.create("- Add -javaagent:" + Agent.AGENT_JAR.getPath() + " before -jar in your startup command and restart the server."),
+                    Diagnostic.Logger.ERROR.create("- Dynamic attachment requires -XX:+EnableDynamicAgentLoading and a host that permits JVM attachment."));
         }
 
         if (!INMS.get().injectBukkit()) {
+            IrisStartupValidation.markRuntimeInvalid("Iris runtime injection failed. Resolve the startup errors and restart the server.");
             return withDiagnostics(Mode.UNSTABLE,
                     Diagnostic.Logger.ERROR.create("Code Injection"),
                     Diagnostic.Logger.ERROR.create("- Failed to inject code. Please contact support"));
         }
 
+        IrisStartupValidation.markRuntimeReady();
         return withDiagnostics(Mode.STABLE);
     });
 

@@ -61,6 +61,83 @@ public final class GenerationSemanticIndexTest {
     }
 
     @Test
+    public void packFilenameKeysSurviveJournalCompactionAndExactQueries() throws Exception {
+        Path root = temporaryFolder.newFolder("pack-filename-keys").toPath();
+        GenerationSemanticIndex index = GenerationSemanticIndex.initialize(root);
+        ChunkGenerationSemantics original = ChunkGenerationSemantics.builder(-33, -1, 5L)
+                .addObject("trees/mixed/AmySmol10")
+                .addObject("trees/mixed/amysmol10")
+                .addSurfaceBiome("mountain/Cute_Cliffs+")
+                .addRegion("Regions/Highlands")
+                .addStructure("Structures/Tower+", -520, 72, -7)
+                .seal().build();
+        index.claimAndPersist(original);
+        GenerationSemanticIndex replayed = GenerationSemanticIndex.load(root);
+        assertEquals(original, replayed.get(-33, -1).orElseThrow());
+        replayed.compactJournals();
+        GenerationSemanticIndex compacted = GenerationSemanticIndex.load(root);
+        assertEquals(original, compacted.get(-33, -1).orElseThrow());
+        assertEquals("trees/mixed/AmySmol10",
+                requiredMatch(compacted, GenerationSemanticIndex.SemanticKind.OBJECT,
+                        "trees/mixed/AmySmol10").key());
+        assertEquals("trees/mixed/amysmol10",
+                requiredMatch(compacted, GenerationSemanticIndex.SemanticKind.OBJECT,
+                        "trees/mixed/amysmol10").key());
+        assertEquals("mountain/Cute_Cliffs+",
+                requiredMatch(compacted, GenerationSemanticIndex.SemanticKind.SURFACE_BIOME,
+                        "mountain/Cute_Cliffs+").key());
+        assertEquals("Structures/Tower+",
+                requiredMatch(compacted, GenerationSemanticIndex.SemanticKind.STRUCTURE,
+                        "Structures/Tower+").key());
+        assertTrue(compacted.findNearest(GenerationSemanticIndex.Query.acrossActivations(
+                GenerationSemanticIndex.SemanticKind.SURFACE_BIOME, "mountain/cute_cliffs+",
+                new ChunkGenerationSemantics.BlockPosition(-520, 72, -7), 2)).isEmpty());
+    }
+
+    @Test
+    public void pointsOfInterestSurviveJournalReplayAndCompaction() throws Exception {
+        Path root = temporaryFolder.newFolder("poi-journal").toPath();
+        GenerationSemanticIndex index = GenerationSemanticIndex.initialize(root);
+        ChunkGenerationSemantics original = ChunkGenerationSemantics.builder(-2, 3, 5L)
+                .addPointOfInterest(new ChunkGenerationSemantics.PointOfInterest("buried_treasure",
+                        new ChunkGenerationSemantics.BlockPosition(-31, 102, 55)))
+                .addPointOfInterest(new ChunkGenerationSemantics.PointOfInterest("custom:altar",
+                        new ChunkGenerationSemantics.BlockPosition(-22, 78, 61)))
+                .seal().build();
+        index.claimAndPersist(original);
+        GenerationSemanticIndex replayed = GenerationSemanticIndex.load(root);
+        assertEquals(original, replayed.get(-2, 3).orElseThrow());
+        replayed.compactJournals();
+        assertEquals(original, GenerationSemanticIndex.load(root).get(-2, 3).orElseThrow());
+    }
+
+    @Test
+    public void pointsOfInterestRejectNoncanonicalOrderAndExcessiveCounts() throws Exception {
+        for (int corruption = 0; corruption < 2; corruption++) {
+            Path root = temporaryFolder.newFolder("poi-invalid-" + corruption).toPath();
+            GenerationSemanticIndex index = GenerationSemanticIndex.initialize(root);
+            index.recordAndPersist(ChunkGenerationSemantics.builder(0, 0, 1L)
+                    .addPointOfInterest(new ChunkGenerationSemantics.PointOfInterest("buried_treasure",
+                            new ChunkGenerationSemantics.BlockPosition(1, 12, 2)))
+                    .addPointOfInterest(new ChunkGenerationSemantics.PointOfInterest("buried_treasure",
+                            new ChunkGenerationSemantics.BlockPosition(2, 12, 2)))
+                    .seal().build());
+            Path shard = onlyShard(index.storageDirectory());
+            byte[] encoded = Files.readAllBytes(shard);
+            int countOffset = encoded.length - Integer.BYTES - Short.BYTES - 2 * (Short.BYTES + 3 * Integer.BYTES);
+            if (corruption == 0) {
+                System.arraycopy(encoded, countOffset + Short.BYTES, encoded,
+                        countOffset + Short.BYTES + 14, 14);
+            } else {
+                ByteBuffer.wrap(encoded).putShort(countOffset, (short) (ChunkGenerationSemantics.MAX_STRUCTURES + 1));
+            }
+            rewriteChecksum(encoded);
+            replaceReferencedShard(root, shard, encoded);
+            assertThrows(IOException.class, () -> GenerationSemanticIndex.load(root).forEachRecord(record -> { }));
+        }
+    }
+
+    @Test
     public void stagedFactsMergeMonotonicallyAndSealDurably() throws Exception {
         Path dimensionRoot = temporaryFolder.newFolder("staged").toPath();
         GenerationSemanticIndex index = GenerationSemanticIndex.load(dimensionRoot);
@@ -370,13 +447,13 @@ public final class GenerationSemanticIndexTest {
         Path shard = onlyShard(dimensionRoot.resolve("iris/generation/semantics"));
         byte[] encoded = Files.readAllBytes(shard);
         encoded[4] = 0;
-        encoded[5] = 6;
+        encoded[5] = 7;
         rewriteChecksum(encoded);
         replaceReferencedShard(dimensionRoot, shard, encoded);
 
         IOException error = assertThrows(IOException.class, () -> GenerationSemanticIndex.load(dimensionRoot));
 
-        assertTrue(error.getMessage().contains("unsupported format version 6"));
+        assertTrue(error.getMessage().contains("unsupported format version 7"));
     }
 
     @Test
@@ -639,6 +716,8 @@ public final class GenerationSemanticIndexTest {
                         72,
                         (chunkZ << 4) + 9
                 )
+                .addPointOfInterest(new ChunkGenerationSemantics.PointOfInterest("buried_treasure",
+                        new ChunkGenerationSemantics.BlockPosition((chunkX << 4) + 2, 91, (chunkZ << 4) + 5)))
                 .seal()
                 .build();
     }

@@ -4,19 +4,22 @@ import art.arcane.iris.core.pregenerator.PregenListener;
 import art.arcane.iris.core.pregenerator.PregenTask;
 import art.arcane.iris.core.pregenerator.PregeneratorMethod;
 import art.arcane.iris.core.pregenerator.cache.PregenCache;
+import art.arcane.iris.core.pregenerator.cache.PregenSavedChunkStatus;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 
 public class CachedPregenMethod implements PregeneratorMethod {
     private final PregeneratorMethod method;
     private final PregenCache cache;
     private final PregenTask task;
+    private final PregenSavedChunkStatus savedStatus;
     private volatile PregenListener wrappedSource;
     private volatile PregenListener wrappedListener;
 
-    public CachedPregenMethod(PregeneratorMethod method, PregenCache cache, PregenTask task) {
-        this.method = method;
-        this.cache = cache.sync();
-        this.task = task;
+    public CachedPregenMethod(Configuration configuration) {
+        this.method = configuration.method();
+        this.cache = configuration.cache().sync();
+        this.task = configuration.task();
+        this.savedStatus = configuration.savedStatus();
     }
 
     @Override
@@ -26,7 +29,6 @@ public class CachedPregenMethod implements PregeneratorMethod {
 
     @Override
     public void close() {
-        cache.write();
         method.close();
         cache.write();
     }
@@ -39,12 +41,12 @@ public class CachedPregenMethod implements PregeneratorMethod {
 
     @Override
     public boolean supportsRegions(int x, int z, PregenListener listener) {
-        return cache.isRegionCached(x, z) || method.supportsRegions(x, z, listener);
+        return isSavedRegionCached(x, z) || method.supportsRegions(x, z, listener);
     }
 
     @Override
     public String getMethod(int x, int z) {
-        if (cache.isRegionCached(x, z)) {
+        if (isSavedRegionCached(x, z)) {
             return "Cached";
         }
         return method.getMethod(x, z);
@@ -52,7 +54,7 @@ public class CachedPregenMethod implements PregeneratorMethod {
 
     @Override
     public void generateRegion(int x, int z, PregenListener listener) {
-        if (cache.isRegionCached(x, z)) {
+        if (isSavedRegionCached(x, z)) {
             listener.onRegionGenerated(x, z);
             task.iterateChunks(x, z, (cX, cZ) -> {
                 listener.onChunkGenerated(cX, cZ, true);
@@ -60,18 +62,35 @@ public class CachedPregenMethod implements PregeneratorMethod {
             });
             return;
         }
-        method.generateRegion(x, z, listener);
-        cache.cacheRegion(x, z);
+        if (!method.supportsRegions(x, z, listener)) {
+            task.iterateChunks(x, z, (chunkX, chunkZ) -> generateChunk(chunkX, chunkZ, listener));
+            return;
+        }
+        method.generateRegion(x, z, cachingListener(listener));
     }
 
     @Override
     public void generateChunk(int x, int z, PregenListener listener) {
-        if (cache.isChunkCached(x, z)) {
+        if (cache.isChunkCached(x, z) && savedStatus.isFull(x, z)) {
             listener.onChunkGenerated(x, z, true);
             listener.onChunkCleaned(x, z);
             return;
         }
         method.generateChunk(x, z, cachingListener(listener));
+    }
+
+    private boolean isSavedRegionCached(int x, int z) {
+        if (!cache.isRegionCached(x, z)) {
+            return false;
+        }
+        for (int localX = 0; localX < 32; localX++) {
+            for (int localZ = 0; localZ < 32; localZ++) {
+                if (!savedStatus.isFull((x << 5) + localX, (z << 5) + localZ)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private PregenListener cachingListener(PregenListener listener) {
@@ -183,6 +202,10 @@ public class CachedPregenMethod implements PregeneratorMethod {
     @Override
     public void onRegionSubmitted(int regionX, int regionZ) {
         method.onRegionSubmitted(regionX, regionZ);
+    }
+
+    public record Configuration(PregeneratorMethod method, PregenCache cache, PregenTask task,
+                                PregenSavedChunkStatus savedStatus) {
     }
 
     @Override

@@ -11,6 +11,7 @@ import art.arcane.iris.engine.hydrology.cave.CaveVoxelView;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.MantleComponent;
 import art.arcane.iris.engine.mantle.MantleWriter;
+import art.arcane.iris.engine.mantle.TerrainMatterView;
 import art.arcane.iris.engine.object.IrisProceduralBlocks;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.context.ChunkContext;
@@ -203,7 +204,7 @@ public final class MantleHydrologyCaveVoxelView implements CaveVoxelView {
         if (loadedChunks.add(chunkKey)) {
             chunkLoader.accept(chunkX, chunkZ);
         }
-        return mantle.get(position.x(), position.y(), position.z(), type);
+        return TerrainMatterView.get(mantle, position.x(), position.y(), position.z(), type);
     }
 
     private static int plannedSurfaceHeight(

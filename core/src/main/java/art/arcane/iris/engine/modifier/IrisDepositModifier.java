@@ -19,6 +19,7 @@
 package art.arcane.iris.engine.modifier;
 
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.EngineAssignedModifier;
 import art.arcane.iris.engine.DimensionStackLayout;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -32,6 +33,7 @@ import art.arcane.iris.engine.object.IrisObject;
 import art.arcane.iris.engine.object.IrisProceduralBlocks;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.util.project.context.ChunkContext;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.volmlib.util.data.HeightMap;
 import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.volmlib.util.mantle.runtime.MantleChunk;
@@ -68,17 +70,20 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
         try {
             for (IrisDepositGenerator k : getDimension().getDeposits()) {
                 long finalSeed = seed * ++mask;
-                burst.queue(() -> generate(k, chunk, terrain, rng.nextParallelRNG(finalSeed), x, z, false, context));
+                burst.queue(scopedDepositTask(
+                        () -> generate(k, chunk, terrain, rng.nextParallelRNG(finalSeed), x, z, false, context), context));
             }
 
             for (IrisDepositGenerator k : region.getDeposits()) {
                 long finalSeed = seed * ++mask;
-                burst.queue(() -> generate(k, chunk, terrain, rng.nextParallelRNG(finalSeed), x, z, false, context));
+                burst.queue(scopedDepositTask(
+                        () -> generate(k, chunk, terrain, rng.nextParallelRNG(finalSeed), x, z, false, context), context));
             }
 
             for (IrisDepositGenerator k : biome.getDeposits()) {
                 long finalSeed = seed * ++mask;
-                burst.queue(() -> generate(k, chunk, terrain, rng.nextParallelRNG(finalSeed), x, z, false, context));
+                burst.queue(scopedDepositTask(
+                        () -> generate(k, chunk, terrain, rng.nextParallelRNG(finalSeed), x, z, false, context), context));
             }
         } finally {
             // complete() must run before release() even when queueing throws — already
@@ -89,6 +94,20 @@ public class IrisDepositModifier extends EngineAssignedModifier<PlatformBlockSta
                 chunk.release();
             }
         }
+    }
+
+    private Runnable scopedDepositTask(Runnable task, ChunkContext context) {
+        IrisEngine generationEngine = getEngine() instanceof IrisEngine irisEngine
+                && irisEngine.hasGenerationRuntimeScope() ? irisEngine : null;
+        IrisEngine.GenerationRuntimeBinding binding = generationEngine == null
+                ? null : generationEngine.captureGenerationRuntimeBinding();
+        return () -> {
+            try (IrisEngine.GenerationRuntimeScope runtimeScope = generationEngine == null
+                    ? null : generationEngine.openGenerationRuntimeScope(binding);
+                 IrisContext.Scope chunkScope = IrisContext.open(getEngine(), context.getGenerationSessionId(), context)) {
+                task.run();
+            }
+        };
     }
 
     public void generate(IrisDepositGenerator k, MantleChunk chunk, Hunk<PlatformBlockState> data, RNG rng, int cx, int cz, boolean safe, ChunkContext context) {

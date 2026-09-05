@@ -30,7 +30,7 @@ public class ModeEnclosure extends IrisEngineMode implements EngineMode {
         IrisTerrainNormalActuator terrain = new IrisTerrainNormalActuator(getEngine());
         IrisBiomeActuator biome = new IrisBiomeActuator(getEngine());
 
-        registerStage(burst(
+        registerTerrainStage(burst(
                 (x, z, k, p, m, c) -> terrain.actuate(x, z, k, m, c),
                 (x, z, k, p, m, c) -> biome.actuate(x, z, p, m, c)
         ));

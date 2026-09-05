@@ -10,6 +10,8 @@ import art.arcane.iris.engine.object.FloatingIslandBoundarySampler;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.spi.PlatformBlockState;
+import art.arcane.iris.spi.PlatformBiome;
+import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.iris.util.common.parallel.MultiBurst;
 
 import java.util.ArrayList;
@@ -17,6 +19,9 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 public class ChunkContext {
+    private boolean naturalTerrain = true;
+    private boolean speculativeTerrain;
+    private Hunk<PlatformBiome> terrainBiomes;
     private final int x;
     private final int z;
     private final IrisComplex complex;
@@ -66,7 +71,7 @@ public class ChunkContext {
         this.z = z;
         this.complex = complex;
         this.generationSessionId = generationSessionId;
-        this.height = new ChunkedDoubleDataCache(complex.getHeightStream(), x, z, cache);
+        this.height = new ChunkedDoubleDataCache(complex.getRawHeightStream(), x, z, cache);
         this.roundedHeight = new int[cache ? 256 : 0];
         this.biome = new ChunkedDataCache<>(complex.getTrueBiomeStream(), x, z, cache);
         this.cave = new ChunkedDataCache<>(complex.getCaveBiomeStream(), x, z, cache);
@@ -105,7 +110,7 @@ public class ChunkContext {
                 fillTasks.add(new PrefillFillTask(cave));
             }
 
-            if (!shouldPrefillAsync(fillTasks.size())) {
+            if (!shouldPrefillAsync(resolvedPlan, fillTasks.size())) {
                 for (Runnable fillTask : fillTasks) {
                     fillTask.run();
                 }
@@ -124,12 +129,38 @@ public class ChunkContext {
         }
     }
 
-    static boolean shouldPrefillAsync(int fillTaskCount) {
-        if (fillTaskCount <= 1 || !IrisPlatforms.isBound()) {
+    static boolean shouldPrefillAsync(PrefillPlan prefillPlan, int fillTaskCount) {
+        if (prefillPlan == PrefillPlan.NATURAL_TERRAIN || fillTaskCount <= 1 || !IrisPlatforms.isBound()) {
             return false;
         }
 
         return !MultiBurst.burst.ownsCurrentThread();
+    }
+
+    public void setTerrainBiomeOutput(Hunk<PlatformBiome> terrainBiomes) {
+        this.terrainBiomes = terrainBiomes;
+    }
+
+    public void setNaturalBiome(int localX, int y, int localZ, PlatformBiome biome) {
+        if (terrainBiomes != null) {
+            terrainBiomes.setRaw(localX, y, localZ, biome);
+        }
+    }
+
+    public boolean isSpeculativeTerrain() {
+        return speculativeTerrain;
+    }
+
+    public void beginSpeculativeTerrain() {
+        speculativeTerrain = true;
+    }
+
+    public boolean isNaturalTerrain() {
+        return naturalTerrain;
+    }
+
+    public void beginContent() {
+        naturalTerrain = false;
     }
 
     public int getX() {
@@ -154,6 +185,13 @@ public class ChunkContext {
 
     public ChunkedDoubleDataCache getHeight() {
         return height;
+    }
+
+    public void setTerrainHeight(int localX, int localZ, int terrainHeight) {
+        height.setDouble(localX, localZ, terrainHeight);
+        if (roundedHeight.length > 0) {
+            roundedHeight[(localZ << 4) + localX] = terrainHeight;
+        }
     }
 
     public int getRoundedHeight(int x, int z) {
@@ -200,6 +238,7 @@ public class ChunkContext {
     public enum PrefillPlan {
         ALL(true, true, true, true, true, true),
         NO_CAVE(true, true, false, true, true, true),
+        NATURAL_TERRAIN(true, true, false, true, true, true),
         NONE(false, false, false, false, false, false);
 
         private final boolean height;

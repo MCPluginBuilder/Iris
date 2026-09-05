@@ -23,6 +23,10 @@ import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.tools.WorldMaintenance;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.history.SavedTerrainChunk;
+import art.arcane.iris.modded.ModdedSavedTerrainCapture;
+
+import java.util.concurrent.CompletableFuture;
 import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.NativeStructureVolume;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -63,6 +67,16 @@ public final class ModdedStudioHotloadService implements ModdedTickableService, 
     private final ConcurrentHashMap<String, Watch> watches = new ConcurrentHashMap<>();
     private volatile ExecutorService executor;
     private long lastPollAt;
+
+    @Override
+    public CompletableFuture<Void> flushSavedTerrainCapture(Engine engine) {
+        return ModdedSavedTerrainCapture.flush(engine);
+    }
+
+    @Override
+    public CompletableFuture<SavedTerrainChunk> captureSavedTerrainChunk(Engine engine, int chunkX, int chunkZ) {
+        return ModdedSavedTerrainCapture.capture(engine, chunkX, chunkZ);
+    }
 
     @Override
     public void onEnable() {

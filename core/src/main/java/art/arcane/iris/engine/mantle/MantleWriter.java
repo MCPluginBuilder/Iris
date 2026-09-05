@@ -30,6 +30,9 @@ import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.history.TransitionGenerationPlan;
+import art.arcane.iris.engine.history.TerrainBoundarySignature;
+import art.arcane.iris.engine.history.BoundaryColumnGeometry;
+import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.engine.object.IrisGeneratorStyle;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.TileData;
@@ -59,6 +62,7 @@ import org.bukkit.util.Vector;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
@@ -463,12 +467,34 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
         }
     }
 
+    private Optional<TerrainBoundarySignature> resolvedColumn(int x, int z) {
+        IrisComplex complex = engineMantle.getComplex();
+        return complex == null ? Optional.empty() : complex.resolvedTerrainColumn(x, z);
+    }
+
+    private PlatformBlockState resolvedBlock(TerrainBoundarySignature column, int y) {
+        String stateKey = column.geometry().voxelAt(y + engineMantle.getEngine().getMinHeight()).stateKey();
+        PlatformBlockState state = IrisPlatforms.get().registries().blockOrNull(stateKey);
+        if (state == null) {
+            throw new IllegalStateException("Saved terrain state is unavailable: " + stateKey);
+        }
+        return state;
+    }
+
     public PlatformBlockState getPrerequisiteBlock(int x, int y, int z) {
+        Optional<TerrainBoundarySignature> resolved = resolvedColumn(x, z);
+        if (resolved.isPresent()) {
+            return resolvedBlock(resolved.get(), y);
+        }
         PlatformBlockState block = getPrerequisiteDataIfPresent(x, y, z, PlatformBlockState.class);
         return block == null ? AIR : block;
     }
 
     public boolean isPrerequisiteCarved(int x, int y, int z) {
+        Optional<TerrainBoundarySignature> resolved = resolvedColumn(x, z);
+        if (resolved.isPresent()) {
+            return resolved.get().geometry().isEnclosedOpenAt(y + engineMantle.getEngine().getMinHeight());
+        }
         HydrologyCaveCell hydrology = getPrerequisiteDataIfPresent(x, y, z, HydrologyCaveCell.class);
         if (hydrology != null) {
             return hydrology.carves();
@@ -477,6 +503,10 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
     }
 
     public byte[] getPrerequisiteCarvedColumn(int x, int z, int height) {
+        Optional<TerrainBoundarySignature> resolved = resolvedColumn(x, z);
+        if (resolved.isPresent()) {
+            return resolvedCarvedColumn(resolved.get(), height);
+        }
         int cappedHeight = Math.min(Math.max(height, 0), mantle.getWorldHeight());
         byte[] carvedColumn = new byte[cappedHeight];
         if (cappedHeight <= 0) {
@@ -818,6 +848,13 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
         // Read-only probe: getDataIfPresent returns the identical answer without materializing
         // a 16^3 section + slice on a miss the way getData's getOrCreate path does.
         PlatformBlockState block = getDataIfPresent(x, y, z, PlatformBlockState.class);
+        Optional<TerrainBoundarySignature> resolved = resolvedColumn(x, z);
+        if (resolved.isPresent()) {
+            PreObjectMatterCell cell = getDataIfPresent(x, y, z, PreObjectMatterCell.class);
+            if (cell == null || !cell.blockCaptured()) {
+                return resolvedBlock(resolved.get(), y);
+            }
+        }
         if (block == null)
             return AIR;
         return block;
@@ -830,6 +867,20 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
 
     @Override
     public boolean isCarved(int x, int y, int z) {
+        Optional<TerrainBoundarySignature> resolved = resolvedColumn(x, z);
+        if (resolved.isPresent()) {
+            PreObjectMatterCell cell = getDataIfPresent(x, y, z, PreObjectMatterCell.class);
+            if (cell != null && cell.blockCaptured()) {
+                PlatformBlockState block = getDataIfPresent(x, y, z, PlatformBlockState.class);
+                if (block != null) {
+                    return (block.isAir() || block.isFluid())
+                            && resolved.get().geometry().hasSolidAbove(y + engineMantle.getEngine().getMinHeight());
+                }
+            }
+            return cell != null && cell.cavernCaptured()
+                    ? getDataIfPresent(x, y, z, MatterCavern.class) != null
+                    : resolved.get().geometry().isEnclosedOpenAt(y + engineMantle.getEngine().getMinHeight());
+        }
         HydrologyCaveCell hydrology = getDataIfPresent(x, y, z, HydrologyCaveCell.class);
         if (hydrology != null) {
             return hydrology.carves();
@@ -837,7 +888,45 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
         return getDataIfPresent(x, y, z, MatterCavern.class) != null;
     }
 
+    private byte[] resolvedCarvedColumn(TerrainBoundarySignature column, int height) {
+        int cappedHeight = Math.min(Math.max(height, 0), mantle.getWorldHeight());
+        byte[] carved = new byte[cappedHeight];
+        int minimumY = engineMantle.getEngine().getMinHeight();
+        BoundaryColumnGeometry geometry = column.geometry();
+        boolean ceiling = false;
+        for (int worldY = geometry.minimumY() + geometry.height() - 1; worldY >= minimumY; worldY--) {
+            BoundaryColumnGeometry.Voxel voxel = geometry.voxelAt(worldY);
+            int internalY = worldY - minimumY;
+            if (voxel.phase() == BoundaryColumnGeometry.Phase.SOLID) {
+                ceiling = true;
+            } else if (ceiling && internalY < cappedHeight) {
+                carved[internalY] = 1;
+            }
+        }
+        return carved;
+    }
+
     public byte[] getCarvedColumn(int x, int z, int height) {
+        Optional<TerrainBoundarySignature> resolved = resolvedColumn(x, z);
+        if (resolved.isPresent()) {
+            byte[] carved = resolvedCarvedColumn(resolved.get(), height);
+            for (int y = 0; y < carved.length; y++) {
+                PreObjectMatterCell cell = getDataIfPresent(x, y, z, PreObjectMatterCell.class);
+                if (cell != null && cell.blockCaptured()) {
+                    PlatformBlockState block = getDataIfPresent(x, y, z, PlatformBlockState.class);
+                    if (block != null) {
+                        carved[y] = (block.isAir() || block.isFluid())
+                                && resolved.get().geometry().hasSolidAbove(y + engineMantle.getEngine().getMinHeight())
+                                ? (byte) 1 : 0;
+                        continue;
+                    }
+                }
+                if (cell != null && cell.cavernCaptured()) {
+                    carved[y] = getDataIfPresent(x, y, z, MatterCavern.class) != null ? (byte) 1 : 0;
+                }
+            }
+            return carved;
+        }
         int cappedHeight = Math.min(Math.max(height, 0), mantle.getWorldHeight());
         byte[] carvedColumn = new byte[cappedHeight];
         if (cappedHeight <= 0) {
@@ -886,6 +975,13 @@ public class MantleWriter implements ObjectPassPlacer, AutoCloseable {
         }
 
         return carvedColumn;
+    }
+
+    @Override
+    public boolean isSurfaceSolid(int x, int y, int z) {
+        Optional<TerrainBoundarySignature> resolved = resolvedColumn(x, z);
+        return resolved.isEmpty() || resolved.get().geometry()
+                .voxelAt(y + engineMantle.getEngine().getMinHeight()).phase() == BoundaryColumnGeometry.Phase.SOLID;
     }
 
     @Override

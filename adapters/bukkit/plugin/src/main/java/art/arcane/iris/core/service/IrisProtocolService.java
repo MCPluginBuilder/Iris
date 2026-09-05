@@ -192,7 +192,7 @@ public class IrisProtocolService implements IrisService, PluginMessageListener, 
         World world = player.getWorld();
         Engine engine = engineFor(world);
         if (engine != null) {
-            protocol.sendDimensionStatus(sessionId, engine.getDimension().getLoadKey(), engine.getData().getDataFolder().getName(),
+            protocol.sendDimensionStatus(sessionId, engine.getDimension().getLoadKey(), engine.getPackSource().getFileName().toString(),
                     world.getSeed(), engine.getMinHeight(), engine.getMaxHeight(), true);
             return;
         }

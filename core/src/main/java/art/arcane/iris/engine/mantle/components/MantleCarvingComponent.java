@@ -20,6 +20,7 @@ package art.arcane.iris.engine.mantle.components;
 
 import art.arcane.iris.engine.IrisComplex;
 import art.arcane.iris.engine.UpperDimensionContext;
+import art.arcane.iris.engine.mantle.MatterGenerationPhase;
 import art.arcane.iris.engine.mantle.ComponentFlag;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.engine.mantle.IrisMantleComponent;
@@ -85,6 +86,11 @@ public class MantleCarvingComponent extends IrisMantleComponent {
     }
 
     @Override
+    public MatterGenerationPhase getGenerationPhase() {
+        return MatterGenerationPhase.TERRAIN;
+    }
+
+    @Override
     public void hotload() {
         super.hotload();
         // Hotload swaps in fresh IrisCaveProfile instances (identity keys), so retained
@@ -98,7 +104,7 @@ public class MantleCarvingComponent extends IrisMantleComponent {
     @Override
     public void generateLayer(MantleWriter writer, int x, int z, ChunkContext context) {
         IrisComplex complex = context.getComplex();
-        if (!complex.allowsNewGenerationChunk(x, z)) {
+        if (!complex.allowsMantleChunkWrite(x, z)) {
             return;
         }
         IrisDimensionCarvingResolver.State resolverState = new IrisDimensionCarvingResolver.State();

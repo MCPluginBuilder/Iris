@@ -18,6 +18,10 @@
 
 package art.arcane.iris.modded;
 
+import art.arcane.iris.nativegen.NativeTransitionColumn;
+import art.arcane.iris.engine.history.TerrainBoundarySignature;
+import java.util.Optional;
+import art.arcane.iris.nativegen.NativeGenerationWriteGuard;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.engine.IrisEngine;
@@ -1019,14 +1023,19 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             generationEngine.generate(pos.getMinBlockX(), pos.getMinBlockZ(), blocks, biomes, false);
 
             writeBlocks(chunk, blocks, dimMinY, height);
+            if (route != null) {
+                BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
+                route.claimGeneratedSemantics((x, y, z) -> {
+                    BlockState state = chunk.getBlockState(position.set(x, dimMinY + y, z));
+                    return state.isAir() || state.liquid();
+                });
+            }
+            ModdedNativeTerrainReceipts.persist(chunk, route);
             writeTerrainHeightmaps(chunk, generationEngine, pos, height);
             Heightmap.primeHeightmaps(chunk, EnumSet.of(
                     Heightmap.Types.MOTION_BLOCKING,
                     Heightmap.Types.MOTION_BLOCKING_NO_LEAVES));
             ModdedWorldManager.enqueueGenerated(generationEngine, pos.x(), pos.z());
-            if (route != null) {
-                route.claimGeneratedSemantics();
-            }
             return chunk;
         } catch (GenerationSessionException e) {
             if (generationEngine.isClosing() || e.isExpectedTeardown()) {
@@ -1066,6 +1075,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
                 completion.completeExceptionally(completionFailure);
             }
         });
+        route.detachThread();
         return completion;
     }
 
@@ -1205,6 +1215,10 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
              GenerationHistoryRuntimeRouter.RuntimeRoute.RuntimeScope runtimeScope = openHistoryRuntimeScope(route);
              GenerationSessionLease lease = requireGenerationLease(current, "modded_biome_decoration");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            if (chunk.getPersistedStatus().isOrAfter(ChunkStatus.FEATURES)) {
+                return;
+            }
+            nativeStructures.placeVanillaStructures(level, chunk, structureManager);
             if (!allowsRoutedDiscreteGeneration(
                     current,
                     route,
@@ -1214,8 +1228,10 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             )) {
                 return;
             }
+            if (!NativeGenerationWriteGuard.allowsDecoration(current, level, chunkPos)) {
+                return;
+            }
             importedFeatures.prepare(current);
-            nativeStructures.placeVanillaStructures(level, chunk, structureManager);
             // Vanilla's placed-feature pass, on THIS thread and never on ModdedGenPool: the FEATURES chunk
             // step writes into the eight neighbouring chunks and is not parallel-safe. Inert unless the
             // dimension set importedFeatures.enabled.
@@ -1257,6 +1273,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
                     ));
             nativeStructures.adjustGeneratedStructures(
                     registryAccess, chunk, previousStarts, configuredStarts, current, templateManager);
+            ModdedNativeTerrainReceipts.persistStructureActivation(chunk, route);
         }
     }
 
@@ -1355,6 +1372,10 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
                      current, x, z, "modded_base_height");
              GenerationSessionLease lease = current.acquireGenerationLease("modded_base_height");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            Optional<TerrainBoundarySignature> resolved = current.getComplex().resolvedTerrainColumn(x, z);
+            if (resolved.isPresent()) {
+                return NativeTransitionColumn.height(resolved.get(), type, heightAccessor);
+            }
             int height = current.getDimensionStackContext() == null
                     ? current.getHeight(x, z, ignoreFluid)
                     : Engine.hostHeight(current, x, z, ignoreFluid);
@@ -1367,12 +1388,16 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     @Override
     public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor heightAccessor, RandomState randomState) {
         int minY = heightAccessor.getMinY();
-        BlockState[] states = new BlockState[heightAccessor.getHeight()];
         Engine current = requireDataQueryEngine("base column");
         try (GenerationHistoryRuntimeRouter.CoordinateScope historyScope = openHistoryCoordinateScope(
                      current, x, z, "modded_base_column");
              GenerationSessionLease lease = current.acquireGenerationLease("modded_base_column");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
+            Optional<TerrainBoundarySignature> resolved = current.getComplex().resolvedTerrainColumn(x, z);
+            if (resolved.isPresent()) {
+                return NativeTransitionColumn.column(resolved.get(), heightAccessor);
+            }
+            BlockState[] states = new BlockState[heightAccessor.getHeight()];
             BlockState airState = Blocks.AIR.defaultBlockState();
             boolean dimensionStack = current.getDimensionStackContext() != null;
             int surface = dimensionStack
@@ -1394,6 +1419,12 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         }
     }
 
+    public boolean allowsNativeChunkWrite(int chunkX, int chunkZ) {
+        Engine current = engine;
+        return current == null || !current.isClosing() && !current.isClosed()
+                && current.getComplex().allowsMantleChunkWrite(chunkX, chunkZ);
+    }
+
     private boolean allowsRoutedDiscreteGeneration(
             Engine current,
             GenerationHistoryRuntimeRouter.RuntimeRoute route,
@@ -1407,7 +1438,8 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         if (route == null) {
             return allowsGenerationHistoryBypass(current);
         }
-        return current.getComplex().allowsNewGenerationChunk(chunkPos.x(), chunkPos.z());
+        return NativeGenerationWriteGuard.allowsPendingStage(current, chunk, stage)
+                || current.getComplex().allowsNewGenerationChunk(chunkPos.x(), chunkPos.z());
     }
 
     private void bindGenerationRuntimeRetirementListener(Engine current) {

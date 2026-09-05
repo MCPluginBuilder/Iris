@@ -3,6 +3,7 @@ package art.arcane.iris.engine.history;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.framework.EngineTarget;
+import art.arcane.iris.engine.framework.GenerationTransitionGate;
 import art.arcane.iris.engine.object.IrisDimension;
 
 import java.io.IOException;
@@ -19,7 +20,6 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
     public static final int DEFAULT_TRANSITION_WIDTH_BLOCKS = 256;
-    public static final int DEFAULT_RUNTIME_CACHE_CAPACITY = 4;
 
     private final IrisEngine engine;
     private final GenerationHistory history;
@@ -27,7 +27,6 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
     private final ActivationRuntimeFactory runtimeFactory;
     private final LinkedHashMap<Long, RuntimeCacheEntry> bindings;
     private final Map<Long, RuntimeRetirement> retiringBindings;
-    private final int runtimeCacheCapacity;
     private final ReentrantLock stateLock;
     private final Condition inactive;
     private final ThreadLocal<Integer> operationDepth;
@@ -43,18 +42,13 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
             IrisEngine engine,
             GenerationHistory history,
             GenerationBoundarySignatureSampler signatureSampler,
-            ActivationRuntimeFactory runtimeFactory,
-            int runtimeCacheCapacity
+            ActivationRuntimeFactory runtimeFactory
     ) throws IOException {
         this.engine = Objects.requireNonNull(engine, "Iris engine");
         this.history = Objects.requireNonNull(history, "generation history");
         this.signatureSampler = Objects.requireNonNull(signatureSampler, "boundary signature sampler");
         this.runtimeFactory = Objects.requireNonNull(runtimeFactory, "activation runtime factory");
-        if (runtimeCacheCapacity < 1) {
-            throw new IllegalArgumentException("Generation runtime cache capacity must be positive.");
-        }
-        this.runtimeCacheCapacity = runtimeCacheCapacity;
-        this.bindings = new LinkedHashMap<>(runtimeCacheCapacity, 0.75F, true);
+        this.bindings = new LinkedHashMap<>();
         this.retiringBindings = new LinkedHashMap<>();
         this.stateLock = new ReentrantLock(true);
         this.inactive = stateLock.newCondition();
@@ -65,7 +59,9 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         GenerationEpoch epoch = requireEpoch(active);
         IrisEngine.GenerationRuntimeBinding base = engine.getActiveGenerationRuntimeBinding();
         runtimeFactory.validateBase(engine, history, active, epoch, base);
-        requireBindingContract(active, epoch, base);
+        if (history.usesCurrentGenerator()) {
+            requireBindingContract(active, epoch, base);
+        }
         RuntimeCacheEntry baseEntry = new RuntimeCacheEntry(active.activationId());
         baseEntry.binding = base;
         baseEntry.defaultRuntime = true;
@@ -117,8 +113,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
                 history,
                 signatureSampler,
                 transitionWidthBlocks,
-                new DefaultActivationRuntimeFactory(),
-                DEFAULT_RUNTIME_CACHE_CAPACITY
+                new DefaultActivationRuntimeFactory()
         );
     }
 
@@ -129,30 +124,11 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
             int transitionWidthBlocks,
             ActivationRuntimeFactory runtimeFactory
     ) throws IOException {
-        return attachAndPromotePending(
-                engine,
-                history,
-                signatureSampler,
-                transitionWidthBlocks,
-                runtimeFactory,
-                DEFAULT_RUNTIME_CACHE_CAPACITY
-        );
-    }
-
-    static GenerationHistoryRuntimeRouter attachAndPromotePending(
-            IrisEngine engine,
-            GenerationHistory history,
-            GenerationBoundarySignatureSampler signatureSampler,
-            int transitionWidthBlocks,
-            ActivationRuntimeFactory runtimeFactory,
-            int runtimeCacheCapacity
-    ) throws IOException {
         GenerationHistoryRuntimeRouter router = attach(
                 engine,
                 history,
                 signatureSampler,
-                runtimeFactory,
-                runtimeCacheCapacity
+                runtimeFactory
         );
         try {
             router.promotePendingAndReconcileCurrentKernel(transitionWidthBlocks);
@@ -175,28 +151,11 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
             GenerationBoundarySignatureSampler signatureSampler,
             ActivationRuntimeFactory runtimeFactory
     ) throws IOException {
-        return attach(
-                engine,
-                history,
-                signatureSampler,
-                runtimeFactory,
-                DEFAULT_RUNTIME_CACHE_CAPACITY
-        );
-    }
-
-    static GenerationHistoryRuntimeRouter attach(
-            IrisEngine engine,
-            GenerationHistory history,
-            GenerationBoundarySignatureSampler signatureSampler,
-            ActivationRuntimeFactory runtimeFactory,
-            int runtimeCacheCapacity
-    ) throws IOException {
         return new GenerationHistoryRuntimeRouter(
                 engine,
                 history,
                 signatureSampler,
-                runtimeFactory,
-                runtimeCacheCapacity
+                runtimeFactory
         );
     }
 
@@ -208,24 +167,94 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         return history;
     }
 
+    public StudioCutover beginStudioCutover(long timeoutMillis) {
+        if (!engine.isStudio()) {
+            throw new IllegalStateException("Live generation cutovers require a Studio world.");
+        }
+        if (scopedRoute.get() != null || operationDepth.get() > 0) {
+            throw new IllegalStateException("Cannot begin a Studio cutover inside another generation operation.");
+        }
+        enterOperation();
+        GenerationTransitionGate.Transition transition = null;
+        try {
+            transition = engine.getGenerationSessions().transitionGate().beginTransition(timeoutMillis);
+            return new StudioCutover(history.beginLiveCutover(), transition);
+        } catch (Throwable failure) {
+            if (transition != null) {
+                transition.close();
+            }
+            leaveOperation();
+            throw failure;
+        }
+    }
+
+    public final class StudioCutover implements AutoCloseable {
+        private final GenerationHistory.LiveCutover cutover;
+        private final GenerationTransitionGate.Transition transition;
+        private final Thread owner = Thread.currentThread();
+        private boolean closed;
+
+        private StudioCutover(GenerationHistory.LiveCutover cutover, GenerationTransitionGate.Transition transition) {
+            this.cutover = cutover;
+            this.transition = transition;
+        }
+
+        public GenerationActivation promotePending() throws IOException {
+            requireOpen();
+            GenerationActivation activated = cutover.promote(GenerationHistoryRuntimeRouter.this::captureBoundarySignatures);
+            try (RuntimeLease lease = acquireRuntime(activated, requireEpoch(activated))) {
+                engine.setDefaultGenerationRuntime(lease.binding());
+                retireBindings(pinDefault(lease.entry));
+            }
+            return activated;
+        }
+
+        private void requireOpen() {
+            if (closed || Thread.currentThread() != owner) {
+                throw new IllegalStateException("Studio cutover is closed or belongs to another thread.");
+            }
+        }
+
+        @Override
+        public void close() {
+            requireOpen();
+            closed = true;
+            try {
+                cutover.close();
+            } finally {
+                try {
+                    transition.close();
+                } finally {
+                    leaveOperation();
+                }
+            }
+        }
+    }
+
     public Optional<RuntimeOwnership> currentRuntimeOwnership() {
         RuntimeRoute current = scopedRoute.get();
         return current == null ? Optional.empty() : Optional.of(current.ownership);
     }
 
     public RuntimeRoute openRoute(int chunkX, int chunkZ) throws IOException {
-        enterRouteOperation();
+        GenerationTransitionGate.Participation participation = engine.getGenerationSessions().transitionGate().enter();
+        boolean operation = false;
         try {
+            enterRouteOperation();
+            operation = true;
             GenerationHistory.GenerationStage stage = history.openStage(chunkX, chunkZ);
             try {
                 RuntimeLease lease = acquireRuntime(stage.activation(), stage.epoch());
-                return new RuntimeRoute(this, stage, lease);
+                return new RuntimeRoute(this, stage, lease, participation);
             } catch (Throwable failure) {
                 stage.close();
                 throw failure;
             }
         } catch (Throwable failure) {
-            leaveRouteOperation();
+            if (operation) {
+                leaveRouteOperation();
+            }
+            participation.close();
             throw propagate(failure, "Unable to open an Iris generation-history stage.");
         }
     }
@@ -259,6 +288,15 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         return new CoordinateScope(blockX, blockZ, stage.route, stage);
     }
 
+    public void recordNaturalTerrain(SavedTerrainChunk terrain) {
+        SavedTerrainChunk captured = Objects.requireNonNull(terrain, "natural terrain");
+        RuntimeRoute route = scopedRoute.get();
+        if (route == null || route.chunkX() != captured.chunkX() || route.chunkZ() != captured.chunkZ()) {
+            throw new IllegalStateException("Natural terrain must be captured inside its chunk generation route.");
+        }
+        route.naturalTerrain = captured;
+    }
+
     public void preloadActiveRuntimes() throws IOException {
         enterOperation();
         try {
@@ -274,6 +312,9 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         enterOperation();
         try {
             GenerationActivation activated = history.promotePending(this::captureBoundarySignatures);
+            if (!history.usesCurrentGenerator()) {
+                return activated;
+            }
             GenerationEpoch epoch = requireEpoch(activated);
             try (RuntimeLease lease = acquireRuntime(activated, epoch)) {
                 engine.setDefaultGenerationRuntime(lease.binding());
@@ -288,8 +329,11 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
     private GenerationActivation promotePendingAndReconcileCurrentKernel(
             int transitionWidthBlocks
     ) throws IOException {
+        if (history.pendingActivation().isEmpty() && !history.usesCurrentGenerator()) {
+            history.stageCurrentKernel(transitionWidthBlocks);
+        }
         GenerationActivation activated = promotePending();
-        while (!history.activeEpoch().kernelVersion().equals(history.currentKernelVersion())) {
+        if (!history.usesCurrentGenerator()) {
             history.stageCurrentKernel(transitionWidthBlocks);
             activated = promotePending();
         }
@@ -364,8 +408,8 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
 
     private TerrainBoundarySignatureStore.SignatureSampler captureBoundarySignatures(
             GenerationBoundary boundary
-    ) {
-        return new BoundaryCapture();
+    ) throws IOException {
+        return signatureSampler.open(engine);
     }
 
     private RuntimeLease acquireRuntime(
@@ -522,7 +566,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
 
     private List<RuntimeRetirement> collectEvictionsLocked() {
         ArrayList<RuntimeRetirement> retired = new ArrayList<>();
-        while (bindings.size() > runtimeCacheCapacity) {
+        while (bindings.size() > 1) {
             RuntimeCacheEntry candidate = null;
             Iterator<Map.Entry<Long, RuntimeCacheEntry>> iterator = bindings.entrySet().iterator();
             while (iterator.hasNext()) {
@@ -575,6 +619,18 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         }
         if (failure != null) {
             throw new IllegalStateException("Failed to retire cached generation runtimes.", failure);
+        }
+        if (!retired.isEmpty()) {
+            stateLock.lock();
+            try {
+                if (bindings.size() == 1 && retiringBindings.isEmpty()) {
+                    new GenerationPackRepository(history.paths().dimensionRoot()).releaseArchivedPacks(history.manifest());
+                }
+            } catch (IOException cleanupFailure) {
+                throw new IllegalStateException("Unable to release archived generation packs after runtime retirement.", cleanupFailure);
+            } finally {
+                stateLock.unlock();
+            }
         }
     }
 
@@ -807,49 +863,6 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         }
     }
 
-    private final class BoundaryCapture implements TerrainBoundarySignatureStore.SignatureSampler {
-        private RuntimeLease lease;
-        private IrisEngine.GenerationRuntimeScope scope;
-        private long activationId;
-
-        @Override
-        public TerrainBoundarySignature sample(int blockX, int blockZ) throws IOException {
-            GenerationActivation activation = history.resolveActivation(
-                    Math.floorDiv(blockX, GenerationBoundary.CHUNK_SIZE),
-                    Math.floorDiv(blockZ, GenerationBoundary.CHUNK_SIZE)
-            );
-            if (lease == null || activationId != activation.activationId()) {
-                close();
-                lease = acquireRuntime(activation, requireEpoch(activation));
-                try {
-                    scope = engine.openGenerationRuntimeScope(lease.binding());
-                    activationId = activation.activationId();
-                } catch (Throwable failure) {
-                    close();
-                    throw propagate(failure, "Unable to scope boundary capture.");
-                }
-            }
-            return signatureSampler.sample(engine, blockX, blockZ);
-        }
-
-        @Override
-        public void close() {
-            try {
-                if (scope != null) {
-                    IrisEngine.GenerationRuntimeScope closing = scope;
-                    scope = null;
-                    closing.close();
-                }
-            } finally {
-                if (lease != null) {
-                    RuntimeLease closing = lease;
-                    lease = null;
-                    closing.close();
-                }
-            }
-        }
-    }
-
     interface ActivationRuntimeFactory {
         void validateBase(
                 IrisEngine engine,
@@ -960,23 +973,31 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         private final RuntimeLease lease;
         private final IrisEngine.GenerationRuntimeBinding binding;
         private final RuntimeOwnership ownership;
+        private final GenerationTransitionGate.Participation participation;
         private int activeScopes;
+        private volatile SavedTerrainChunk naturalTerrain;
         private boolean closed;
 
         private RuntimeRoute(
                 GenerationHistoryRuntimeRouter router,
                 GenerationHistory.GenerationStage stage,
-                RuntimeLease lease
+                RuntimeLease lease,
+                GenerationTransitionGate.Participation participation
         ) {
             this.router = router;
             this.stage = stage;
             this.lease = lease;
+            this.participation = participation;
             this.binding = lease.binding();
             this.ownership = new RuntimeOwnership(stage.activation().activationId(), binding);
         }
 
         public GenerationHistory.GenerationStage generationStage() {
             return stage;
+        }
+
+        public Optional<SavedTerrainChunk> naturalTerrain() {
+            return Optional.ofNullable(naturalTerrain);
         }
 
         public int chunkX() {
@@ -999,15 +1020,29 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
             return binding.transitionPlan();
         }
 
+        public void detachThread() {
+            participation.detachThread();
+        }
+
         public boolean claimGeneratedSemantics() throws IOException {
+            return claimGeneratedSemantics((x, y, z) -> true);
+        }
+
+        public boolean claimGeneratedSemantics(GenerationSemanticCapture.CaveSpace caveSpace) throws IOException {
             if (router.scopedRoute.get() != this) {
                 throw new IllegalStateException(
                         "Generation semantics must be captured inside this route's runtime scope."
                 );
             }
+            Optional<ChunkGenerationSemantics> recorded = router.history.semantics(chunkX(), chunkZ());
+            if (recorded.isPresent() && recorded.get().sealed()
+                    || router.history.resolveActivation(chunkX(), chunkZ()).activationId() != stage.activation().activationId()) {
+                return false;
+            }
             ChunkGenerationSemantics semantics = GenerationSemanticCapture.capture(
                     router.engine,
-                    stage
+                    stage,
+                    caveSpace
             );
             return router.history.claimGeneratedSemantics(stage, semantics);
         }
@@ -1021,10 +1056,12 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
             }
             router.enterRuntimeScope();
             RuntimeRoute previousRoute = router.installScopedRoute(this);
+            GenerationTransitionGate.Participation scopedParticipation = participation.attach();
             try {
                 IrisEngine.GenerationRuntimeScope opened = router.engine.openGenerationRuntimeScope(binding);
-                return new RuntimeScope(this, opened, Thread.currentThread(), previousRoute);
+                return new RuntimeScope(this, opened, Thread.currentThread(), previousRoute, scopedParticipation);
             } catch (Throwable failure) {
+                scopedParticipation.close();
                 try {
                     router.restoreScopedRoute(this, previousRoute);
                 } catch (Throwable closeFailure) {
@@ -1077,6 +1114,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
                     failure.addSuppressed(closeFailure);
                 }
             }
+            participation.close();
             if (failure instanceof RuntimeException runtimeFailure) {
                 throw runtimeFailure;
             }
@@ -1100,18 +1138,21 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
             private final IrisEngine.GenerationRuntimeScope runtimeScope;
             private final Thread owner;
             private final RuntimeRoute previousRoute;
+            private final GenerationTransitionGate.Participation participation;
             private boolean closed;
 
             private RuntimeScope(
                     RuntimeRoute route,
                     IrisEngine.GenerationRuntimeScope runtimeScope,
                     Thread owner,
-                    RuntimeRoute previousRoute
+                    RuntimeRoute previousRoute,
+                    GenerationTransitionGate.Participation participation
             ) {
                 this.route = route;
                 this.runtimeScope = runtimeScope;
                 this.owner = owner;
                 this.previousRoute = previousRoute;
+                this.participation = participation;
             }
 
             @Override
@@ -1148,6 +1189,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
                 } catch (Throwable closeFailure) {
                     failure = appendFailure(failure, closeFailure);
                 }
+                participation.close();
                 if (failure instanceof RuntimeException runtimeFailure) {
                     throw runtimeFailure;
                 }

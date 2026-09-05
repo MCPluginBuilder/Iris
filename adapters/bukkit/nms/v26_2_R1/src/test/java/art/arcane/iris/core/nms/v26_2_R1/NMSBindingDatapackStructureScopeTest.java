@@ -352,7 +352,7 @@ public class NMSBindingDatapackStructureScopeTest {
     }
 
     @Test
-    public void standardPublishesOneDeferredStateWhileJigsawPublishesInitializedEmptyState() throws IOException {
+    public void standardPublishesOneDeferredStateWhileAuthoringPublishesInitializedEmptyState() throws IOException {
         Path chunkGeneratorSource = Path.of(System.getProperty("iris.nmsChunkGeneratorSource"));
         String source = Files.readString(chunkGeneratorSource.resolveSibling("NMSBinding.java")).replace("\r\n", "\n");
         int methodStart = source.indexOf("public DatapackStructureScopeResult scopeDatapackStructures(");
@@ -365,8 +365,8 @@ public class NMSBindingDatapackStructureScopeTest {
         String method = source.substring(methodStart, methodEnd);
         int filteredState = method.indexOf("possibleSetsField.set(scopedState, selection.structureSets());");
         int jigsawMode = method.indexOf(
-                "boolean jigsawStudio = platformGenerator != null");
-        int jigsawOnly = method.indexOf("if (jigsawStudio)");
+                "boolean authoringStudio = platformGenerator != null");
+        int jigsawOnly = method.indexOf("if (authoringStudio)");
         int emptyCreation = method.indexOf("ChunkGeneratorStructureState bootstrapState = createStructureState(");
         int emptyFiltering = method.indexOf("bootstrapSetsField.set(bootstrapState, List.of());");
         int emptyInitialization = method.indexOf("bootstrapState.ensureStructuresGenerated();");

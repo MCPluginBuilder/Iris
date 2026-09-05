@@ -222,6 +222,55 @@ public class IrisChunkGeneratorFailureContractTest {
     }
 
     @Test
+    public void authoringHeightmapStagesReturnBeforeAnyTerrainHeightResolver() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        int primeStart = source.indexOf("private void primeWorldgenHeightmaps(");
+        int primeEnd = source.indexOf("private IntBinaryOperator worldgenSurfaceHeight()", primeStart);
+        String prime = source.substring(primeStart, primeEnd);
+        assertBefore(prime, "platformGenerator.usesFlatStudioTerrain()", "worldgenSurfaceHeight()");
+        assertBefore(prime, "primeAuthoringHeightmaps(chunkAccess);", "return;");
+        assertBefore(prime, "return;", "WorldgenTerrainHeightmaps.primeTerrain(");
+
+        int decorationStart = source.indexOf("public void addVanillaDecorations(");
+        int decorationEnd = source.indexOf("public void spawnOriginalMobs(", decorationStart);
+        String decorations = source.substring(decorationStart, decorationEnd);
+        assertBefore(decorations, "primeWorldgenHeightmaps(chunkAccess);", "platformGenerator.usesFlatStudioTerrain()");
+        assertBefore(decorations, "platformGenerator.usesFlatStudioTerrain()", "return;");
+        assertBefore(decorations, "return;", "engine.getHeight(");
+    }
+
+    @Test
+    public void authoringDecorationSkipsNativeFeaturesButRetainsHeightmapsAndBukkitPopulators() throws IOException {
+        String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")));
+        String decoration = method(source,
+                "public void applyBiomeDecoration(WorldGenLevel generatoraccessseed, ChunkAccess ichunkaccess, StructureManager structuremanager, boolean vanilla)",
+                "public BiomeGenerationSettings getBiomeGenerationSettings");
+        int structuresGuard = decoration.indexOf("if (!flatStudioTerrain && !ichunkaccess.getPersistedStatus().isOrAfter(ChunkStatus.FEATURES))");
+        assertTrue(structuresGuard >= 0);
+        int structuresEnd = decoration.indexOf("\n            }", structuresGuard);
+        String structures = decoration.substring(structuresGuard, structuresEnd);
+        assertTrue(structures.contains("placeVanillaStructures(generatoraccessseed, ichunkaccess, structuremanager);"));
+        int preparationGuard = decoration.indexOf("if (!flatStudioTerrain)");
+        assertTrue(structuresEnd < preparationGuard);
+        assertTrue(decoration.indexOf("NativeGenerationWriteGuard.allowsDecoration") > structuresEnd);
+        int preparationEnd = decoration.indexOf("\n                }", preparationGuard);
+        String preparation = decoration.substring(preparationGuard, preparationEnd);
+        assertTrue(preparation.contains("importedFeatures.prepare(generatoraccessseed);"));
+
+        int placementGuard = decoration.indexOf("if (!flatStudioTerrain)", preparationEnd);
+        int placementEnd = decoration.indexOf("\n                }", placementGuard);
+        String placement = decoration.substring(placementGuard, placementEnd);
+        assertTrue(placement.contains("importedFeatures.run(generatoraccessseed, ichunkaccess, this);"));
+        int heightmaps = decoration.indexOf("addVanillaDecorations(generatoraccessseed, ichunkaccess, structuremanager);");
+        int populators = decoration.indexOf("delegate.applyBiomeDecoration(generatoraccessseed, ichunkaccess, structuremanager, false);");
+        assertTrue(heightmaps > preparationEnd && heightmaps < placementGuard);
+        assertTrue(populators > placementEnd);
+        assertTrue(decoration.indexOf("claimGeneratedSemantics(route,") > populators);
+        assertTrue(decoration.contains("requireGenerationStage(\"bukkit_nms_biome_decoration\")"));
+        assertTrue(decoration.contains("requireGenerationLease(\"bukkit_nms_biome_decoration\")"));
+    }
+
+    @Test
     public void everyChunkUsesTheProductionGenerationStages() throws IOException {
         String source = Files.readString(Path.of(System.getProperty("iris.nmsChunkGeneratorSource")))
                 .replace("\r\n", "\n");

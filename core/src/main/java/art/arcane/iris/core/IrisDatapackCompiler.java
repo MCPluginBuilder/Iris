@@ -22,6 +22,11 @@ import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.collection.KSet;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -53,7 +58,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public final class IrisDatapackCompiler {
-    private static final int INPUT_FINGERPRINT_SCHEMA = 3;
+    private static final int INPUT_FINGERPRINT_SCHEMA = 4;
     private static final int INPUT_BUFFER_BYTES = 64 * 1024;
     private static final int WORLD_PACK_SCAN_DEPTH = 8;
     private static final Pattern REGISTRY_KEY_PATTERN = Pattern.compile("[a-z0-9_.-]+:[a-z0-9/._-]+");
@@ -177,6 +182,9 @@ public final class IrisDatapackCompiler {
                 }
             }
         }
+        for (GenerationRegistryContract contract : retainedRegistryContracts(packRoots)) {
+            updateDigestString(digest, contract.fingerprint());
+        }
         return HexFormat.of().formatHex(digest.digest());
     }
 
@@ -219,6 +227,14 @@ public final class IrisDatapackCompiler {
             } finally {
                 data.close();
             }
+        }
+        for (GenerationRegistryContract contract : retainedRegistryContracts(packRoots)) {
+            for (PhysicalResourceKey key : contract.generatedSources().keySet()) {
+                putRegistryRequirement(requirements, registryPath(key) + "/" + key.resourceKey(),
+                        fingerprintContent(GenerationRegistryContractFactory.renderGeneratedSource(contract, key, fixer)));
+            }
+            contract.biomeTags().forEach((biome, tags) ->
+                    biomeTags.computeIfAbsent(biome, ignored -> new TreeSet<>()).addAll(tags));
         }
         addBiomeTagRequirements(requirements, biomeTags);
         return Map.copyOf(requirements);
@@ -494,9 +510,109 @@ public final class IrisDatapackCompiler {
         }
 
         IrisDimension.writeShared(datapackRoots, height, adjustVanillaHeight);
+        installRetainedRegistrySources(packRoots, datapackRoots, fixer);
         installLevelStemBindings(normalizedBindings, dimensions, datapackRoots);
         validateOutputs(datapackRoots, dimensionCount, normalizedBindings.size());
         return new CompilationResult(packCount, dimensionCount, countBiomes(biomes));
+    }
+
+    public static void installRetainedRegistrySources(List<File> packRoots, Collection<File> datapackRoots,
+                                                     IDataFixer fixer) throws IOException {
+        Map<PhysicalResourceKey, String> sources = new TreeMap<>();
+        Map<String, Set<String>> tags = new TreeMap<>();
+        for (GenerationRegistryContract contract : retainedRegistryContracts(packRoots)) {
+            for (PhysicalResourceKey key : contract.generatedSources().keySet()) {
+                String source = GenerationRegistryContractFactory.renderGeneratedSource(contract, key, fixer);
+                String previous = sources.putIfAbsent(key, source);
+                if (previous != null && !JsonParser.parseString(previous).equals(JsonParser.parseString(source))) {
+                    throw new IOException("Conflicting retained registry source for " + key);
+                }
+            }
+            contract.biomeTags().forEach((biome, memberships) -> {
+                for (String tag : memberships) {
+                    tags.computeIfAbsent(tag, ignored -> new TreeSet<>()).add(biome);
+                }
+            });
+        }
+        for (File root : datapackRoots) {
+            for (Map.Entry<PhysicalResourceKey, String> entry : sources.entrySet()) {
+                Path output = registryOutput(root.toPath(), registryPath(entry.getKey()), entry.getKey().resourceKey());
+                if (Files.exists(output)) {
+                    String previous = Files.readString(output, StandardCharsets.UTF_8);
+                    if (!JsonParser.parseString(previous).equals(JsonParser.parseString(entry.getValue()))) {
+                        throw new IOException("Conflicting retained registry output at " + output);
+                    }
+                    continue;
+                }
+                Files.createDirectories(output.getParent());
+                Files.writeString(output, entry.getValue(), StandardCharsets.UTF_8);
+            }
+            for (Map.Entry<String, Set<String>> entry : tags.entrySet()) {
+                writeRetainedBiomeTag(registryOutput(root.toPath(), "tags/worldgen/biome", entry.getKey()), entry.getValue());
+            }
+        }
+    }
+
+    private static void writeRetainedBiomeTag(Path output, Set<String> biomes) throws IOException {
+        Set<String> merged = new TreeSet<>(biomes);
+        if (Files.exists(output)) {
+            JsonObject existing = JsonParser.parseString(Files.readString(output, StandardCharsets.UTF_8)).getAsJsonObject();
+            for (JsonElement value : existing.getAsJsonArray("values")) {
+                merged.add(value.getAsString());
+            }
+        }
+        JsonArray values = new JsonArray();
+        merged.forEach(values::add);
+        JsonObject tag = new JsonObject();
+        tag.addProperty("replace", false);
+        tag.add("values", values);
+        Files.createDirectories(output.getParent());
+        Files.writeString(output, tag.toString(), StandardCharsets.UTF_8);
+    }
+
+    private static Path registryOutput(Path root, String registryPath, String resourceKey) throws IOException {
+        int separator = resourceKey.indexOf(':');
+        Path directory = root.toAbsolutePath().normalize().resolve("data")
+                .resolve(resourceKey.substring(0, separator)).resolve(registryPath);
+        Path output = directory.resolve(resourceKey.substring(separator + 1) + ".json").normalize();
+        if (!output.startsWith(directory)) {
+            throw new IOException("Unsafe retained registry resource key " + resourceKey);
+        }
+        return output;
+    }
+
+    private static String registryPath(PhysicalResourceKey key) {
+        return key.registryKey().substring(key.registryKey().indexOf(':') + 1);
+    }
+
+    private static List<GenerationRegistryContract> retainedRegistryContracts(List<File> packRoots) throws IOException {
+        Map<String, GenerationRegistryContract> contracts = new TreeMap<>();
+        Set<Path> loadedWorlds = new LinkedHashSet<>();
+        for (File pack : packRoots) {
+            Path dimensionRoot = historyDimensionRoot(pack.toPath());
+            if (dimensionRoot == null || !loadedWorlds.add(dimensionRoot)) {
+                continue;
+            }
+            for (GenerationEpoch epoch : GenerationHistory.open(dimensionRoot).manifest().epochs()) {
+                contracts.putIfAbsent(epoch.registryContract().fingerprint(), epoch.registryContract());
+            }
+        }
+        return List.copyOf(contracts.values());
+    }
+
+    private static Path historyDimensionRoot(Path packRoot) {
+        Path pack = packRoot.toAbsolutePath().normalize();
+        Path epoch = pack.getParent();
+        Path epochs = epoch == null ? null : epoch.getParent();
+        Path generation = epochs == null ? null : epochs.getParent();
+        Path iris = generation == null ? null : generation.getParent();
+        if (iris == null || iris.getParent() == null || !"pack".equals(pack.getFileName().toString())
+                || !"epochs".equals(epochs.getFileName().toString())
+                || !"generation".equals(generation.getFileName().toString())
+                || !"iris".equals(iris.getFileName().toString())) {
+            return null;
+        }
+        return iris.getParent();
     }
 
     private static void installLevelStemBindings(
@@ -648,11 +764,9 @@ public final class IrisDatapackCompiler {
                 && (Files.exists(generationRoot, LinkOption.NOFOLLOW_LINKS)
                 || Files.isSymbolicLink(generationRoot))) {
             GenerationHistory history = GenerationHistory.open(worldRoot);
-            for (GenerationEpoch epoch : history.manifest().epochs()) {
-                Path retainedPack = history.paths().packRoot(epoch.epochId());
-                if (hasDimensions(retainedPack)) {
-                    candidates.add(retainedPack);
-                }
+            candidates.add(history.activePackRoot());
+            if (history.pendingActivation().isPresent()) {
+                candidates.add(history.packRoot(history.pendingActivation().orElseThrow().activationId()));
             }
             return true;
         }
