@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -39,6 +40,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.function.IntPredicate;
 
 public final class HydrologyPlanner {
@@ -124,6 +126,7 @@ public final class HydrologyPlanner {
     private final int minimumY;
     private final HydrologyCaveVoxelViewFactory caveViewFactory;
     private final Cache<HydrologyTileKey, SourceRoutingContext> routingContexts;
+    private final ConcurrentHashMap<HydrologyTileKey, RoutingContextLoad> resolvingRoutingContexts;
     private final Cache<HydrologyTileKey, CrossTileResolvedOwner> resolvedOwners;
     private final Cache<RefinedEdgeKey, List<HydrologyPoint>> refinedEdgeCache;
     private final ConcurrentHashMap<HydrologyTileKey, CompletableFuture<CrossTileResolvedOwner>> resolvingOwners;
@@ -237,6 +240,7 @@ public final class HydrologyPlanner {
         this.routingContexts = Caffeine.newBuilder()
                 .maximumSize(ROUTING_CONTEXT_CACHE_SIZE)
                 .build();
+        this.resolvingRoutingContexts = new ConcurrentHashMap<>();
         this.resolvedOwners = Caffeine.newBuilder()
                 .maximumSize(RESOLVED_OWNER_CACHE_SIZE)
                 .build();
@@ -252,7 +256,7 @@ public final class HydrologyPlanner {
         this.routeWormDetail = new SimplexNoise(HydrologyHash.mix(worldSeed, ROUTE_WORM_DETAIL_SALT));
         this.surfaceCourseBuilder = new SurfaceCourseBuilder(
                 settings.surface(),
-                this::sampleBasis,
+                this::sampleBasisWithoutSlope,
                 geometrySampler,
                 settings.seaLevel(),
                 settings.routing().minimumSurfaceCourseLength()
@@ -260,7 +264,7 @@ public final class HydrologyPlanner {
         // A tributary only has to be a real reach before it joins its stem: half the course minimum.
         this.tributaryCourseBuilder = new SurfaceCourseBuilder(
                 settings.surface(),
-                this::sampleBasis,
+                this::sampleBasisWithoutSlope,
                 geometrySampler,
                 settings.seaLevel(),
                 settings.routing().minimumSurfaceCourseLength() / 2
@@ -418,6 +422,10 @@ public final class HydrologyPlanner {
                     sourceRoutingContexts
             );
             phaseStarted = profile.record(DraftPhase.SELECT, phaseStarted);
+            if (crossTileAdmission != null && (!surfaceSelection.selectedCandidateIndices.isEmpty()
+                    || !undergroundSelection.selectedCandidateIndices.isEmpty())) {
+                crossTileAdmission.prepare();
+            }
         }
         HydrologyFootprintCompiler footprintCompiler = new HydrologyFootprintCompiler(
                 settings,
@@ -780,15 +788,24 @@ public final class HydrologyPlanner {
         try {
             int ownerRank = ownerColorRank(key);
             ColorRankedDraftAdmission admission = new ColorRankedDraftAdmission(key, ownerRank, context);
-            HydrologyOwnerDraft draft = compileOwnerDraft(
-                    key,
-                    admission,
-                    key.equals(context.root())
-            );
+            HydrologyOwnerDraft draft;
+            try (admission) {
+                try {
+                    draft = compileOwnerDraft(
+                            key,
+                            admission,
+                            key.equals(context.root())
+                    );
+                } catch (RuntimeException | Error failure) {
+                    admission.primaryFailure = failure;
+                    throw failure;
+                }
+            }
             CrossTileResolvedOwner resolved = new CrossTileResolvedOwner(draft, admission.observedRejections());
             context.remember(key, resolved);
-            resolvedOwners.put(key, resolved.withoutFootprintCompiler());
-            owned.complete(resolved);
+            CrossTileResolvedOwner shared = resolved.withoutFootprintCompiler();
+            resolvedOwners.put(key, shared);
+            owned.complete(shared);
             return resolved;
         } catch (Throwable failure) {
             owned.completeExceptionally(failure);
@@ -803,7 +820,8 @@ public final class HydrologyPlanner {
             HydrologyTileKey ownerKey,
             HydrologyCaveCourseFilter.Result result,
             int ownerRank,
-            CrossTileResolutionContext context
+            CrossTileResolutionContext context,
+            Map<HydrologyTileKey, HydrologyForkJoin.Task<CrossTileResolvedOwner>> preparedOwners
     ) {
         ArrayList<HydrologyCrossTileCaveAdmission.RankedClaim> blockers = new ArrayList<>();
         ArrayList<HydrologyCrossTileSurfaceAdmission.RankedClaim> surfaceBlockers = new ArrayList<>();
@@ -822,7 +840,7 @@ public final class HydrologyPlanner {
             candidateKeys.add(candidateKey);
         }
         long dependenciesStarted = System.nanoTime();
-        List<CrossTileResolvedOwner> resolvedCandidates = resolveLowerRankOwners(candidateKeys, context);
+        List<CrossTileResolvedOwner> resolvedCandidates = resolveLowerRankOwners(candidateKeys, context, preparedOwners);
         currentDraftProfile().recordDependencies(candidateKeys.size(), dependenciesStarted);
         for (int index = 0; index < candidateKeys.size(); index++) {
             HydrologyTileKey candidateKey = candidateKeys.get(index);
@@ -848,20 +866,26 @@ public final class HydrologyPlanner {
 
     private List<CrossTileResolvedOwner> resolveLowerRankOwners(
             List<HydrologyTileKey> candidateKeys,
-            CrossTileResolutionContext context
+            CrossTileResolutionContext context,
+            Map<HydrologyTileKey, HydrologyForkJoin.Task<CrossTileResolvedOwner>> preparedOwners
     ) {
         if (candidateKeys.size() < 2 || !IrisPlatforms.isBound()) {
             ArrayList<CrossTileResolvedOwner> resolved = new ArrayList<>(candidateKeys.size());
             for (HydrologyTileKey candidateKey : candidateKeys) {
-                resolved.add(resolveCrossTileOwner(candidateKey, context));
+                HydrologyForkJoin.Task<CrossTileResolvedOwner> prepared = preparedOwners.get(candidateKey);
+                CrossTileResolvedOwner owner = prepared == null
+                        ? resolveCrossTileOwner(candidateKey, context) : prepared.await();
+                context.remember(candidateKey, owner);
+                resolved.add(owner);
             }
             return List.copyOf(resolved);
         }
-        // Neighbour drafts fork into the pool this thread belongs to (or the burst pool from outside
-        // any pool) and are joined with work helping, so a saturated pool never deadlocks on them.
+        // Neighbour drafts use the current pool (or the burst pool from outside any pool).
+        // Waiting workers claim their own tasks without helping unrelated owner drafts.
         ArrayList<Callable<CrossTileResolvedOwner>> tasks = new ArrayList<>(candidateKeys.size());
         for (HydrologyTileKey candidateKey : candidateKeys) {
-            tasks.add(() -> resolveIndependentOwner(candidateKey));
+            HydrologyForkJoin.Task<CrossTileResolvedOwner> prepared = preparedOwners.get(candidateKey);
+            tasks.add(prepared == null ? () -> resolveIndependentOwner(candidateKey) : prepared::await);
         }
         List<CrossTileResolvedOwner> owners = HydrologyForkJoin.invokeAll(tasks, MultiBurst.burst);
         ArrayList<CrossTileResolvedOwner> resolved = new ArrayList<>(candidateKeys.size());
@@ -1227,7 +1251,11 @@ public final class HydrologyPlanner {
         if (includeDeepFluids && grid != null) {
             compileSeaCaves(grid, courses, diagnostics);
         }
+        DraftProfile profile = currentDraftProfile();
+        long rasterStarted = System.nanoTime();
         HydrologyFootprintCompiler.ValidationRaster validation = footprintCompiler.compileValidation(courses);
+        profile.rasterNanos += System.nanoTime() - rasterStarted;
+        profile.rasterCalls++;
         HydrologyObservedPlannedSurface plannedSurface = new HydrologyObservedPlannedSurface(
                 validation.plannedSurface()
         );
@@ -1243,6 +1271,7 @@ public final class HydrologyPlanner {
                 samples == null ? null : samples.caveCandidates;
         HydrologyCaveContainmentPlanner.ValidationCache validationCache =
                 samples == null ? null : samples.caveValidations;
+        long filterStarted = System.nanoTime();
         HydrologyCaveCourseFilter.Result containment = new HydrologyCaveCourseFilter(
                 caveView,
                 new HydrologyCaveCourseFilter.Options(
@@ -1261,6 +1290,8 @@ public final class HydrologyPlanner {
                 validation,
                 diagnostics
         );
+        profile.filterNanos += System.nanoTime() - filterStarted;
+        profile.filterCalls++;
         return new PublicationAttempt(containment, diagnostics);
     }
 
@@ -1650,7 +1681,7 @@ public final class HydrologyPlanner {
                     settled = true;
                     break;
                 }
-                int floor = sampleBasis(point.x(), point.z()).naturalHeight() - maximumIncision;
+                int floor = sampleBasisWithoutSlope(point.x(), point.z()).naturalHeight() - maximumIncision;
                 int lowered = Math.min(point.y(), Math.max(Math.max(allowed, floor), downstreamHead));
                 if (lowered < point.y()) {
                     centerline.set(pointIndex, new HydrologyPoint(point.x(), lowered, point.z()));
@@ -3031,7 +3062,36 @@ public final class HydrologyPlanner {
     }
 
     private SourceRoutingContext sourceRoutingContext(HydrologyTileKey key) {
-        return routingContexts.get(key, this::compileSourceRoutingContext);
+        SourceRoutingContext cached = routingContexts.getIfPresent(key);
+        if (cached != null) {
+            return cached;
+        }
+        RoutingContextLoad owned = new RoutingContextLoad(Thread.currentThread(), new CompletableFuture<>());
+        RoutingContextLoad existing = resolvingRoutingContexts.putIfAbsent(key, owned);
+        if (existing != null) {
+            if (existing.owner() == Thread.currentThread()) {
+                throw new IllegalStateException("Hydrology routing context cannot recursively load its own tile.");
+            }
+            try {
+                return existing.future().join();
+            } catch (CompletionException failure) {
+                throw propagateOwnerFailure(failure.getCause());
+            }
+        }
+        try {
+            SourceRoutingContext resolved = routingContexts.getIfPresent(key);
+            if (resolved == null) {
+                resolved = compileSourceRoutingContext(key);
+                routingContexts.put(key, resolved);
+            }
+            owned.future().complete(resolved);
+            return resolved;
+        } catch (Throwable failure) {
+            owned.future().completeExceptionally(failure);
+            throw propagateOwnerFailure(failure);
+        } finally {
+            resolvingRoutingContexts.remove(key, owned);
+        }
     }
 
     private SourceRoutingContext compileSourceRoutingContext(HydrologyTileKey key) {
@@ -3487,16 +3547,19 @@ public final class HydrologyPlanner {
             int desiredZ,
             double maximumOffsetRatio
     ) {
-        HydrologyTerrainSample terrain = sampleLandBasis(x, z);
+        double distanceFromNode = StrictMath.hypot(x - node.x(), z - node.z());
+        if (distanceFromNode > settings.routing().sampleSpacing() * maximumOffsetRatio) {
+            return Double.POSITIVE_INFINITY;
+        }
+        HydrologyTerrainSample terrain = sampleLandBasisWithoutSlope(x, z);
         if (terrain == null || !terrain.transitAllowed() || !withinConfines(terrain, node.terrain().confinesKey())) {
             return Double.POSITIVE_INFINITY;
         }
-        double distanceFromDesired = StrictMath.hypot(x - desiredX, z - desiredZ);
-        double distanceFromNode = StrictMath.hypot(x - node.x(), z - node.z());
-        if (distanceFromNode > settings.routing().sampleSpacing() * maximumOffsetRatio
-                || !traversableHop(node.naturalPoint(), new HydrologyPoint(x, terrain.naturalHeight(), z))) {
+        if (!traversableHop(node.naturalPoint(), new HydrologyPoint(x, terrain.naturalHeight(), z))) {
             return Double.POSITIVE_INFINITY;
         }
+        terrain = sampleLandBasis(x, z);
+        double distanceFromDesired = StrictMath.hypot(x - desiredX, z - desiredZ);
         double score = terrain.naturalHeight() * settings.routing().valleyPreference()
                 + terrain.slope() * settings.routing().slopePenalty()
                 + terrain.routingCost() * terrain.routingMultiplier()
@@ -3637,7 +3700,7 @@ public final class HydrologyPlanner {
         ArrayList<HydrologyPoint> points = new ArrayList<>(direct.size());
         for (int index = 0; index < direct.size(); index++) {
             HydrologyPoint point = direct.get(index);
-            HydrologyTerrainSample terrain = sampleLandBasis(point.x(), point.z());
+            HydrologyTerrainSample terrain = sampleLandBasisWithoutSlope(point.x(), point.z());
             if (terrain == null || !terrain.transitAllowed()) {
                 return List.of();
             }
@@ -3661,7 +3724,7 @@ public final class HydrologyPlanner {
         for (int direction : List.of(-1, 1)) {
             int x = (int) StrictMath.round(point.x() + perpendicularX * refinement * direction);
             int z = (int) StrictMath.round(point.z() + perpendicularZ * refinement * direction);
-            HydrologyTerrainSample terrain = sampleLandBasis(x, z);
+            HydrologyTerrainSample terrain = sampleLandBasisWithoutSlope(x, z);
             if (terrain != null && terrain.transitAllowed()) {
                 return true;
             }
@@ -3827,11 +3890,13 @@ public final class HydrologyPlanner {
                 candidates.put(packed, candidate);
             }
         }
+        if (!candidates.isEmpty()) {
+            return List.copyOf(candidates.values());
+        }
         int fallbackX = (int) StrictMath.round(nominal.baseX());
         int fallbackZ = (int) StrictMath.round(nominal.baseZ());
         HydrologyTerrainSample fallbackTerrain = sampleLandBasis(fallbackX, fallbackZ);
-        if (candidates.isEmpty()
-                && fallbackTerrain != null
+        if (fallbackTerrain != null
                 && fallbackTerrain.transitAllowed()
                 && withinConfines(fallbackTerrain, confines)) {
             long packed = RiverFootprint.pack(fallbackX, fallbackZ);
@@ -4141,6 +4206,7 @@ public final class HydrologyPlanner {
         }
         double[][] localPenalties = new double[layerCount][];
         double[][][] transitionCosts = new double[layerCount][][];
+        double[][][][] turnCosts = new double[layerCount][][][];
         for (int layerIndex = 0; layerIndex < layerCount; layerIndex++) {
             int layerSize = layers.get(layerIndex).size();
             localPenalties[layerIndex] = new double[layerSize];
@@ -4163,7 +4229,8 @@ public final class HydrologyPlanner {
                     maximumTurn,
                     turnCost,
                     localPenalties,
-                    transitionCosts
+                    transitionCosts,
+                    turnCosts
             );
             if (selection.route().length == 0) {
                 return selection.route();
@@ -4187,7 +4254,8 @@ public final class HydrologyPlanner {
             double maximumTurn,
             double turnCost,
             double[][] localPenalties,
-            double[][][] transitionCosts
+            double[][][] transitionCosts,
+            double[][][][] turnCosts
     ) {
         int layerCount = layers.size();
         double[][][] costs = new double[layerCount][][];
@@ -4222,6 +4290,9 @@ public final class HydrologyPlanner {
             List<RouteCandidate> currentLayer = layers.get(layerIndex);
             costs[layerIndex] = new double[previousLayer.size()][currentLayer.size()];
             predecessors[layerIndex] = new int[previousLayer.size()][currentLayer.size()];
+            if (turnCosts[layerIndex] == null) {
+                turnCosts[layerIndex] = new double[previousLayer.size()][currentLayer.size()][];
+            }
             for (int previousIndex = 0; previousIndex < previousLayer.size(); previousIndex++) {
                 Arrays.fill(costs[layerIndex][previousIndex], Double.POSITIVE_INFINITY);
                 Arrays.fill(predecessors[layerIndex][previousIndex], -1);
@@ -4243,20 +4314,32 @@ public final class HydrologyPlanner {
                         if (!Double.isFinite(previousCost)) {
                             continue;
                         }
-                        RouteCandidate before = beforeLayer.get(beforeIndex);
-                        double turn = routeTurnDegrees(
-                                before.point(),
-                                previous.point(),
-                                current.point()
-                        );
-                        if (turn > maximumTurn) {
+                        double[] candidateTurns = turnCosts[layerIndex][previousIndex][currentIndex];
+                        if (candidateTurns == null) {
+                            candidateTurns = new double[beforeLayer.size()];
+                            Arrays.fill(candidateTurns, Double.NaN);
+                            turnCosts[layerIndex][previousIndex][currentIndex] = candidateTurns;
+                        }
+                        double turnPenalty = candidateTurns[beforeIndex];
+                        if (Double.isNaN(turnPenalty)) {
+                            double turn = routeTurnDegrees(
+                                    beforeLayer.get(beforeIndex).point(),
+                                    previous.point(),
+                                    current.point()
+                            );
+                            turnPenalty = turn > maximumTurn
+                                    ? Double.POSITIVE_INFINITY
+                                    : curvatureCost(turn, maximumTurn, turnCost);
+                            candidateTurns[beforeIndex] = turnPenalty;
+                        }
+                        if (turnPenalty == Double.POSITIVE_INFINITY) {
                             continue;
                         }
                         double cost = previousCost
                                 + current.localScore()
                                 + localPenalty
                                 + transition
-                                + curvatureCost(turn, maximumTurn, turnCost);
+                                + turnPenalty;
                         if (cost < costs[layerIndex][previousIndex][currentIndex]) {
                             costs[layerIndex][previousIndex][currentIndex] = cost;
                             predecessors[layerIndex][previousIndex][currentIndex] = beforeIndex;
@@ -4480,8 +4563,8 @@ public final class HydrologyPlanner {
         if (offsetX == 0 && offsetZ == 0) {
             return false;
         }
-        HydrologyTerrainSample before = sampleLandBasis(point.x() - offsetX, point.z() - offsetZ);
-        HydrologyTerrainSample after = sampleLandBasis(point.x() + offsetX, point.z() + offsetZ);
+        HydrologyTerrainSample before = sampleLandBasisWithoutSlope(point.x() - offsetX, point.z() - offsetZ);
+        HydrologyTerrainSample after = sampleLandBasisWithoutSlope(point.x() + offsetX, point.z() + offsetZ);
         int threshold = settings.hydraulics().waterfallMinimumDrop();
         return before != null
                 && after != null
@@ -4504,7 +4587,7 @@ public final class HydrologyPlanner {
                 HydrologyPoint next = current.get(pointIndex + 1);
                 int x = (int) StrictMath.round(previous.x() * 0.25D + point.x() * 0.5D + next.x() * 0.25D);
                 int z = (int) StrictMath.round(previous.z() * 0.25D + point.z() * 0.5D + next.z() * 0.25D);
-                HydrologyTerrainSample terrain = sampleLandBasis(x, z);
+                HydrologyTerrainSample terrain = sampleLandBasisWithoutSlope(x, z);
                 smoothed.add(terrain == null || !terrain.transitAllowed()
                         ? point
                         : new HydrologyPoint(x, terrain.naturalHeight(), z));
@@ -4661,8 +4744,8 @@ public final class HydrologyPlanner {
         if (crossing.size() < 3) {
             return false;
         }
-        HydrologyTerrainSample startTerrain = sampleLandBasis(start.x(), start.z());
-        HydrologyTerrainSample endTerrain = sampleLandBasis(end.x(), end.z());
+        HydrologyTerrainSample startTerrain = sampleLandBasisWithoutSlope(start.x(), start.z());
+        HydrologyTerrainSample endTerrain = sampleLandBasisWithoutSlope(end.x(), end.z());
         if (startTerrain == null || endTerrain == null) {
             return true;
         }
@@ -4670,7 +4753,7 @@ public final class HydrologyPlanner {
         int threshold = settings.hydraulics().waterfallMinimumDrop();
         for (int pointIndex = 1; pointIndex < crossing.size() - 1; pointIndex++) {
             HydrologyPoint point = crossing.get(pointIndex);
-            HydrologyTerrainSample terrain = sampleLandBasis(point.x(), point.z());
+            HydrologyTerrainSample terrain = sampleLandBasisWithoutSlope(point.x(), point.z());
             if (terrain == null || boundaryHeight - terrain.naturalHeight() >= threshold) {
                 return true;
             }
@@ -5275,7 +5358,7 @@ public final class HydrologyPlanner {
         preferredHeads[0] = initialHead;
         for (int index = 0; index < pairCount; index++) {
             HydrologyPoint point = path.points().get(index);
-            HydrologyTerrainSample terrain = sampleBasis(point.x(), point.z());
+            HydrologyTerrainSample terrain = sampleBasisWithoutSlope(point.x(), point.z());
             int discharge = Math.max(1, path.pairEdges().get(index).contributingUndergroundSources());
             widths[index] = scaledDimension(
                     sampleGeometry(
@@ -5978,8 +6061,8 @@ public final class HydrologyPlanner {
         for (int pointIndex = 0; pointIndex < raster.size() - 1; pointIndex++) {
             HydrologyPoint current = raster.get(pointIndex);
             HydrologyPoint downstream = raster.get(pointIndex + 1);
-            HydrologyTerrainSample currentTerrain = sampleBasis(current.x(), current.z());
-            HydrologyTerrainSample downstreamTerrain = sampleBasis(downstream.x(), downstream.z());
+            HydrologyTerrainSample currentTerrain = sampleBasisWithoutSlope(current.x(), current.z());
+            HydrologyTerrainSample downstreamTerrain = sampleBasisWithoutSlope(downstream.x(), downstream.z());
             long decline = (long) currentTerrain.naturalHeight() - downstreamTerrain.naturalHeight();
             if (decline > strongestDecline) {
                 strongestDecline = decline;
@@ -6078,11 +6161,29 @@ public final class HydrologyPlanner {
                 edges.getFirst().upstreamNodeId(),
                 outlet.id()
         );
-        List<HydrologyPoint> points = surfaceCourseCenterline(
-                Objects.requireNonNull(grid, "Surface course routing grid is required"),
-                surfaceGuide,
-                geometryId
-        );
+        Objects.requireNonNull(grid, "Surface course routing grid is required");
+        PlanningSamples samples = planningSamples.get();
+        DraftProfile profile = currentDraftProfile();
+        profile.routeCalls++;
+        List<HydrologyPoint> points;
+        if (samples == null) {
+            profile.routeSolves++;
+            long solveStarted = System.nanoTime();
+            points = surfaceCourseCenterline(grid, surfaceGuide, geometryId);
+            profile.routeSolveNanos += System.nanoTime() - solveStarted;
+        } else {
+            HashMap<SurfaceRouteKey, List<HydrologyPoint>> routes = samples.surfaceRoutes.computeIfAbsent(
+                    grid, ignored -> new HashMap<>()
+            );
+            SurfaceRouteKey routeKey = new SurfaceRouteKey(surfaceGuide, geometryId);
+            points = routes.computeIfAbsent(routeKey, ignored -> {
+                profile.routeSolves++;
+                long solveStarted = System.nanoTime();
+                List<HydrologyPoint> solved = surfaceCourseCenterline(grid, surfaceGuide, geometryId);
+                profile.routeSolveNanos += System.nanoTime() - solveStarted;
+                return solved;
+            });
+        }
         if (points.size() < 2) {
             return null;
         }
@@ -7865,6 +7966,7 @@ public final class HydrologyPlanner {
         private final HashMap<Integer, List<GridOffset>> radialOffsets;
         private final HashMap<UndergroundSegmentCapKey, Integer> undergroundSegmentCaps;
         private final HashMap<Long, HydrologyPoint> routeAnchors;
+        private final IdentityHashMap<SampledGrid, HashMap<SurfaceRouteKey, List<HydrologyPoint>>> surfaceRoutes;
         private final HydrologyCaveCourseFilter.CandidateCache caveCandidates;
         private final HydrologyCaveContainmentPlanner.ValidationCache caveValidations;
 
@@ -7878,6 +7980,7 @@ public final class HydrologyPlanner {
             this.radialOffsets = new HashMap<>();
             this.undergroundSegmentCaps = new HashMap<>();
             this.routeAnchors = new HashMap<>();
+            this.surfaceRoutes = new IdentityHashMap<>();
             this.caveCandidates = new HydrologyCaveCourseFilter.CandidateCache();
             this.caveValidations = new HydrologyCaveContainmentPlanner.ValidationCache();
         }
@@ -7922,6 +8025,9 @@ public final class HydrologyPlanner {
     }
 
     private record RoutePosition(double x, double z, double baseX, double baseZ, Direction tangent) {
+    }
+
+    private record SurfaceRouteKey(List<HydrologyPoint> guide, long geometryId) {
     }
 
     private record RouteCandidate(
@@ -8307,6 +8413,9 @@ public final class HydrologyPlanner {
     ) {
     }
 
+    private record RoutingContextLoad(Thread owner, CompletableFuture<SourceRoutingContext> future) {
+    }
+
     private record SourceRoutingContext(
             SampledGrid grid,
             RoutingPlan surfaceRouting,
@@ -8385,16 +8494,20 @@ public final class HydrologyPlanner {
         }
     }
 
-    @FunctionalInterface
     private interface CrossTileDraftAdmission {
+        void prepare();
+
         CrossTilePublicationAdmission admit(HydrologyCaveCourseFilter.Result result);
     }
 
-    private final class ColorRankedDraftAdmission implements CrossTileDraftAdmission {
+    private final class ColorRankedDraftAdmission implements CrossTileDraftAdmission, AutoCloseable {
         private final HydrologyTileKey ownerKey;
         private final int ownerRank;
         private final CrossTileResolutionContext context;
         private final Set<Long> rejectedCourseIds;
+        private final Map<HydrologyTileKey, HydrologyForkJoin.Task<CrossTileResolvedOwner>> preparedOwners = new LinkedHashMap<>();
+        private final Set<HydrologyTileKey> demandedOwners = new HashSet<>();
+        private Throwable primaryFailure;
         private final LinkedHashMap<CrossTileRejectionKey, CrossTileRejectedCourse> observedRejections;
 
         private ColorRankedDraftAdmission(
@@ -8410,17 +8523,90 @@ public final class HydrologyPlanner {
         }
 
         @Override
+        public void prepare() {
+            if (ownerRank == 0 || settings.crossTileColorPeriod() != 2 || !hasRoutedSourceSearch()
+                    || !(Thread.currentThread() instanceof ForkJoinWorkerThread worker)) {
+                return;
+            }
+            int radius = settings.crossTileColorPeriod() - 1;
+            ArrayList<HydrologyTileKey> candidates = new ArrayList<>();
+            for (long tileZ = (long) ownerKey.tileZ() - radius; tileZ <= (long) ownerKey.tileZ() + radius; tileZ++) {
+                for (long tileX = (long) ownerKey.tileX() - radius; tileX <= (long) ownerKey.tileX() + radius; tileX++) {
+                    if (tileX < Integer.MIN_VALUE || tileX > Integer.MAX_VALUE
+                            || tileZ < Integer.MIN_VALUE || tileZ > Integer.MAX_VALUE) {
+                        continue;
+                    }
+                    HydrologyTileKey key = new HydrologyTileKey((int) tileX, (int) tileZ);
+                    if (ownerColorRank(key) >= ownerRank || preparedOwners.containsKey(key)
+                            || resolvedOwners.getIfPresent(key) != null || resolvingOwners.containsKey(key)) {
+                        continue;
+                    }
+                    candidates.add(key);
+                }
+            }
+            candidates.sort(Comparator.comparingInt(HydrologyPlanner.this::ownerColorRank).reversed()
+                    .thenComparing(HydrologyTileKey::compareTo));
+            for (HydrologyTileKey key : candidates) {
+                if (resolvedOwners.getIfPresent(key) != null || resolvingOwners.containsKey(key)) {
+                    continue;
+                }
+                HydrologyForkJoin.Task<CrossTileResolvedOwner> task = new HydrologyForkJoin.Task<>(() -> resolveIndependentOwner(key));
+                preparedOwners.put(key, task);
+                try {
+                    worker.getPool().execute(task);
+                } catch (RuntimeException | Error failure) {
+                    preparedOwners.remove(key);
+                    throw failure;
+                }
+                currentDraftProfile().earlyOwners++;
+            }
+        }
+
+        @Override
+        public void close() {
+            Error failure = null;
+            Map<HydrologyTileKey, RuntimeException> unusedFailures = new LinkedHashMap<>();
+            for (Map.Entry<HydrologyTileKey, HydrologyForkJoin.Task<CrossTileResolvedOwner>> entry : preparedOwners.entrySet()) {
+                try {
+                    entry.getValue().await();
+                } catch (RuntimeException unusedFailure) {
+                    if (!demandedOwners.contains(entry.getKey())) {
+                        unusedFailures.put(entry.getKey(), unusedFailure);
+                    }
+                } catch (Error failed) {
+                    if (failed == primaryFailure) {
+                        continue;
+                    }
+                    if (failure == null) {
+                        failure = failed;
+                    } else if (failure != failed) {
+                        failure.addSuppressed(failed);
+                    }
+                }
+            }
+            for (Map.Entry<HydrologyTileKey, RuntimeException> entry : unusedFailures.entrySet()) {
+                IrisLogging.reportError("Unused early hydrology owner " + entry.getKey().tileX()
+                        + "," + entry.getKey().tileZ() + " failed to prepare.", entry.getValue());
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        @Override
         public CrossTilePublicationAdmission admit(HydrologyCaveCourseFilter.Result result) {
             context.recordIteration();
             HydrologyCaveCourseFilter.Result current = HydrologyCaveCourseFilter.withoutCourses(
                     result,
                     rejectedCourseIds
             );
+            demandedOwners.addAll(conflictOwnerKeys(ownerKey, current));
             CrossTileBlockers blockers = lowerRankBlockers(
                     ownerKey,
                     current,
                     ownerRank,
-                    context
+                    context,
+                    preparedOwners
             );
             HydrologyCrossTileSurfaceAdmission.Result surfaceAdmission =
                     HydrologyCrossTileSurfaceAdmission.admit(
@@ -8536,6 +8722,14 @@ public final class HydrologyPlanner {
         private long dependencyNanos;
         private int dependencies;
         private int admissions;
+        private int earlyOwners;
+        private int routeCalls;
+        private int routeSolves;
+        private long routeSolveNanos;
+        private int rasterCalls;
+        private long rasterNanos;
+        private int filterCalls;
+        private long filterNanos;
 
         private long record(DraftPhase phase, long started) {
             long now = System.nanoTime();
@@ -8551,7 +8745,7 @@ public final class HydrologyPlanner {
 
         private void log(HydrologyTileKey key, int rank, long totalNanos) {
             IrisLogging.debug(
-                    "Hydrology owner %d,%d rank=%d drafted in %dms: context=%dms select=%dms settle=%dms publish=%dms deps=%d wait=%dms admissions=%d on %s",
+                    "Hydrology owner %d,%d rank=%d drafted in %dms: context=%dms select=%dms settle=%dms publish=%dms deps=%d wait=%dms admissions=%d earlyOwners=%d routes=%d reuses=%d routeSolve=%dms rasters=%d raster=%dms filters=%d filter=%dms on %s",
                     key.tileX(),
                     key.tileZ(),
                     rank,
@@ -8563,6 +8757,14 @@ public final class HydrologyPlanner {
                     dependencies,
                     dependencyNanos / 1_000_000L,
                     admissions,
+                    earlyOwners,
+                    routeCalls,
+                    routeCalls - routeSolves,
+                    routeSolveNanos / 1_000_000L,
+                    rasterCalls,
+                    rasterNanos / 1_000_000L,
+                    filterCalls,
+                    filterNanos / 1_000_000L,
                     Thread.currentThread().getName()
             );
         }

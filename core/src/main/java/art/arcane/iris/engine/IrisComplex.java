@@ -18,7 +18,6 @@
 
 package art.arcane.iris.engine;
 
-import art.arcane.iris.util.project.context.IrisContext;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.loader.IrisData;
@@ -41,6 +40,9 @@ import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisDecorationPart;
 import art.arcane.iris.engine.object.IrisDecorator;
 import art.arcane.iris.engine.object.IrisGenerator;
+import art.arcane.iris.engine.object.IrisGeneratorStyle;
+import art.arcane.iris.engine.object.IrisDimension;
+import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.iris.engine.object.IrisInterpolator;
 import art.arcane.iris.engine.object.IrisMaterialPalette;
 import art.arcane.iris.engine.object.IrisRegion;
@@ -70,6 +72,7 @@ import lombok.Getter;
 import lombok.ToString;
 
 import java.io.File;
+import java.lang.ref.WeakReference;
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -137,6 +140,8 @@ public class IrisComplex implements DataProvider {
     private ProceduralStream<IrisBiome> seaBiomeStream;
     private ProceduralStream<IrisBiome> shoreBiomeStream;
     private ProceduralStream<IrisBiome> baseBiomeStream;
+    @Getter(AccessLevel.NONE)
+    private final transient boolean reuseNaturalBaseBiome;
     private ProceduralStream<UUID> baseBiomeIDStream;
     private ProceduralStream<IrisBiome> naturalTrueBiomeStream;
     private ProceduralStream<IrisBiome> unblendedNaturalTrueBiomeStream;
@@ -235,6 +240,7 @@ public class IrisComplex implements DataProvider {
             }
             imageMapRuntime.getMappedBiomes().forEach(this::registerGenerators);
         }
+        reuseNaturalBaseBiome = hasFixedNaturalBiomeNoise(engine.getDimension(), generatorBiomes);
         inferredBiomeStreams = compileInferredBiomeStreams(
                 preparedRegions,
                 (region, inferredType) -> compileInferredBiomeStream(engine, region, inferredType, emptyBiome)
@@ -502,16 +508,19 @@ public class IrisComplex implements DataProvider {
             InferredType inferredType,
             IrisRegion region,
             double naturalHeight,
-            double x,
-            double z
+            int x,
+            int z
     ) {
         IrisBiome mapped = imageMapRuntime.sampleBiome(x, z);
         if (mapped != null) {
             return mapped;
         }
-        IrisBiome baseBiome = implode(sampleInferredBiome(region, inferredType, x, z), x, z);
+        IrisContext context = IrisContext.get();
+        IrisBiome baseBiome = reuseNaturalBaseBiome && (context == null || context.getChunkContext() == null)
+                ? baseBiomeStream.get(x, z)
+                : implode(sampleInferredBiome(region, inferredType, x, z), (double) x, (double) z);
         IrisBiome resolved = resolveNaturalSurfaceBiome(naturalHeight, baseBiome, region, x, z);
-        return resolved == baseBiome ? baseBiome : implode(resolved, x, z);
+        return resolved == baseBiome ? baseBiome : implode(resolved, (double) x, (double) z);
     }
 
     private IrisBiome resolveNaturalSurfaceBiome(
@@ -1393,6 +1402,12 @@ public class IrisComplex implements DataProvider {
             return 0D;
         }
         double height = 0D;
+        if (low == high && Double.isFinite(low)) {
+            for (int i = 0; i < generators.length; i++) {
+                height += low;
+            }
+            return height / generators.length;
+        }
         for (IrisGenerator generator : generators) {
             height += M.lerp(low, high, generator.getHeight(x, z, seed));
         }
@@ -1477,7 +1492,32 @@ public class IrisComplex implements DataProvider {
         CNG childCell = b.getChildrenGenerator(rng, 123, b.getChildShrinkFactor());
         ChildSelectionPlan childSelectionPlan = resolveChildSelectionPlan(b);
         IrisBiome biome = childSelectionPlan.select(childCell, x, z).withInferredType(b.getInferredType());
+        if (biome == b && hasFixedNoise(b.getChildStyle())) {
+            return biome;
+        }
         return implode(biome, x, z, max - 1);
+    }
+
+    static boolean hasFixedNaturalBiomeNoise(IrisDimension dimension, Iterable<IrisBiome> biomes) {
+        if (!hasFixedNoise(dimension.getRegionStyle()) || !hasFixedNoise(dimension.getContinentalStyle())
+                || !hasFixedNoise(dimension.getLandBiomeStyle()) || !hasFixedNoise(dimension.getSeaBiomeStyle())) {
+            return false;
+        }
+        for (IrisBiome biome : biomes) {
+            if (!biome.getChildren().isEmpty() && !hasFixedNoise(biome.getChildStyle())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean hasFixedNoise(IrisGeneratorStyle style) {
+        for (IrisGeneratorStyle current = style; current != null; current = current.getFracture()) {
+            if (current.getExpression() != null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private ChildSelectionPlan resolveChildSelectionPlan(IrisBiome biome) {
@@ -1539,14 +1579,15 @@ public class IrisComplex implements DataProvider {
     /**
      * Reusable per-thread bounds provider. Holds the biome memo and the lazily computed generator
      * bounds for one sampleBoundsRaw pass so the pass allocates nothing; {@link #bind}
-     * resets both, giving each pass the same empty-scratch semantics a fresh allocation had.
+     * resets generator bounds while retaining bounded coordinate samples for the same biome stream.
      * <p>
      * Single threaded and non reentrant by contract, matching the thread local sample caches in
      * IrisInterpolation that this provider is invoked through. If a nested pass ever does appear,
      * {@link #isInUse()} makes the caller fall back to a freshly allocated sampler.
      */
     private static final class BoundsSampler implements NoiseBoundsProvider {
-        private final CoordinateBiomeCache sampleCache = new CoordinateBiomeCache(64);
+        private final CoordinateBiomeCache sampleCache = new CoordinateBiomeCache(4096);
+        private WeakReference<ProceduralStream<IrisBiome>> sampleSource = new WeakReference<>(null);
         private final IdentityHashMap<IrisBiome, GeneratorBounds> localBounds = new IdentityHashMap<>(8);
         private IrisComplex complex;
         private Engine engine;
@@ -1564,7 +1605,10 @@ public class IrisComplex implements DataProvider {
             this.generators = generators;
             this.cachedBounds = cachedBounds;
             this.inUse = true;
-            sampleCache.clear();
+            if (sampleSource.get() != complex.baseBiomeStream) {
+                sampleCache.clear();
+                sampleSource = new WeakReference<>(complex.baseBiomeStream);
+            }
 
             if (!localBounds.isEmpty()) {
                 localBounds.clear();
@@ -1607,73 +1651,40 @@ public class IrisComplex implements DataProvider {
     }
 
     /**
-     * Open addressed biome memo keyed on the packed coordinate bits, replacing a linear scan that was
+     * Bounded biome memo keyed on the packed coordinate bits, replacing a linear scan that was
      * quadratic in the number of columns a wide starcast touches. Single threaded by contract.
      */
     private static final class CoordinateBiomeCache {
-        private long[] xBits;
-        private long[] zBits;
-        private IrisBiome[] values;
-        private byte[] states;
-        private int mask;
-        private int resizeThreshold;
-        private int size;
+        private final long[] xBits;
+        private final long[] zBits;
+        private final IrisBiome[] values;
+        private final int mask;
 
-        private CoordinateBiomeCache(int initialCapacity) {
-            int minimumCapacity = Math.max(8, initialCapacity);
-            int tableSize = tableSizeFor((minimumCapacity << 1) + minimumCapacity);
-            xBits = new long[tableSize];
-            zBits = new long[tableSize];
-            values = new IrisBiome[tableSize];
-            states = new byte[tableSize];
-            mask = tableSize - 1;
-            resizeThreshold = Math.max(1, (tableSize * 3) >> 2);
-            size = 0;
+        private CoordinateBiomeCache(int capacity) {
+            xBits = new long[capacity];
+            zBits = new long[capacity];
+            values = new IrisBiome[capacity];
+            mask = capacity - 1;
         }
 
         private void clear() {
-            if (size == 0) {
-                return;
-            }
-
-            Arrays.fill(states, (byte) 0);
-            size = 0;
+            Arrays.fill(values, null);
         }
 
         private IrisBiome get(double x, double z) {
-            int slot = findSlot(Double.doubleToLongBits(x), Double.doubleToLongBits(z));
-            return states[slot] == 0 ? null : values[slot];
+            long xb = Double.doubleToLongBits(x);
+            long zb = Double.doubleToLongBits(z);
+            int slot = mix(xb, zb) & mask;
+            return xBits[slot] == xb && zBits[slot] == zb ? values[slot] : null;
         }
 
         private void put(double x, double z, IrisBiome biome) {
             long xb = Double.doubleToLongBits(x);
             long zb = Double.doubleToLongBits(z);
-            int slot = findSlot(xb, zb);
-            boolean occupied = states[slot] != 0;
+            int slot = mix(xb, zb) & mask;
             xBits[slot] = xb;
             zBits[slot] = zb;
             values[slot] = biome;
-            states[slot] = 1;
-
-            if (occupied) {
-                return;
-            }
-
-            size++;
-            if (size >= resizeThreshold) {
-                grow();
-            }
-        }
-
-        private int findSlot(long xb, long zb) {
-            int slot = mix(xb, zb) & mask;
-            while (states[slot] != 0) {
-                if (xBits[slot] == xb && zBits[slot] == zb) {
-                    break;
-                }
-                slot = (slot + 1) & mask;
-            }
-            return slot;
         }
 
         private int mix(long xb, long zb) {
@@ -1683,49 +1694,6 @@ public class IrisComplex implements DataProvider {
             hash *= 0xff51afd7ed558ccdL;
             hash ^= (hash >>> 33);
             return (int) hash;
-        }
-
-        private void grow() {
-            long[] previousXBits = xBits;
-            long[] previousZBits = zBits;
-            IrisBiome[] previousValues = values;
-            byte[] previousStates = states;
-
-            int nextLength = previousXBits.length << 1;
-            xBits = new long[nextLength];
-            zBits = new long[nextLength];
-            values = new IrisBiome[nextLength];
-            states = new byte[nextLength];
-            mask = nextLength - 1;
-            resizeThreshold = Math.max(1, (nextLength * 3) >> 2);
-            size = 0;
-
-            for (int i = 0; i < previousStates.length; i++) {
-                if (previousStates[i] == 0) {
-                    continue;
-                }
-
-                int slot = findSlot(previousXBits[i], previousZBits[i]);
-                xBits[slot] = previousXBits[i];
-                zBits[slot] = previousZBits[i];
-                values[slot] = previousValues[i];
-                states[slot] = 1;
-                size++;
-            }
-        }
-
-        private int tableSizeFor(int value) {
-            int n = value - 1;
-            n |= n >>> 1;
-            n |= n >>> 2;
-            n |= n >>> 4;
-            n |= n >>> 8;
-            n |= n >>> 16;
-            int tableSize = n + 1;
-            if (tableSize < 8) {
-                return 8;
-            }
-            return tableSize;
         }
     }
 

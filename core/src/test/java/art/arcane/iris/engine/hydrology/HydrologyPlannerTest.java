@@ -5,24 +5,624 @@ import art.arcane.iris.engine.hydrology.cave.CaveVoxel;
 import art.arcane.iris.engine.hydrology.cave.CaveVoxelView;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCaveAction;
 import art.arcane.iris.engine.hydrology.cave.HydrologyCavePlan;
+import com.github.benmanes.caffeine.cache.Cache;
 import org.junit.Test;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.function.Consumer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class HydrologyPlannerTest {
     private static final HydrologyTileKey TILE = new HydrologyTileKey(0, 0);
+
+    @Test
+    public void sharedOwnerFutureExcludesMutableCompilerWhileCreatorRetainsIt() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        HydrologyPlanner planner = routingContextPlanner(request -> {
+            entered.countDown();
+            awaitContext(release);
+        });
+        Method resolve = HydrologyPlanner.class.getDeclaredMethod("resolveCrossTileOwner", HydrologyTileKey.class);
+        resolve.setAccessible(true);
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        try {
+            Future<Object> creator = caller.submit(() -> resolve.invoke(planner, TILE));
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            CompletableFuture<?> shared = runningOwners(planner).get(TILE);
+            assertNotNull(shared);
+            release.countDown();
+            Object creatorDraft = ownerDraft(creator.get(5, TimeUnit.SECONDS));
+            Object sharedDraft = ownerDraft(shared.get(5, TimeUnit.SECONDS));
+            Method compiler = creatorDraft.getClass().getDeclaredMethod("footprintCompiler");
+            compiler.setAccessible(true);
+            assertNotNull(compiler.invoke(creatorDraft));
+            assertNull(compiler.invoke(sharedDraft));
+            Method withoutCompiler = creatorDraft.getClass().getDeclaredMethod("withoutFootprintCompiler");
+            withoutCompiler.setAccessible(true);
+            assertEquals(withoutCompiler.invoke(creatorDraft), sharedDraft);
+            assertEquals(sharedDraft, ownerDraft(resolve.invoke(planner, TILE)));
+        } finally {
+            release.countDown();
+            caller.shutdownNow();
+        }
+    }
+
+    private static Object ownerDraft(Object resolution) throws Exception {
+        Method draft = resolution.getClass().getDeclaredMethod("draft");
+        draft.setAccessible(true);
+        return draft.invoke(resolution);
+    }
+
+    @Test
+    public void collidingRoutingContextKeysCompileIndependently() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger grids = new AtomicInteger();
+        HydrologyPlanner planner = routingContextPlanner(request -> {
+            grids.incrementAndGet();
+            if (request.minimumZ() == -32) {
+                entered.countDown();
+                awaitContext(release);
+            }
+        });
+        ExecutorService callers = Executors.newFixedThreadPool(2);
+        try {
+            Future<Object> first = callers.submit(() -> routingContext(planner, new HydrologyTileKey(0, 0)));
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            Future<Object> second = callers.submit(() -> routingContext(planner, new HydrologyTileKey(0, -1)));
+            assertNotNull(second.get(5, TimeUnit.SECONDS));
+            assertFalse(first.isDone());
+            assertEquals(2, grids.get());
+            release.countDown();
+            assertNotNull(first.get(5, TimeUnit.SECONDS));
+        } finally {
+            release.countDown();
+            callers.shutdownNow();
+        }
+    }
+
+    @Test
+    public void concurrentSameKeyRoutingContextsShareOneCompilation() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch secondEntered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger grids = new AtomicInteger();
+        HydrologyPlanner planner = routingContextPlanner(request -> {
+            grids.incrementAndGet();
+            entered.countDown();
+            awaitContext(release);
+        });
+        ExecutorService callers = Executors.newFixedThreadPool(2);
+        try {
+            Future<Object> first = callers.submit(() -> routingContext(planner, TILE));
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            Future<Object> second = callers.submit(() -> {
+                secondEntered.countDown();
+                return routingContext(planner, TILE);
+            });
+            assertTrue(secondEntered.await(5, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> second.get(50, TimeUnit.MILLISECONDS));
+            assertEquals(1, grids.get());
+            release.countDown();
+            Object expected = first.get(5, TimeUnit.SECONDS);
+            assertSame(expected, second.get(5, TimeUnit.SECONDS));
+            assertSame(expected, routingContext(planner, TILE));
+            assertEquals(1, grids.get());
+        } finally {
+            release.countDown();
+            callers.shutdownNow();
+        }
+    }
+
+    @Test
+    public void failedRoutingContextCanRetryWithoutRetainingFailedWork() throws Exception {
+        AtomicInteger grids = new AtomicInteger();
+        IllegalStateException expected = new IllegalStateException("routing input failed");
+        HydrologyPlanner planner = routingContextPlanner(request -> {
+            if (grids.incrementAndGet() == 1) {
+                throw expected;
+            }
+        });
+        InvocationTargetException failure = assertThrows(InvocationTargetException.class,
+                () -> routingContext(planner, TILE));
+        assertSame(expected, failure.getCause());
+        Object retried = routingContext(planner, TILE);
+        assertSame(retried, routingContext(planner, TILE));
+        assertEquals(2, grids.get());
+        Field pending = HydrologyPlanner.class.getDeclaredField("resolvingRoutingContexts");
+        pending.setAccessible(true);
+        assertTrue(((Map<?, ?>) pending.get(planner)).isEmpty());
+    }
+
+    @Test(timeout = 5000)
+    public void recursiveRoutingContextFailsImmediatelyAndCanRetry() throws Exception {
+        AtomicInteger grids = new AtomicInteger();
+        AtomicReference<HydrologyPlanner> reference = new AtomicReference<>();
+        HydrologyPlanner planner = routingContextPlanner(request -> {
+            if (grids.incrementAndGet() != 1) {
+                return;
+            }
+            try {
+                routingContext(reference.get(), TILE);
+            } catch (InvocationTargetException failure) {
+                throw (RuntimeException) failure.getCause();
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
+        reference.set(planner);
+        InvocationTargetException failure = assertThrows(InvocationTargetException.class,
+                () -> routingContext(planner, TILE));
+        assertTrue(failure.getCause() instanceof IllegalStateException);
+        assertTrue(failure.getCause().getMessage().contains("recursively load"));
+        Object retried = routingContext(planner, TILE);
+        assertSame(retried, routingContext(planner, TILE));
+        assertEquals(2, grids.get());
+    }
+
+    private HydrologyPlanner routingContextPlanner(Consumer<HydrologyRoutingTerrainSampler.GridRequest> beforeGrid) {
+        HydrologyTerrainSample sample = blockedTerrain();
+        HydrologyTerrainSampler terrain = (x, z) -> sample;
+        HydrologyPlannerSettings settings = standardSettings(4D, 2D, true, false, List.of());
+        return new HydrologyPlanner(77L, settings, terrain, new ContextRoutingSampler(sample, beforeGrid),
+                HydrologyGeometrySampler.deterministic(terrain), -4096,
+                footprint -> new HydrologyTerrainCaveVoxelView(terrain, settings.seaLevel(), -4096, 4096));
+    }
+
+    private static Object routingContext(HydrologyPlanner planner, HydrologyTileKey key) throws Exception {
+        Method method = HydrologyPlanner.class.getDeclaredMethod("sourceRoutingContext", HydrologyTileKey.class);
+        method.setAccessible(true);
+        return method.invoke(planner, key);
+    }
+
+    private static void awaitContext(CountDownLatch latch) {
+        try {
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("Routing context did not release");
+            }
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(failure);
+        }
+    }
+
+    private static final class ContextRoutingSampler implements HydrologyRoutingTerrainSampler {
+        private final HydrologyTerrainSample sample;
+        private final Consumer<GridRequest> beforeGrid;
+
+        private ContextRoutingSampler(HydrologyTerrainSample sample, Consumer<GridRequest> beforeGrid) {
+            this.sample = sample;
+            this.beforeGrid = beforeGrid;
+        }
+
+        @Override
+        public HydrologyTerrainSample[] sampleGrid(GridRequest request) {
+            beforeGrid.accept(request);
+            HydrologyTerrainSample[] samples = new HydrologyTerrainSample[request.width() * request.width()];
+            Arrays.fill(samples, sample);
+            return samples;
+        }
+
+        @Override
+        public NaturalClassification classifyNatural(int blockX, int blockZ) {
+            return NaturalClassification.UNAVAILABLE;
+        }
+    }
+
+    @Test
+    public void earlyOwnersPrioritizeHigherRanksAndSkipRunningOwners() throws Exception {
+        HydrologyPlannerSettings settings = withPeriodTwo(standardSettings(4D, 2D, true, false, List.of()));
+        HydrologyPlanner planner = new HydrologyPlanner(77L, settings, (x, z) -> blockedTerrain());
+        AutoCloseable admission = earlyAdmission(planner, new HydrologyTileKey(-1, -1));
+        Map<HydrologyTileKey, HydrologyForkJoin.Task<?>> tasks = earlyTasks(admission);
+        Map<HydrologyTileKey, CompletableFuture<?>> running = runningOwners(planner);
+        HydrologyTileKey alreadyRunning = new HydrologyTileKey(0, -1);
+        CompletableFuture<?> existing = new CompletableFuture<>();
+        running.put(alreadyRunning, existing);
+        Method prepare = admission.getClass().getDeclaredMethod("prepare");
+        prepare.setAccessible(true);
+        CapturingHydrologyPool pool = new CapturingHydrologyPool();
+        try {
+            pool.submit(() -> {
+                prepare.invoke(admission);
+                prepare.invoke(admission);
+                return null;
+            }).get(5, TimeUnit.SECONDS);
+            assertEquals(List.of(new HydrologyTileKey(-2, -1),
+                    new HydrologyTileKey(-1, -2), new HydrologyTileKey(-1, 0),
+                    new HydrologyTileKey(-2, -2), new HydrologyTileKey(-2, 0),
+                    new HydrologyTileKey(0, -2), new HydrologyTileKey(0, 0)), new ArrayList<>(tasks.keySet()));
+            assertEquals(new ArrayList<>(tasks.values()), pool.submitted);
+            assertEquals(existing, running.get(alreadyRunning));
+        } finally {
+            running.remove(alreadyRunning, existing);
+            admission.close();
+            pool.shutdownNow();
+        }
+    }
+
+    private static final class CapturingHydrologyPool extends ForkJoinPool {
+        private final ArrayList<Runnable> submitted = new ArrayList<>();
+
+        private CapturingHydrologyPool() {
+            super(1);
+        }
+
+        @Override
+        public void execute(Runnable task) {
+            submitted.add(task);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<HydrologyTileKey, CompletableFuture<?>> runningOwners(HydrologyPlanner planner) throws Exception {
+        Field field = HydrologyPlanner.class.getDeclaredField("resolvingOwners");
+        field.setAccessible(true);
+        return (Map<HydrologyTileKey, CompletableFuture<?>>) field.get(planner);
+    }
+
+    @Test
+    public void earlyNeighborOwnersPreserveCompleteColdOwnerOutputs() throws Exception {
+        HydrologyTileKey key = new HydrologyTileKey(-1, -1);
+        Set<Thread> parallelThreads = ConcurrentHashMap.newKeySet();
+        boolean observedParallelOwner = false;
+        ForkJoinPool pool = new ForkJoinPool(4);
+        try {
+            for (boolean organic : new boolean[]{false, true}) {
+                HydrologyPlannerSettings settings = organic ? organicShapeSettings()
+                        : standardSettings(4D, 2D, true, false, List.of());
+                settings = withPeriodTwo(settings);
+                assertEquals(2, settings.crossTileColorPeriod());
+                HydrologyTerrainSampler original = organic ? organicShapeTerrain() : rollingCoast(112);
+                int tileSize = settings.routing().tileSize();
+                HydrologyTerrainSampler terrain = (x, z) -> original.sample(x + tileSize, z + tileSize);
+                HydrologyTerrainSampler counted = (x, z) -> {
+                    parallelThreads.add(Thread.currentThread());
+                    return terrain.sample(x, z);
+                };
+                for (long seed : new long[]{19L, 77L, 642L}) {
+                    HydrologyTile expected = new HydrologyPlanner(seed, settings, terrain).plan(key);
+                    HydrologyPlanner candidate = new HydrologyPlanner(seed, settings, counted);
+                    parallelThreads.clear();
+                    HydrologyTile actual = pool.submit(() -> candidate.plan(key)).get(30, TimeUnit.SECONDS);
+                    observedParallelOwner |= parallelThreads.size() > 1;
+                    assertTileContentsEqual(expected, actual);
+                    assertEquals(expected.courses(), actual.courses());
+                    assertEquals(expected.diagnosticCandidates(), actual.diagnosticCandidates());
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        assertTrue("Expected selected sources to prepare lower-rank owners", observedParallelOwner);
+    }
+
+    @Test
+    public void earlyOwnersCompleteWithOneWorkerAndSaturatedRootCallers() throws Exception {
+        HydrologyTileKey key = new HydrologyTileKey(-1, -1);
+        HydrologyPlannerSettings settings = standardSettings(4D, 2D, true, false, List.of());
+        settings = withPeriodTwo(settings);
+        int tileSize = settings.routing().tileSize();
+        HydrologyTerrainSampler base = rollingCoast(112);
+        HydrologyTerrainSampler terrain = (x, z) -> base.sample(x + tileSize, z + tileSize);
+        HydrologyTile expected = new HydrologyPlanner(77L, settings, terrain).plan(key);
+        for (int workers : new int[]{1, 2}) {
+            ForkJoinPool pool = new ForkJoinPool(workers);
+            CountDownLatch started = new CountDownLatch(workers);
+            ArrayList<Future<HydrologyTile>> results = new ArrayList<>();
+            try {
+                HydrologyPlanner shared = new HydrologyPlanner(77L, settings, terrain);
+                for (int index = 0; index < workers; index++) {
+                    results.add(pool.submit(() -> {
+                        started.countDown();
+                        if (!started.await(5, TimeUnit.SECONDS)) {
+                            throw new AssertionError("Owner callers did not start");
+                        }
+                        return shared.plan(key);
+                    }));
+                }
+                for (Future<HydrologyTile> result : results) {
+                    assertTileContentsEqual(expected, result.get(30, TimeUnit.SECONDS));
+                }
+            } finally {
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    private static void assertTileContentsEqual(HydrologyTile expected, HydrologyTile actual) {
+        assertEquals("nodes", expected.nodes(), actual.nodes());
+        assertEquals("edges", expected.edges(), actual.edges());
+        assertEquals("outlets", expected.outlets(), actual.outlets());
+        assertEquals("courses", expected.courses(), actual.courses());
+        assertEquals("cave plans", expected.cavePlans(), actual.cavePlans());
+        assertEquals("diagnostics", expected.diagnosticCandidates(), actual.diagnosticCandidates());
+        assertEquals("footprint column count", expected.footprint().columns().size(), actual.footprint().columns().size());
+        for (Map.Entry<Long, HydrologyColumnSample> entry : expected.footprint().columns().entrySet()) {
+            assertEquals("footprint column " + entry.getKey(), entry.getValue(), actual.footprint().columns().get(entry.getKey()));
+        }
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void emptySelectionsAndLargerColorPeriodsDoNotExpandOwnerWork() throws Exception {
+        HydrologyPlannerSettings base = standardSettings(4D, 2D, true, false, List.of());
+        HydrologyPlannerSettings periodTwo = withPeriodTwo(base);
+        HydrologyTileKey key = new HydrologyTileKey(-1, -1);
+        ForkJoinPool pool = new ForkJoinPool(4);
+        try {
+            HydrologyPlanner empty = new HydrologyPlanner(77L, periodTwo, (x, z) -> blockedTerrain());
+            HydrologyTile expectedEmpty = new HydrologyPlanner(77L, periodTwo, (x, z) -> blockedTerrain()).plan(key);
+            assertEquals(expectedEmpty, pool.submit(() -> empty.plan(key)).get(30, TimeUnit.SECONDS));
+            assertEquals(Set.of(key), cachedOwnerKeys(empty));
+            assertTrue(base.crossTileColorPeriod() > 2);
+            HydrologyPlanner larger = new HydrologyPlanner(77L, base, rollingCoast(112));
+            HydrologyPlanner serial = new HydrologyPlanner(77L, base, rollingCoast(112));
+            HydrologyTile expected = serial.plan(key);
+            assertEquals(expected, pool.submit(() -> larger.plan(key)).get(30, TimeUnit.SECONDS));
+            assertEquals(cachedOwnerKeys(serial), cachedOwnerKeys(larger));
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private static HydrologyPlannerSettings withPeriodTwo(HydrologyPlannerSettings settings) {
+        HydrologyPlannerSettings.Routing routing = settings.routing();
+        int spacing = routing.sampleSpacing();
+        int tileSize = (2 * (settings.publicationRadius() + 1) / spacing + 1) * spacing;
+        int latticeWidth = tileSize / spacing + 5;
+        return new HydrologyPlannerSettings(settings.seaLevel(),
+                new HydrologyPlannerSettings.Routing(tileSize, spacing, Math.max(routing.maximumRouteNodes(), latticeWidth * latticeWidth),
+                        routing.maximumRouteLength(), routing.minimumSurfaceCourseLength(), routing.minimumUndergroundCourseLength(),
+                        routing.valleyPreference(), routing.uphillPenalty(), routing.slopePenalty(),
+                        routing.confluenceAttraction(), routing.lengthPreference(), routing.tributaries()),
+                settings.surface(), settings.hydraulics(), settings.underground(), settings.outlets(), settings.geometry(),
+                settings.deepFluids(), settings.surfacePools(), settings.widestShoreBiomeWidth(), settings.seaCaves());
+    }
+
+    private static Set<?> cachedOwnerKeys(HydrologyPlanner planner) throws Exception {
+        Field cacheField = HydrologyPlanner.class.getDeclaredField("resolvedOwners");
+        cacheField.setAccessible(true);
+        Cache<?, ?> cache = (Cache<?, ?>) cacheField.get(planner);
+        return Set.copyOf(cache.asMap().keySet());
+    }
+
+    @Test
+    public void earlyOwnerFailureDrainsRemainingTasksAndPreservesParentFailure() throws Exception {
+        HydrologyPlanner planner = new HydrologyPlanner(19L,
+                standardSettings(4D, 2D, true, false, List.of()), rollingCoast(112));
+        HydrologyTileKey key = new HydrologyTileKey(-1, -1);
+        AutoCloseable admission = earlyAdmission(planner, key);
+        Map<HydrologyTileKey, HydrologyForkJoin.Task<?>> tasks = earlyTasks(admission);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch parentFailed = new CountDownLatch(1);
+        AtomicInteger completed = new AtomicInteger();
+        AssertionError childFailure = new AssertionError("owner failure");
+        IllegalArgumentException parentFailure = new IllegalArgumentException("parent failure");
+        try (ForkJoinPool pool = new ForkJoinPool(3)) {
+            HydrologyForkJoin.Task<?> failedTask = new HydrologyForkJoin.Task<>(() -> { throw childFailure; });
+            tasks.put(new HydrologyTileKey(-2, -2), failedTask);
+            pool.execute(failedTask);
+            HydrologyForkJoin.Task<?> delayedTask = new HydrologyForkJoin.Task<>(() -> {
+                started.countDown();
+                try {
+                    if (!release.await(5, TimeUnit.SECONDS)) {
+                        throw new AssertionError("Owner did not release");
+                    }
+                } catch (InterruptedException failure) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(failure);
+                }
+                completed.incrementAndGet();
+                return null;
+            });
+            tasks.put(new HydrologyTileKey(-2, -1), delayedTask);
+            pool.execute(delayedTask);
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            Future<?> parent = pool.submit(() -> {
+                try (admission) {
+                    parentFailed.countDown();
+                    throw parentFailure;
+                }
+            });
+            try {
+                assertTrue(parentFailed.await(5, TimeUnit.SECONDS));
+                assertFalse(parent.isDone());
+            } finally {
+                release.countDown();
+            }
+            ExecutionException failure = assertThrows(ExecutionException.class,
+                    () -> parent.get(5, TimeUnit.SECONDS));
+            Throwable cause = failure.getCause();
+            if (cause != parentFailure) {
+                cause = cause.getCause();
+            }
+            assertEquals(parentFailure, cause);
+            assertEquals(1, parentFailure.getSuppressed().length);
+            assertEquals(1, completed.get());
+        }
+    }
+
+    @Test
+    public void unusedOwnerFailureDoesNotFailPublicationButDemandUsesItsOriginalFailure() throws Exception {
+        HydrologyPlanner planner = new HydrologyPlanner(19L,
+                standardSettings(4D, 2D, true, false, List.of()), rollingCoast(112));
+        HydrologyTileKey key = new HydrologyTileKey(-1, -1);
+        HydrologyTileKey dependency = new HydrologyTileKey(-2, -2);
+        AutoCloseable admission = earlyAdmission(planner, key);
+        Map<HydrologyTileKey, HydrologyForkJoin.Task<?>> tasks = earlyTasks(admission);
+        AtomicInteger attempts = new AtomicInteger();
+        IllegalStateException expected = new IllegalStateException("unused owner failure");
+        HydrologyForkJoin.Task<?> failed = new HydrologyForkJoin.Task<>(() -> {
+            attempts.incrementAndGet();
+            throw expected;
+        });
+        tasks.put(dependency, failed);
+        assertThrows(IllegalStateException.class, failed::await);
+        Field contextField = admission.getClass().getDeclaredField("context");
+        contextField.setAccessible(true);
+        Object context = contextField.get(admission);
+        Method resolve = HydrologyPlanner.class.getDeclaredMethod("resolveLowerRankOwners",
+                List.class, context.getClass(), Map.class);
+        resolve.setAccessible(true);
+        for (int demand = 0; demand < 2; demand++) {
+            InvocationTargetException failure = assertThrows(
+                    InvocationTargetException.class,
+                    () -> resolve.invoke(planner, List.of(dependency), context, tasks));
+            assertEquals(expected, failure.getCause());
+        }
+        assertEquals(1, attempts.get());
+        admission.close();
+    }
+
+    @Test
+    public void demandedOwnerErrorIsNotSuppressedOntoItselfDuringDrain() throws Exception {
+        HydrologyPlanner planner = new HydrologyPlanner(19L,
+                standardSettings(4D, 2D, true, false, List.of()), rollingCoast(112));
+        AutoCloseable admission = earlyAdmission(planner, new HydrologyTileKey(-1, -1));
+        AssertionError expected = new AssertionError("demanded owner failure");
+        HydrologyForkJoin.Task<?> failed = new HydrologyForkJoin.Task<>(() -> { throw expected; });
+        earlyTasks(admission).put(new HydrologyTileKey(-2, -2), failed);
+        assertThrows(AssertionError.class, failed::await);
+        Field primary = admission.getClass().getDeclaredField("primaryFailure");
+        primary.setAccessible(true);
+        primary.set(admission, expected);
+        AssertionError actual = assertThrows(AssertionError.class, () -> {
+            try (admission) {
+                throw expected;
+            }
+        });
+        assertEquals(expected, actual);
+        assertEquals(0, actual.getSuppressed().length);
+    }
+
+    private static AutoCloseable earlyAdmission(HydrologyPlanner planner, HydrologyTileKey key) throws Exception {
+        Class<?> contextType = Class.forName(HydrologyPlanner.class.getName() + "$CrossTileResolutionContext");
+        Constructor<?> contextConstructor = contextType.getDeclaredConstructor(HydrologyTileKey.class, long.class, int.class);
+        contextConstructor.setAccessible(true);
+        Object context = contextConstructor.newInstance(key, 64L, 4096);
+        Class<?> admissionType = Class.forName(HydrologyPlanner.class.getName() + "$ColorRankedDraftAdmission");
+        Constructor<?> admissionConstructor = admissionType.getDeclaredConstructor(
+                HydrologyPlanner.class, HydrologyTileKey.class, int.class, contextType);
+        admissionConstructor.setAccessible(true);
+        return (AutoCloseable) admissionConstructor.newInstance(planner, key, 3, context);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<HydrologyTileKey, HydrologyForkJoin.Task<?>> earlyTasks(AutoCloseable admission) throws Exception {
+        Field prepared = admission.getClass().getDeclaredField("preparedOwners");
+        prepared.setAccessible(true);
+        return (Map<HydrologyTileKey, HydrologyForkJoin.Task<?>>) prepared.get(admission);
+    }
+
+    @Test
+    public void anchorRadiusAndAdmissionRejectBeforeSlopeSampling() throws Exception {
+        HydrologyTerrainSample land = terrain(100, 7D, false, false, false, false, false, false);
+        CountingNaturalSampler outside = new CountingNaturalSampler((x, z) -> land);
+        assertEquals(Double.POSITIVE_INFINITY, anchorScore(countedPlanner(outside), land, 20, 0), 0D);
+        assertEquals(0, outside.basisCalls);
+        assertEquals(0, outside.slopeCalls);
+
+        CountingNaturalSampler blocked = new CountingNaturalSampler((x, z) -> blockedTerrain());
+        assertEquals(Double.POSITIVE_INFINITY, anchorScore(countedPlanner(blocked), land, 2, 0), 0D);
+        assertEquals(1, blocked.basisCalls);
+        assertEquals(0, blocked.slopeCalls);
+
+        CountingNaturalSampler crossing = new CountingNaturalSampler((x, z) -> x == 1 ? blockedTerrain() : land);
+        assertEquals(Double.POSITIVE_INFINITY, anchorScore(countedPlanner(crossing), land, 2, 0), 0D);
+        assertTrue(crossing.basisCalls > 1);
+        assertEquals(0, crossing.slopeCalls);
+
+        CountingNaturalSampler admitted = new CountingNaturalSampler((x, z) -> land);
+        HydrologyPlannerSettings.Routing routing = standardSettings(4D, 0D, true, false, List.of()).routing();
+        double expected = land.naturalHeight() * routing.valleyPreference()
+                + land.slope() * routing.slopePenalty()
+                + land.routingCost() * land.routingMultiplier() + 2D * 2.4D + 2D * 0.08D;
+        expected += HydrologyHash.unit(HydrologyHash.mix(91L, 719L, 2, 0)) * 1.0E-6D;
+        assertEquals(Double.doubleToLongBits(expected),
+                Double.doubleToLongBits(anchorScore(countedPlanner(admitted), land, 2, 0)));
+        assertEquals(1, admitted.slopeCalls);
+    }
+
+    @Test
+    public void refinedRouteSamplesFallbackOnlyWhenAllCandidatesFailAdmission() throws Exception {
+        HydrologyTerrainSample land = terrain(100, 7D, false, false, false, false, false, false);
+        AtomicInteger fallbackCalls = new AtomicInteger();
+        CountingNaturalSampler admitted = new CountingNaturalSampler((x, z) -> {
+            if (x == 100) {
+                fallbackCalls.incrementAndGet();
+            }
+            return land;
+        });
+        assertEquals(3, routeCandidates(countedPlanner(admitted)).size());
+        assertEquals(0, fallbackCalls.get());
+        CountingNaturalSampler rejected = new CountingNaturalSampler((x, z) -> {
+            if (x == 100) {
+                fallbackCalls.incrementAndGet();
+                return land;
+            }
+            return blockedTerrain();
+        });
+        assertEquals(1, routeCandidates(countedPlanner(rejected)).size());
+        assertEquals(1, fallbackCalls.get());
+    }
+
+    @Test
+    public void surfaceRouteMemoPreservesCompleteOwnerOutputAcrossPublicationPasses() throws Exception {
+        for (boolean organic : new boolean[]{false, true}) {
+            HydrologyPlannerSettings settings = organic ? organicShapeSettings()
+                    : standardSettings(4D, 2D, true, false, List.of());
+            HydrologyTerrainSampler terrain = organic ? organicShapeTerrain() : rollingCoast(112);
+            SurfaceRouteMemos uncached = new SurfaceRouteMemos(false);
+            SurfaceRouteMemos cached = new SurfaceRouteMemos(true);
+            HydrologyTile expected = planWithSurfaceRouteMemos(new HydrologyPlanner(642L, settings, terrain), uncached);
+            HydrologyTile actual = planWithSurfaceRouteMemos(new HydrologyPlanner(642L, settings, terrain), cached);
+
+            assertEquals(expected, actual);
+            assertEquals(expected.courses(), actual.courses());
+            assertEquals(expected.diagnosticCandidates(), actual.diagnosticCandidates());
+            assertTrue(cached.computations <= uncached.computations);
+            if (organic) {
+                assertTrue("hits=" + cached.hits, cached.hits > 0);
+                assertTrue("uncached=" + uncached.computations + " cached=" + cached.computations,
+                        cached.computations < uncached.computations);
+            }
+        }
+    }
 
     @Test
     public void biomeIncisionMultiplierCannotExceedTheConfiguredSurfaceMaximum() {
@@ -2761,4 +3361,124 @@ public class HydrologyPlannerTest {
         }
         return false;
     }
+    @SuppressWarnings("unchecked")
+    private HydrologyTile planWithSurfaceRouteMemos(HydrologyPlanner planner, SurfaceRouteMemos memos) throws Exception {
+        Class<?> samplesClass = Class.forName(HydrologyPlanner.class.getName() + "$PlanningSamples");
+        Constructor<?> constructor = samplesClass.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        Object samples = constructor.newInstance();
+        Field routes = samplesClass.getDeclaredField("surfaceRoutes");
+        routes.setAccessible(true);
+        routes.set(samples, memos);
+        Field scope = HydrologyPlanner.class.getDeclaredField("planningSamples");
+        scope.setAccessible(true);
+        ThreadLocal<Object> local = (ThreadLocal<Object>) scope.get(planner);
+        local.set(samples);
+        try {
+            return planner.plan(TILE);
+        } finally {
+            local.remove();
+        }
+    }
+
+    private static final class SurfaceRouteMemos extends IdentityHashMap<Object, HashMap<Object, List<HydrologyPoint>>> {
+        private final boolean retain;
+        private int hits;
+        private int computations;
+
+        private SurfaceRouteMemos(boolean retain) {
+            this.retain = retain;
+        }
+
+        @Override
+        public HashMap<Object, List<HydrologyPoint>> computeIfAbsent(Object key,
+                Function<? super Object, ? extends HashMap<Object, List<HydrologyPoint>>> ignored) {
+            return super.computeIfAbsent(key, unused -> new HashMap<>() {
+                @Override
+                public List<HydrologyPoint> computeIfAbsent(Object route,
+                        Function<? super Object, ? extends List<HydrologyPoint>> computation) {
+                    if (!retain) {
+                        clear();
+                    }
+                    if (containsKey(route)) {
+                        hits++;
+                    }
+                    return super.computeIfAbsent(route, missing -> {
+                        computations++;
+                        return computation.apply(missing);
+                    });
+                }
+            });
+        }
+    }
+
+    private HydrologyPlanner countedPlanner(CountingNaturalSampler sampler) {
+        return new HydrologyPlanner(91L, standardSettings(4D, 0D, true, false, List.of()),
+                sampler.delegate, sampler, HydrologyGeometrySampler.deterministic(sampler.delegate),
+                -4096, footprint -> solidCaveView());
+    }
+
+    private double anchorScore(HydrologyPlanner planner, HydrologyTerrainSample terrain, int x, int z) throws Exception {
+        Class<?> nodeType = Class.forName(HydrologyPlanner.class.getName() + "$GridNode");
+        Constructor<?> constructor = nodeType.getDeclaredConstructor(int.class, int.class, int.class,
+                int.class, int.class, long.class, HydrologyTerrainSample.class);
+        constructor.setAccessible(true);
+        Object node = constructor.newInstance(0, 0, 0, 0, 0, 719L, terrain);
+        Method method = HydrologyPlanner.class.getDeclaredMethod("anchorScore", nodeType,
+                int.class, int.class, int.class, int.class, double.class);
+        method.setAccessible(true);
+        return (double) method.invoke(planner, node, x, z, 0, 0, 0.3D);
+    }
+
+    private List<?> routeCandidates(HydrologyPlanner planner) throws Exception {
+        Class<?> directionType = Class.forName(HydrologyPlanner.class.getName() + "$Direction");
+        Constructor<?> directionConstructor = directionType.getDeclaredConstructor(double.class, double.class);
+        directionConstructor.setAccessible(true);
+        Object direction = directionConstructor.newInstance(1D, 0D);
+        Class<?> positionType = Class.forName(HydrologyPlanner.class.getName() + "$RoutePosition");
+        Constructor<?> positionConstructor = positionType.getDeclaredConstructor(double.class, double.class,
+                double.class, double.class, directionType);
+        positionConstructor.setAccessible(true);
+        Object position = positionConstructor.newInstance(0D, 0D, 100D, 0D, direction);
+        Method method = HydrologyPlanner.class.getDeclaredMethod("routeCandidates", long.class, long.class,
+                positionType, double.class, int.class, int.class, String.class);
+        method.setAccessible(true);
+        return (List<?>) method.invoke(planner, 1L, 2L, position, 0.5D, 4, 1, null);
+    }
+
+    private static final class CountingNaturalSampler implements HydrologyNaturalTerrainSampler {
+        private final HydrologyTerrainSampler delegate;
+        private int basisCalls;
+        private int slopeCalls;
+
+        private CountingNaturalSampler(HydrologyTerrainSampler delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public HydrologyTerrainSample sampleBasis(int x, int z) {
+            slopeCalls++;
+            return delegate.sample(x, z);
+        }
+
+        @Override
+        public HydrologyTerrainSample sampleBasisWithoutSlope(int x, int z) {
+            basisCalls++;
+            HydrologyTerrainSample sample = delegate.sample(x, z);
+            return sample == null ? null : sample.withSlope(0D);
+        }
+
+        @Override
+        public HydrologyTerrainSample[] sampleGrid(GridRequest request) {
+            throw new AssertionError("Point sampling fixture does not request a grid.");
+        }
+
+        @Override
+        public NaturalClassification classifyNatural(int x, int z) {
+            HydrologyTerrainSample sample = delegate.sample(x, z);
+            return sample == null ? NaturalClassification.UNAVAILABLE
+                    : sample.ocean() ? NaturalClassification.OCEAN : NaturalClassification.LAND;
+        }
+    }
+
 }

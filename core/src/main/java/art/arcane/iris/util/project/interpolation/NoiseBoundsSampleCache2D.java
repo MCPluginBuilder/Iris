@@ -24,15 +24,15 @@ import java.util.Arrays;
 
 /**
  * Open-addressed memo table that samples a {@link NoiseBoundsProvider} once per column and serves
- * both the min and max side from the same entry. Single threaded by contract; instances are held in
+ * the minimum while recording maxima for an identical second interpolation pass. Single threaded; held in
  * thread locals.
  * <p>
- * The min/max {@link NoiseProvider} views are allocated once per cache instance and read the
- * currently bound provider, so a bounds interpolation pass allocates no lambdas per column.
+ * The minimum view samples the bound provider; the maximum view replays the same sampling sequence.
+ * Both views are allocated once per cache instance.
  */
 final class NoiseBoundsSampleCache2D {
     private final NoiseProvider minView = this::sampleMin;
-    private final NoiseProvider maxView = this::sampleMax;
+    private final NoiseProvider replayMaxView = this::replayMax;
     private NoiseBoundsProvider boundProvider;
     private long[] xBits;
     private long[] zBits;
@@ -43,6 +43,9 @@ final class NoiseBoundsSampleCache2D {
     private int resizeThreshold;
     private int size;
     private boolean inUse;
+    private double[] sampledMaximums = new double[64];
+    private int sampledMaximumCount;
+    private int maximumReplayIndex;
 
     public NoiseBoundsSampleCache2D(int initialCapacity) {
         int minimumCapacity = Math.max(8, initialCapacity);
@@ -75,6 +78,8 @@ final class NoiseBoundsSampleCache2D {
 
     public void beginUse() {
         inUse = true;
+        sampledMaximumCount = 0;
+        maximumReplayIndex = 0;
         clear();
     }
 
@@ -83,7 +88,7 @@ final class NoiseBoundsSampleCache2D {
     }
 
     /**
-     * Binds the provider that {@link #minView()} and {@link #maxView()} delegate to, returning the
+     * Binds the provider that {@link #minView()} samples, returning the
      * previously bound provider so callers can restore it.
      */
     public NoiseBoundsProvider bindProvider(NoiseBoundsProvider provider) {
@@ -96,44 +101,34 @@ final class NoiseBoundsSampleCache2D {
         return minView;
     }
 
-    public NoiseProvider maxView() {
-        return maxView;
+    public NoiseProvider replayMaxView() {
+        return replayMaxView;
     }
 
     private double sampleMin(double sampleX, double sampleZ) {
-        return getOrSampleMin(sampleX, sampleZ, boundProvider);
-    }
-
-    private double sampleMax(double sampleX, double sampleZ) {
-        return getOrSampleMax(sampleX, sampleZ, boundProvider);
-    }
-
-    public double getOrSampleMin(double sampleX, double sampleZ, NoiseBoundsProvider provider) {
-        long xBitsValue = Double.doubleToLongBits(sampleX);
-        long zBitsValue = Double.doubleToLongBits(sampleZ);
-        int slot = findSlot(xBitsValue, zBitsValue);
+        long sampleXBits = Double.doubleToLongBits(sampleX);
+        long sampleZBits = Double.doubleToLongBits(sampleZ);
+        int slot = findSlot(sampleXBits, sampleZBits);
+        double minimum;
+        double maximum;
         if (states[slot] != 0) {
-            return minValues[slot];
+            minimum = minValues[slot];
+            maximum = maxValues[slot];
+        } else {
+            NoiseBounds bounds = boundProvider.noise(sampleX, sampleZ);
+            minimum = bounds.min();
+            maximum = bounds.max();
+            insert(findSlot(sampleXBits, sampleZBits), sampleXBits, sampleZBits, minimum, maximum);
         }
-
-        NoiseBounds bounds = provider.noise(sampleX, sampleZ);
-        // Recompute the slot: the provider call can mutate the table (clear/grow) via nesting.
-        insert(findSlot(xBitsValue, zBitsValue), xBitsValue, zBitsValue, bounds.min(), bounds.max());
-        return bounds.min();
+        if (sampledMaximumCount == sampledMaximums.length) {
+            sampledMaximums = Arrays.copyOf(sampledMaximums, sampledMaximums.length << 1);
+        }
+        sampledMaximums[sampledMaximumCount++] = maximum;
+        return minimum;
     }
 
-    public double getOrSampleMax(double sampleX, double sampleZ, NoiseBoundsProvider provider) {
-        long xBitsValue = Double.doubleToLongBits(sampleX);
-        long zBitsValue = Double.doubleToLongBits(sampleZ);
-        int slot = findSlot(xBitsValue, zBitsValue);
-        if (states[slot] != 0) {
-            return maxValues[slot];
-        }
-
-        NoiseBounds bounds = provider.noise(sampleX, sampleZ);
-        // Recompute the slot: the provider call can mutate the table (clear/grow) via nesting.
-        insert(findSlot(xBitsValue, zBitsValue), xBitsValue, zBitsValue, bounds.min(), bounds.max());
-        return bounds.max();
+    private double replayMax(double sampleX, double sampleZ) {
+        return sampledMaximums[maximumReplayIndex++];
     }
 
     private int findSlot(long xb, long zb) {

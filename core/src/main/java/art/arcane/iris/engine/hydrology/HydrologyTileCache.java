@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -48,12 +49,17 @@ public final class HydrologyTileCache implements AutoCloseable {
     private final Executor prefetchExecutor;
     private final ConcurrentLinkedQueue<HydrologyTileKey> prefetchQueue;
     private final Set<HydrologyTileKey> queuedPrefetches;
+    private final Set<CacheLoadKey<HydrologyTileKey>> demandedPlans;
     private final AtomicBoolean prefetchActive;
-    private final ConcurrentHashMap<HydrologyTileKey, CompletableFuture<HydrologyTile>> planning;
+    private final ConcurrentHashMap<CacheLoadKey<HydrologyTileKey>, CompletableFuture<HydrologyTile>> planning;
+    private final ConcurrentHashMap<CacheLoadKey<HydrologyTileKey>, PendingLoad<HydrologyTile>> loading;
+    private final ConcurrentHashMap<CacheLoadKey<Long>, PendingLoad<ChunkColumns>> composing;
+    private final Object publicationLock = new Object();
     private final BooleanSupplier waitingForbidden;
     private volatile SharedCacheScope sharedCacheScope;
     private volatile StudioHydrologyTileStore persistentStore;
     private volatile boolean neighbourPrefetchEnabled;
+    private int demandBatches;
 
     public HydrologyTileCache(HydrologyPlanner planner) {
         this(planner, DEFAULT_MAXIMUM_ENTRIES, null, null, null);
@@ -96,12 +102,15 @@ public final class HydrologyTileCache implements AutoCloseable {
         this.sharedCacheScope = sharedCacheScope;
         this.persistentStore = null;
         this.planning = new ConcurrentHashMap<>();
+        this.loading = new ConcurrentHashMap<>();
+        this.composing = new ConcurrentHashMap<>();
         if (maximumEntries < 1) {
             throw new IllegalArgumentException("maximumEntries must be positive.");
         }
         this.maximumEntries = maximumEntries;
         this.prefetchQueue = new ConcurrentLinkedQueue<>();
         this.queuedPrefetches = ConcurrentHashMap.newKeySet();
+        this.demandedPlans = new HashSet<>();
         this.prefetchActive = new AtomicBoolean();
         this.tiles = Caffeine.newBuilder()
                 .maximumSize(maximumEntries)
@@ -122,10 +131,13 @@ public final class HydrologyTileCache implements AutoCloseable {
      */
     public HydrologyTile get(HydrologyTileKey key) {
         Objects.requireNonNull(key, "key");
-        if (prefetchExecutor == null || plansInline()) {
-            return planInline(key);
+        if (prefetchExecutor == null) {
+            return planInline(key, cacheEpoch.get());
         }
-        return awaitTile(planDemandAsync(key));
+        if (plansInline()) {
+            return planDemandInline(key);
+        }
+        return awaitPlan(planDemandAsync(key));
     }
 
     private boolean plansInline() {
@@ -137,12 +149,33 @@ public final class HydrologyTileCache implements AutoCloseable {
                 && worker.getPool() == pool;
     }
 
-    private HydrologyTile planInline(HydrologyTileKey key) {
-        if (tiles.getIfPresent(key) == null && planning.containsKey(key)) {
-            IrisLogging.debug("Hydrology tile %d,%d awaited by %s while the planning pool plans it",
-                    key.tileX(), key.tileZ(), Thread.currentThread().getName());
+    private HydrologyTile planInline(HydrologyTileKey key, long epoch) {
+        HydrologyTile present = tiles.getIfPresent(key);
+        if (present != null) {
+            return present;
         }
-        return tiles.get(key, this::planOrEmpty);
+        CacheLoadKey<HydrologyTileKey> loadKey = new CacheLoadKey<>(epoch, key);
+        PendingLoad<HydrologyTile> owned = new PendingLoad<>(Thread.currentThread(), new CompletableFuture<>());
+        PendingLoad<HydrologyTile> existing = loading.putIfAbsent(loadKey, owned);
+        if (existing != null) {
+            return awaitLoad(existing);
+        }
+        try {
+            present = tiles.getIfPresent(key);
+            HydrologyTile tile = present == null ? planOrEmpty(key, epoch) : present;
+            synchronized (publicationLock) {
+                if (!closed.get() && cacheEpoch.get() == epoch) {
+                    tiles.put(key, tile);
+                }
+            }
+            owned.future().complete(tile);
+            return tile;
+        } catch (Throwable failure) {
+            owned.future().completeExceptionally(failure);
+            throw failure;
+        } finally {
+            loading.remove(loadKey, owned);
+        }
     }
 
     /**
@@ -152,8 +185,7 @@ public final class HydrologyTileCache implements AutoCloseable {
      * stays consistent. A plan that was interrupted is not a bad tile: it is rethrown without being
      * cached so the next request plans it again.
      */
-    private HydrologyTile planOrEmpty(HydrologyTileKey key) {
-        long planningEpoch = cacheEpoch.get();
+    private HydrologyTile planOrEmpty(HydrologyTileKey key, long planningEpoch) {
         SharedTileKey sharedKey = sharedCacheScope == null ? null : new SharedTileKey(sharedCacheScope, key);
         HydrologyTile shared = sharedKey == null ? null : SHARED_TILES.getIfPresent(sharedKey);
         if (shared != null && validSharedTile(shared, sharedKey)) {
@@ -176,10 +208,12 @@ public final class HydrologyTileCache implements AutoCloseable {
         }
         try {
             HydrologyTile planned = planner.plan(key);
-            if (sharedKey != null && !closed.get() && planningEpoch == cacheEpoch.get()) {
-                HydrologyTile existing = SHARED_TILES.asMap().putIfAbsent(sharedKey, planned);
-                if (existing == null) {
-                    IrisLogging.debug("Published shared Studio hydrology tile %d,%d", key.tileX(), key.tileZ());
+            synchronized (publicationLock) {
+                if (sharedKey != null && !closed.get() && planningEpoch == cacheEpoch.get()) {
+                    HydrologyTile existing = SHARED_TILES.asMap().putIfAbsent(sharedKey, planned);
+                    if (existing == null) {
+                        IrisLogging.debug("Published shared Studio hydrology tile %d,%d", key.tileX(), key.tileZ());
+                    }
                 }
             }
             if (store != null && persistentStudioKey(key) && !closed.get() && planningEpoch == cacheEpoch.get()) {
@@ -277,14 +311,18 @@ public final class HydrologyTileCache implements AutoCloseable {
     }
 
     public void clear() {
-        cacheEpoch.incrementAndGet();
-        planner.clearOwnerDrafts();
         synchronized (prefetchQueue) {
+            synchronized (publicationLock) {
+                cacheEpoch.incrementAndGet();
+                planner.clearOwnerDrafts();
+                tiles.invalidateAll();
+                composedChunks.invalidateAll();
+            }
             prefetchQueue.clear();
             queuedPrefetches.clear();
+            demandedPlans.clear();
+            demandBatches = 0;
         }
-        tiles.invalidateAll();
-        composedChunks.invalidateAll();
         localChunkColumns.remove();
     }
 
@@ -302,16 +340,19 @@ public final class HydrologyTileCache implements AutoCloseable {
     }
 
     public void preparePregeneration(int centerBlockX, int centerBlockZ) {
-        neighbourPrefetchEnabled = true;
         int tileSize = planner.settings().routing().tileSize();
-        prefetchArea(
-                Math.subtractExact(centerBlockX, tileSize),
-                Math.subtractExact(centerBlockZ, tileSize),
-                Math.addExact(centerBlockX, tileSize),
-                Math.addExact(centerBlockZ, tileSize),
+        int minimumBlockX = Math.subtractExact(centerBlockX, tileSize);
+        int minimumBlockZ = Math.subtractExact(centerBlockZ, tileSize);
+        int maximumBlockX = Math.addExact(centerBlockX, tileSize);
+        int maximumBlockZ = Math.addExact(centerBlockZ, tileSize);
+        enqueuePrefetchArea(prefetchAreaKeys(
+                minimumBlockX,
+                minimumBlockZ,
+                maximumBlockX,
+                maximumBlockZ,
                 centerBlockX,
                 centerBlockZ
-        );
+        ), true);
     }
 
     public void enableSharedCache(SharedCacheScope scope, Path persistentRoot) {
@@ -366,12 +407,39 @@ public final class HydrologyTileCache implements AutoCloseable {
             // The empty result is never cached, so the next query composes the real columns.
             return ChunkColumns.empty(chunkX, chunkZ);
         }
-        ChunkColumns columns = composedChunks.get(
-                packedChunk,
-                ignored -> composeChunkColumns(chunkX, chunkZ)
-        );
+        ChunkColumns columns = loadChunkColumns(new CacheLoadKey<>(epoch, packedChunk), chunkX, chunkZ);
         localChunkColumns.set(new LocalChunkColumns(epoch, columns));
         return columns;
+    }
+
+    private ChunkColumns loadChunkColumns(CacheLoadKey<Long> loadKey, int chunkX, int chunkZ) {
+        long epoch = loadKey.epoch();
+        long packedChunk = loadKey.key();
+        ChunkColumns present = composedChunks.getIfPresent(packedChunk);
+        if (present != null) {
+            return present;
+        }
+        PendingLoad<ChunkColumns> owned = new PendingLoad<>(Thread.currentThread(), new CompletableFuture<>());
+        PendingLoad<ChunkColumns> existing = composing.putIfAbsent(loadKey, owned);
+        if (existing != null) {
+            return awaitLoad(existing);
+        }
+        try {
+            present = composedChunks.getIfPresent(packedChunk);
+            ChunkColumns columns = present == null ? composeChunkColumns(chunkX, chunkZ) : present;
+            synchronized (publicationLock) {
+                if (!closed.get() && cacheEpoch.get() == epoch) {
+                    composedChunks.put(packedChunk, columns);
+                }
+            }
+            owned.future().complete(columns);
+            return columns;
+        } catch (Throwable failure) {
+            owned.future().completeExceptionally(failure);
+            throw failure;
+        } finally {
+            composing.remove(loadKey, owned);
+        }
     }
 
     /** The tiles a chunk's columns compose from: every tile within the publication radius of the chunk. */
@@ -447,6 +515,12 @@ public final class HydrologyTileCache implements AutoCloseable {
         if (prefetchExecutor == null) {
             return;
         }
+        enqueuePrefetchArea(prefetchAreaKeys(minimumBlockX, minimumBlockZ, maximumBlockX, maximumBlockZ,
+                centreBlockX, centreBlockZ), false);
+    }
+
+    private List<HydrologyTileKey> prefetchAreaKeys(int minimumBlockX, int minimumBlockZ, int maximumBlockX,
+                                                  int maximumBlockZ, int centreBlockX, int centreBlockZ) {
         int tileSize = planner.settings().routing().tileSize();
         int publicationRadius = planner.settings().publicationRadius();
         int minimumTileX = tileCoordinate((long) minimumBlockX - publicationRadius, tileSize);
@@ -464,31 +538,66 @@ public final class HydrologyTileCache implements AutoCloseable {
         keys.sort(Comparator.comparingInt((HydrologyTileKey key) -> Math.max(Math.abs(key.tileX() - centreTileX), Math.abs(key.tileZ() - centreTileZ)))
                 .thenComparingInt(HydrologyTileKey::tileZ)
                 .thenComparingInt(HydrologyTileKey::tileX));
-        for (HydrologyTileKey key : keys) {
-            if (!prefetch(key) && speculativeEntryCount() >= maximumEntries) {
-                break;
+        return keys;
+    }
+
+    private void enqueuePrefetchArea(List<HydrologyTileKey> keys, boolean discardOutsideArea) {
+        Set<HydrologyTileKey> area = discardOutsideArea ? new HashSet<>(keys) : Set.of();
+        tiles.cleanUp();
+        synchronized (prefetchQueue) {
+            if (discardOutsideArea) {
+                prefetchQueue.removeIf(key -> {
+                    if (!area.contains(key)) {
+                        queuedPrefetches.remove(key);
+                        return true;
+                    }
+                    return false;
+                });
+                neighbourPrefetchEnabled = true;
+            }
+            if (prefetchExecutor == null) {
+                return;
+            }
+            for (HydrologyTileKey key : keys) {
+                if (!enqueuePrefetch(key) && speculativeEntryCount() >= maximumEntries) {
+                    break;
+                }
             }
         }
+        pumpPrefetch();
     }
 
     private boolean prefetch(HydrologyTileKey key) {
+        if (closed.get()
+                || tiles.getIfPresent(key) != null
+                || planning.containsKey(new CacheLoadKey<>(cacheEpoch.get(), key))
+                || queuedPrefetches.contains(key)) {
+            return false;
+        }
+        tiles.cleanUp();
         synchronized (prefetchQueue) {
-            if (closed.get()
-                    || tiles.getIfPresent(key) != null
-                    || planning.containsKey(key)
-                    || queuedPrefetches.contains(key)
-                    || speculativeEntryCount() >= maximumEntries) {
+            if (!enqueuePrefetch(key)) {
                 return false;
             }
-            queuedPrefetches.add(key);
-            prefetchQueue.add(key);
         }
         pumpPrefetch();
         return true;
     }
 
+    private boolean enqueuePrefetch(HydrologyTileKey key) {
+        if (closed.get()
+                || tiles.getIfPresent(key) != null
+                || planning.containsKey(new CacheLoadKey<>(cacheEpoch.get(), key))
+                || queuedPrefetches.contains(key)
+                || speculativeEntryCount() >= maximumEntries) {
+            return false;
+        }
+        queuedPrefetches.add(key);
+        prefetchQueue.add(key);
+        return true;
+    }
+
     private int speculativeEntryCount() {
-        tiles.cleanUp();
         return Math.toIntExact(Math.min(
                 maximumEntries,
                 tiles.estimatedSize() + planning.size() + queuedPrefetches.size()
@@ -496,22 +605,30 @@ public final class HydrologyTileCache implements AutoCloseable {
     }
 
     private void pumpPrefetch() {
-        if (prefetchExecutor == null || closed.get() || !prefetchActive.compareAndSet(false, true)) {
-            return;
+        synchronized (prefetchQueue) {
+            if (prefetchExecutor == null || closed.get() || demandBatches != 0 || !demandedPlans.isEmpty()
+                    || !prefetchActive.compareAndSet(false, true)) {
+                return;
+            }
         }
         scheduleNextPrefetch();
     }
 
     private void scheduleNextPrefetch() {
-        HydrologyTileKey key = pollPrefetch();
-        if (key == null || closed.get()) {
-            prefetchActive.set(false);
-            if (!prefetchQueue.isEmpty()) {
-                pumpPrefetch();
+        CacheLoadKey<HydrologyTileKey> loadKey;
+        synchronized (prefetchQueue) {
+            if (closed.get() || demandBatches != 0 || !demandedPlans.isEmpty()) {
+                prefetchActive.set(false);
+                return;
             }
-            return;
+            HydrologyTileKey key = pollPrefetch();
+            if (key == null) {
+                prefetchActive.set(false);
+                return;
+            }
+            loadKey = new CacheLoadKey<>(cacheEpoch.get(), key);
         }
-        planAsync(key).whenComplete((tile, failure) -> scheduleNextPrefetch());
+        planAsync(loadKey).whenComplete((tile, failure) -> scheduleNextPrefetch());
     }
 
     private HydrologyTileKey pollPrefetch() {
@@ -536,65 +653,154 @@ public final class HydrologyTileCache implements AutoCloseable {
     public List<HydrologyTile> tiles(List<HydrologyTileKey> keys) {
         Objects.requireNonNull(keys, "keys");
         HydrologyTile[] loaded = new HydrologyTile[keys.size()];
-        if (prefetchExecutor == null || plansInline()) {
+        boolean missing = false;
+        for (int index = 0; index < loaded.length; index++) {
+            loaded[index] = tiles.getIfPresent(keys.get(index));
+            missing |= loaded[index] == null;
+        }
+        if (!missing) {
+            return List.of(loaded);
+        }
+        if (prefetchExecutor == null) {
             for (int index = 0; index < loaded.length; index++) {
-                loaded[index] = planInline(keys.get(index));
+                if (loaded[index] == null) {
+                    loaded[index] = get(keys.get(index));
+                }
             }
             return List.of(loaded);
         }
-        int batch = Math.max(1, maximumEntries / 2);
-        ArrayList<CompletableFuture<HydrologyTile>> futures = new ArrayList<>(Math.min(batch, loaded.length));
-        for (int start = 0; start < loaded.length; start += batch) {
-            int end = Math.min(loaded.length, start + batch);
-            futures.clear();
-            for (int index = start; index < end; index++) {
-                futures.add(planDemandAsync(keys.get(index)));
+        long demandEpoch = beginDemandBatch();
+        try {
+            if (plansInline()) {
+                for (int index = 0; index < loaded.length; index++) {
+                    if (loaded[index] == null) {
+                        loaded[index] = get(keys.get(index));
+                    }
+                }
+                return List.of(loaded);
             }
-            for (int index = start; index < end; index++) {
-                loaded[index] = awaitTile(futures.get(index - start));
+            int batch = Math.max(1, maximumEntries / 2);
+            ArrayList<CompletableFuture<HydrologyTile>> futures = new ArrayList<>(Math.min(batch, loaded.length));
+            for (int start = 0; start < loaded.length; start += batch) {
+                int end = Math.min(loaded.length, start + batch);
+                futures.clear();
+                for (int index = start; index < end; index++) {
+                    futures.add(planDemandAsync(keys.get(index)));
+                }
+                for (int index = start; index < end; index++) {
+                    loaded[index] = awaitPlan(futures.get(index - start));
+                }
+            }
+            return List.of(loaded);
+        } finally {
+            finishDemandBatch(demandEpoch);
+        }
+    }
+
+    private long beginDemandBatch() {
+        synchronized (prefetchQueue) {
+            demandBatches++;
+            return cacheEpoch.get();
+        }
+    }
+
+    private void finishDemandBatch(long epoch) {
+        synchronized (prefetchQueue) {
+            if (epoch == cacheEpoch.get()) {
+                demandBatches--;
             }
         }
-        return List.of(loaded);
+        pumpPrefetch();
     }
 
     /**
      * The tile, planned on the prefetch executor unless it is cached or already being planned, in which
      * case the caller shares that plan instead of occupying a second executor thread with it.
      */
-    private CompletableFuture<HydrologyTile> planAsync(HydrologyTileKey key) {
+    private CompletableFuture<HydrologyTile> planAsync(CacheLoadKey<HydrologyTileKey> loadKey) {
+        HydrologyTileKey key = loadKey.key();
         HydrologyTile present = tiles.getIfPresent(key);
         if (present != null) {
             return CompletableFuture.completedFuture(present);
         }
         CompletableFuture<HydrologyTile> future = new CompletableFuture<>();
-        CompletableFuture<HydrologyTile> existing = planning.putIfAbsent(key, future);
+        CompletableFuture<HydrologyTile> existing = planning.putIfAbsent(loadKey, future);
         if (existing != null) {
             return existing;
         }
         try {
             prefetchExecutor.execute(() -> {
                 try {
-                    future.complete(planInline(key));
+                    future.complete(planInline(key, loadKey.epoch()));
                 } catch (Throwable failure) {
                     future.completeExceptionally(failure);
                     IrisLogging.reportError(failure);
                 } finally {
-                    planning.remove(key, future);
+                    planning.remove(loadKey, future);
                 }
             });
         } catch (RuntimeException rejected) {
-            planning.remove(key, future);
+            planning.remove(loadKey, future);
             future.completeExceptionally(rejected);
         }
         return future;
     }
 
     private CompletableFuture<HydrologyTile> planDemandAsync(HydrologyTileKey key) {
-        queuedPrefetches.remove(key);
-        return planAsync(key);
+        HydrologyTile present = tiles.getIfPresent(key);
+        if (present != null) {
+            return CompletableFuture.completedFuture(present);
+        }
+        CacheLoadKey<HydrologyTileKey> loadKey = new CacheLoadKey<>(cacheEpoch.get(), key);
+        boolean tracked = beginDemand(loadKey);
+        CompletableFuture<HydrologyTile> future = planAsync(loadKey);
+        if (tracked) {
+            future.whenComplete((tile, failure) -> finishDemand(loadKey));
+        }
+        return future;
     }
 
-    private static HydrologyTile awaitTile(CompletableFuture<HydrologyTile> future) {
+    private HydrologyTile planDemandInline(HydrologyTileKey key) {
+        HydrologyTile present = tiles.getIfPresent(key);
+        if (present != null) {
+            return present;
+        }
+        CacheLoadKey<HydrologyTileKey> loadKey = new CacheLoadKey<>(cacheEpoch.get(), key);
+        boolean tracked = beginDemand(loadKey);
+        try {
+            return planInline(key, loadKey.epoch());
+        } finally {
+            if (tracked) {
+                finishDemand(loadKey);
+            }
+        }
+    }
+
+    private boolean beginDemand(CacheLoadKey<HydrologyTileKey> loadKey) {
+        synchronized (prefetchQueue) {
+            if (loadKey.epoch() != cacheEpoch.get()) {
+                return false;
+            }
+            queuedPrefetches.remove(loadKey.key());
+            return demandedPlans.add(loadKey);
+        }
+    }
+
+    private void finishDemand(CacheLoadKey<HydrologyTileKey> loadKey) {
+        synchronized (prefetchQueue) {
+            demandedPlans.remove(loadKey);
+        }
+        pumpPrefetch();
+    }
+
+    private static <T> T awaitLoad(PendingLoad<T> load) {
+        if (load.owner() == Thread.currentThread()) {
+            throw new IllegalStateException("Recursive hydrology cache load.");
+        }
+        return awaitPlan(load.future());
+    }
+
+    private static <T> T awaitPlan(CompletableFuture<T> future) {
         try {
             return future.join();
         } catch (CompletionException failure) {
@@ -695,6 +901,12 @@ public final class HydrologyTileCache implements AutoCloseable {
     }
 
     private record LocalChunkColumns(long epoch, ChunkColumns columns) {
+    }
+
+    private record CacheLoadKey<K>(long epoch, K key) {
+    }
+
+    private record PendingLoad<T>(Thread owner, CompletableFuture<T> future) {
     }
 
     public record SharedCacheScope(

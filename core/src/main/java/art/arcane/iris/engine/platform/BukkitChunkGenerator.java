@@ -32,6 +32,7 @@ import art.arcane.iris.core.IrisWorlds;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.INMS;
 import art.arcane.iris.core.runtime.ObjectStudioActivation;
+import art.arcane.iris.core.runtime.ObjectStudioLayout;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioActivation;
 import art.arcane.iris.core.runtime.jigsaw.JigsawStudioSession;
 import art.arcane.iris.core.service.StudioSVC;
@@ -136,6 +137,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     private volatile StudioMode lastMode;
     private volatile UUID lastJigsawStudioRequestId;
     private volatile boolean jigsawStudioActive;
+    private volatile boolean objectStudioActive;
     private volatile DummyBiomeProvider dummyBiomeProvider;
     private volatile Throwable initializationFailure;
     private volatile IrisDimension validatedDimension;
@@ -256,6 +258,9 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
     /** Starts nearest-first hydrology planning around a new world's initial spawn. */
     private void prefetchSpawnHydrology(Engine engine, World world) {
+        if (usesFlatStudioTerrain()) {
+            return;
+        }
         if (engine.getComplex() == null || engine.getComplex().getHydrologyRuntime() == null) {
             return;
         }
@@ -263,6 +268,11 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         int spawnX = spawn.getBlockX();
         int spawnZ = spawn.getBlockZ();
         if (world.isChunkGenerated(spawnX >> 4, spawnZ >> 4)) {
+            return;
+        }
+        if (studio && engine.getDimension().getStudioMode() == StudioMode.NORMAL
+                && engine instanceof IrisEngine irisEngine) {
+            irisEngine.startStudioEntryHydrology(spawnX, spawnZ);
             return;
         }
         int reach = Math.max(16, hydrologyTileSize() / 2);
@@ -407,6 +417,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         jigsawStudioActive = request != null
                 && session != null
                 && session.sessionId().equals(request.requestId());
+        objectStudioActive = studio && ObjectStudioActivation.isActive(packKey);
         IrisEngine createdEngine = createEngine(engineTarget);
         if (generationHistory != null) {
             long initialActivationId = generationHistory.activeActivation().activationId();
@@ -439,7 +450,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
             }
         }
         createdEngine.setNativeStructureVolumeQueriesEnabled(shouldGenerateNativeStructures(
-                jigsawStudioActive,
+                isAuthoringStudio(),
                 studioEntryBootstrapActive.get(),
                 initializationFailure != null));
         engine = createdEngine;
@@ -477,7 +488,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     }
 
     private IrisEngine createEngine(EngineTarget engineTarget) {
-        IrisEngine.InitializationMode mode = selectInitializationMode(studio, jigsawStudioActive);
+        IrisEngine.InitializationMode mode = selectInitializationMode(studio, jigsawStudioActive, objectStudioActive);
         if (generationHistory == null) {
             return new IrisEngine(engineTarget, mode);
         }
@@ -511,12 +522,14 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         return new IllegalStateException("Unable to attach Iris generation history.", failure);
     }
 
-    static IrisEngine.InitializationMode selectInitializationMode(boolean studio, boolean jigsawStudioActive) {
+    static IrisEngine.InitializationMode selectInitializationMode(boolean studio, boolean jigsawStudioActive, boolean objectStudioActive) {
         if (!studio) {
             return IrisEngine.InitializationMode.RUNTIME;
         }
         return jigsawStudioActive
                 ? IrisEngine.InitializationMode.JIGSAW_STUDIO
+                : objectStudioActive
+                ? IrisEngine.InitializationMode.OBJECT_STUDIO
                 : IrisEngine.InitializationMode.STUDIO;
     }
 
@@ -738,7 +751,7 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
         Engine activeEngine = engine;
         if (activeEngine instanceof IrisEngine irisEngine) {
             irisEngine.setNativeStructureVolumeQueriesEnabled(shouldGenerateNativeStructures(
-                    jigsawStudioActive,
+                    isAuthoringStudio(),
                     false,
                     initializationFailure != null));
         }
@@ -751,6 +764,33 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
 
     public boolean isJigsawStudioActive() {
         return jigsawStudioActive;
+    }
+
+    public boolean isAuthoringStudio() {
+        return jigsawStudioActive || objectStudioActive;
+    }
+
+    public boolean usesFlatStudioTerrain() {
+        Engine activeEngine = engine;
+        return usesFlatStudioTerrain(studio, isAuthoringStudio(),
+                activeEngine == null ? null : activeEngine.getDimension().getStudioMode());
+    }
+
+    static boolean usesFlatStudioTerrain(boolean studio, boolean authoringStudio, StudioMode mode) {
+        return studio && (authoringStudio || mode == StudioMode.OBJECT_BUFFET);
+    }
+
+    public int getAuthoringFloorY() {
+        return Math.max(engine.getMinHeight(), ObjectStudioLayout.FLOOR_Y);
+    }
+
+    public int getAuthoringBaseHeight() {
+        return authoringBaseHeight(engine.getMinHeight(), engine.getMaxHeight());
+    }
+
+    static int authoringBaseHeight(int minimumY, int maximumY) {
+        int floorY = Math.max(minimumY, ObjectStudioLayout.FLOOR_Y);
+        return floorY < maximumY ? floorY + 1 : minimumY;
     }
 
     @Override
@@ -1089,6 +1129,9 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     @Override
     public int getBaseHeight(@NotNull WorldInfo worldInfo, @NotNull Random random, int x, int z, @NotNull HeightMap heightMap) {
         Engine currentEngine = getEngine(worldInfo);
+        if (usesFlatStudioTerrain()) {
+            return getAuthoringBaseHeight();
+        }
 
         boolean ignoreFluid = switch (heightMap) {
             case OCEAN_FLOOR, OCEAN_FLOOR_WG -> true;
@@ -1165,17 +1208,17 @@ public class BukkitChunkGenerator extends ChunkGenerator implements PlatformChun
     @Override
     public boolean shouldGenerateStructures() {
         return shouldGenerateNativeStructures(
-                jigsawStudioActive,
+                isAuthoringStudio(),
                 studioEntryBootstrapActive.get(),
                 initializationFailure != null);
     }
 
     static boolean shouldGenerateNativeStructures(
-            boolean jigsawStudioActive,
+            boolean authoringStudio,
             boolean studioEntryBootstrapActive,
             boolean initializationFailed
     ) {
-        return !jigsawStudioActive && !studioEntryBootstrapActive && !initializationFailed;
+        return !authoringStudio && !studioEntryBootstrapActive && !initializationFailed;
     }
 
     @Override

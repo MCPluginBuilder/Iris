@@ -14,6 +14,39 @@ public class HydrologyPlannerTributaryTest {
     private static final HydrologyTileKey TILE = new HydrologyTileKey(0, 0);
 
     @Test
+    public void heightOnlySamplingPreservesSurfacePlansWithFewerSlopeSamples() {
+        HydrologyPlannerSettings settings = settings(1);
+        HydrologyTerrainSampler terrain = (int x, int z) -> valley(x, z).withSlope(0.5D);
+        CountingNaturalSampler referenceSampler = new CountingNaturalSampler(terrain, false);
+        CountingNaturalSampler optimizedSampler = new CountingNaturalSampler(terrain, true);
+
+        HydrologyTile reference = planner(settings, terrain, referenceSampler).plan(TILE);
+        HydrologyTile optimized = planner(settings, terrain, optimizedSampler).plan(TILE);
+
+        assertFalse(reference.courses().isEmpty());
+        assertEquals(reference, optimized);
+        assertTrue(optimizedSampler.heightOnlyCalls > 0);
+        assertTrue("reference=" + referenceSampler.slopeCalls + ", optimized=" + optimizedSampler.slopeCalls,
+                optimizedSampler.slopeCalls < referenceSampler.slopeCalls);
+    }
+
+    private static HydrologyPlanner planner(
+            HydrologyPlannerSettings settings,
+            HydrologyTerrainSampler terrain,
+            HydrologyNaturalTerrainSampler naturalSampler
+    ) {
+        return new HydrologyPlanner(
+                19L,
+                settings,
+                terrain,
+                naturalSampler,
+                HydrologyGeometrySampler.deterministic(terrain),
+                -4096,
+                footprint -> new HydrologyTerrainCaveVoxelView(terrain, settings.seaLevel(), -4096, 4096)
+        );
+    }
+
+    @Test
     public void aSecondSourceJoinsTheMainStemAsATributaryWhenAllowed() {
         HydrologyTerrainSampler terrain = HydrologyPlannerTributaryTest::valley;
 
@@ -418,5 +451,50 @@ public class HydrologyPlannerTributaryTest {
                 0D,
                 HydrologyPlannerSettings.SeaCaves.disabled()
         );
+    }
+
+    private static final class CountingNaturalSampler implements HydrologyNaturalTerrainSampler {
+        private final HydrologyTerrainSampler terrain;
+        private final boolean omitUnusedSlope;
+        private int slopeCalls;
+        private int heightOnlyCalls;
+
+        private CountingNaturalSampler(HydrologyTerrainSampler terrain, boolean omitUnusedSlope) {
+            this.terrain = terrain;
+            this.omitUnusedSlope = omitUnusedSlope;
+        }
+
+        @Override
+        public HydrologyTerrainSample[] sampleGrid(GridRequest request) {
+            HydrologyTerrainSample[] samples = new HydrologyTerrainSample[request.width() * request.width()];
+            for (int gridZ = 0; gridZ < request.width(); gridZ++) {
+                for (int gridX = 0; gridX < request.width(); gridX++) {
+                    int x = request.minimumX() + gridX * request.spacing();
+                    int z = request.minimumZ() + gridZ * request.spacing();
+                    samples[gridZ * request.width() + gridX] = terrain.sample(x, z);
+                }
+            }
+            return samples;
+        }
+
+        @Override
+        public NaturalClassification classifyNatural(int blockX, int blockZ) {
+            return terrain.sample(blockX, blockZ).ocean() ? NaturalClassification.OCEAN : NaturalClassification.LAND;
+        }
+
+        @Override
+        public HydrologyTerrainSample sampleBasis(int blockX, int blockZ) {
+            slopeCalls++;
+            return terrain.sample(blockX, blockZ);
+        }
+
+        @Override
+        public HydrologyTerrainSample sampleBasisWithoutSlope(int blockX, int blockZ) {
+            if (!omitUnusedSlope) {
+                return sampleBasis(blockX, blockZ);
+            }
+            heightOnlyCalls++;
+            return terrain.sample(blockX, blockZ).withSlope(0D);
+        }
     }
 }

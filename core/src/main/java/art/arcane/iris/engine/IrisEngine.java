@@ -406,6 +406,36 @@ public class IrisEngine implements Engine {
         return packRoot.resolve(".iris").resolve("studio-hydrology");
     }
 
+    public void startStudioEntryHydrology(int blockX, int blockZ) {
+        GenerationRuntimeBinding binding = getActiveGenerationRuntimeBinding();
+        if (!backgroundTasks.scheduleTrackedTask(() -> prepareStudioEntryHydrology(binding, blockX, blockZ))) {
+            throw new IllegalStateException("Iris background task admission closed before Studio entry preparation.");
+        }
+    }
+
+    private void prepareStudioEntryHydrology(GenerationRuntimeBinding binding, int blockX, int blockZ) {
+        if (closing.get()) {
+            return;
+        }
+        GenerationSessionLease lease;
+        try {
+            lease = acquireGenerationLease("studio_entry_hydrology");
+        } catch (GenerationSessionException failure) {
+            if (closing.get()) {
+                return;
+            }
+            throw new IllegalStateException("Studio entry hydrology preparation could not acquire its generation session.", failure);
+        }
+        try (lease;
+             GenerationRuntimeScope runtimeScope = generationRuntimeScopes.open(binding);
+             IrisContext.Scope context = IrisContext.open(this, lease.sessionId(), null)) {
+            getComplex().getHydrologyRuntime().prepareChunkColumns(blockX, blockZ);
+        } catch (Exception failure) {
+            throw new IllegalStateException("Studio entry hydrology preparation failed at "
+                    + blockX + "," + blockZ + ".", failure);
+        }
+    }
+
     private void startGenerationCacheWarm(long phaseStartedAtNanos) {
         if (!backgroundTasks.scheduleTrackedTask(() -> warmGenerationCaches(phaseStartedAtNanos))) {
             throw new IllegalStateException("Iris background task admission closed before generation cache warming.");
@@ -1491,6 +1521,7 @@ public class IrisEngine implements Engine {
     public enum InitializationMode {
         RUNTIME(false, true),
         STUDIO(true, true),
+        OBJECT_STUDIO(true, false),
         JIGSAW_STUDIO(true, false);
 
         private final boolean studio;
