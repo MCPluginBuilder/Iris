@@ -12,7 +12,9 @@ import static org.junit.Assert.assertTrue;
 public class PatternNoiseTest {
     private static final NoiseStyle[] STYLES = {
             NoiseStyle.GYROID, NoiseStyle.QUASICRYSTAL, NoiseStyle.TRUCHET,
-            NoiseStyle.CRATER, NoiseStyle.VORTEX
+            NoiseStyle.CRATER, NoiseStyle.VORTEX,
+            NoiseStyle.DUNE, NoiseStyle.STRATA, NoiseStyle.WOOD, NoiseStyle.GABOR, NoiseStyle.MARBLE,
+            NoiseStyle.SCALES, NoiseStyle.CHLADNI, NoiseStyle.KALEIDOSCOPE, NoiseStyle.MENGER_SPONGE, NoiseStyle.CIRCUIT
     };
 
     @Test
@@ -100,7 +102,9 @@ public class PatternNoiseTest {
 
     private static PatternNoise[] patterns(long seed) {
         return new PatternNoise[]{new GyroidNoise(seed), new QuasicrystalNoise(seed),
-                new TruchetNoise(seed), new CraterNoise(seed), new VortexNoise(seed)};
+                new TruchetNoise(seed), new CraterNoise(seed), new VortexNoise(seed),
+                new DuneNoise(seed), new StrataNoise(seed), new WoodNoise(seed), new GaborNoise(seed), new MarbleNoise(seed),
+                new ScalesNoise(seed), new ChladniNoise(seed), new KaleidoscopeNoise(seed), new MengerSpongeNoise(seed), new CircuitNoise(seed)};
     }
 
     private static void assertUnit(PatternNoise noise, double value) {

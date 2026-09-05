@@ -553,6 +553,36 @@ public enum NoiseStyle {
 
     @Desc("Seeded spiral arms form swirling eddies in 2D and winding funnels in 3D.")
     VORTEX(rng -> new CNG(rng, NoiseType.VORTEX, 1D, 1), NoiseType.VORTEX),
+
+    @Desc("Seeded crescent dunes with asymmetric slopes and smooth height-dependent drift.")
+    DUNE(rng -> new CNG(rng, NoiseType.DUNE, 1D, 1), NoiseType.DUNE),
+
+    @Desc("Folded sedimentary bands with varying thickness through the volume.")
+    STRATA(rng -> new CNG(rng, NoiseType.STRATA, 1D, 1), NoiseType.STRATA),
+
+    @Desc("Distorted growth rings and knot-like forms with variation through height.")
+    WOOD(rng -> new CNG(rng, NoiseType.WOOD, 1D, 1), NoiseType.WOOD),
+
+    @Desc("Seeded oriented wave packets form a sparse directional ripple texture.")
+    GABOR(rng -> new CNG(rng, NoiseType.GABOR, 1D, 1), NoiseType.GABOR),
+
+    @Desc("Turbulent stone veins separate broad smooth regions.")
+    MARBLE(rng -> new CNG(rng, NoiseType.MARBLE, 1D, 1), NoiseType.MARBLE),
+
+    @Desc("Overlapping scalloped scales form a seeded tiled surface.")
+    SCALES(rng -> new CNG(rng, NoiseType.SCALES, 1D, 1), NoiseType.SCALES),
+
+    @Desc("Standing-wave nodes form plate-like figures that change through height.")
+    CHLADNI(rng -> new CNG(rng, NoiseType.CHLADNI, 1D, 1), NoiseType.CHLADNI),
+
+    @Desc("Mirrored wedge motifs repeat at a local scale with seeded variation.")
+    KALEIDOSCOPE(rng -> new CNG(rng, NoiseType.KALEIDOSCOPE, 1D, 1), NoiseType.KALEIDOSCOPE),
+
+    @Desc("Recursive cubic voids form a three-dimensional sponge with square-hole slices.")
+    MENGER_SPONGE(rng -> new CNG(rng, NoiseType.MENGER_SPONGE, 1D, 1), NoiseType.MENGER_SPONGE),
+
+    @Desc("Orthogonal tracks and ring pads form connected circuits that shift through height.")
+    CIRCUIT(rng -> new CNG(rng, NoiseType.CIRCUIT, 1D, 1), NoiseType.CIRCUIT),
     ;
 
     private final CNGFactory f;

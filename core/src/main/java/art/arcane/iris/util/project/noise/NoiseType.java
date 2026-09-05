@@ -92,7 +92,17 @@ public enum NoiseType {
     QUASICRYSTAL(QuasicrystalNoise::new, 1D / 64D),
     TRUCHET(TruchetNoise::new, 1D / 64D),
     CRATER(CraterNoise::new, 1D / 64D),
-    VORTEX(VortexNoise::new, 1D / 64D);
+    VORTEX(VortexNoise::new, 1D / 64D),
+    DUNE(DuneNoise::new, 1D / 64D),
+    STRATA(StrataNoise::new, 1D / 64D),
+    WOOD(WoodNoise::new, 1D / 64D),
+    GABOR(GaborNoise::new, 1D / 64D),
+    MARBLE(MarbleNoise::new, 1D / 64D),
+    SCALES(ScalesNoise::new, 1D / 64D),
+    CHLADNI(ChladniNoise::new, 1D / 64D),
+    KALEIDOSCOPE(KaleidoscopeNoise::new, 1D / 64D),
+    MENGER_SPONGE(MengerSpongeNoise::new, 1D / 64D),
+    CIRCUIT(CircuitNoise::new, 1D / 64D);
 
     private final NoiseFactory f;
     private final double coordinateScale;
