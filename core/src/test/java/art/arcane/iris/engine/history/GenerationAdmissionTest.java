@@ -6,8 +6,10 @@ import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -41,23 +43,37 @@ public class GenerationAdmissionTest {
         GenerationAdmission.StageLease firstStage = admission.enterStage();
         CountDownLatch cutoverEntered = new CountDownLatch(1);
         CountDownLatch releaseCutover = new CountDownLatch(1);
-        CompletableFuture<Void> cutover = CompletableFuture.runAsync(() -> {
+        FutureTask<Void> cutover = new FutureTask<>(() -> {
             try (GenerationAdmission.CutoverLease ignored = admission.beginCutover()) {
                 cutoverEntered.countDown();
                 await(releaseCutover);
             }
-        });
-        CompletableFuture<Void> laterStage = CompletableFuture.runAsync(() -> {
+        }, null);
+        FutureTask<Void> laterStage = new FutureTask<>(() -> {
             try (GenerationAdmission.StageLease ignored = admission.enterStage()) {
             }
-        });
+        }, null);
+        Thread cutoverThread = Thread.ofPlatform().daemon().unstarted(cutover);
+        Thread laterStageThread = Thread.ofPlatform().daemon().unstarted(laterStage);
 
-        firstStage.close();
-        assertTrue(cutoverEntered.await(5L, TimeUnit.SECONDS));
-        assertFalse(laterStage.isDone());
-        releaseCutover.countDown();
-        cutover.get(5L, TimeUnit.SECONDS);
-        laterStage.get(5L, TimeUnit.SECONDS);
+        try {
+            cutoverThread.start();
+            awaitWaiting(cutoverThread);
+            laterStageThread.start();
+            awaitWaiting(laterStageThread);
+
+            firstStage.close();
+            assertTrue(cutoverEntered.await(5L, TimeUnit.SECONDS));
+            assertFalse(laterStage.isDone());
+            releaseCutover.countDown();
+            cutover.get(5L, TimeUnit.SECONDS);
+            laterStage.get(5L, TimeUnit.SECONDS);
+        } finally {
+            firstStage.close();
+            releaseCutover.countDown();
+            cutoverThread.join(5_000L);
+            laterStageThread.join(5_000L);
+        }
     }
 
     @Test
@@ -85,6 +101,15 @@ public class GenerationAdmissionTest {
         }
 
         assertThrows(IllegalStateException.class, admission::beginStartupCutover);
+    }
+
+    private static void awaitWaiting(Thread thread) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5L);
+        while (thread.getState() != Thread.State.WAITING && System.nanoTime() < deadline) {
+            assertTrue("Generation operation completed before reaching the admission gate.", thread.isAlive());
+            Thread.sleep(1L);
+        }
+        assertEquals("Generation operation did not reach the admission gate.", Thread.State.WAITING, thread.getState());
     }
 
     private static void await(CountDownLatch latch) {
