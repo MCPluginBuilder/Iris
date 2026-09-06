@@ -123,7 +123,7 @@ public class WandSelection {
         p.spawnParticle(REDSTONE, x, y, z,
                 0, 0, 0, 0, 1,
                 new Particle.DustOptions(org.bukkit.Color.fromRGB(color.getRed(), color.getGreen(), color.getBlue()),
-                        (float) dist * 3f));
+                        Math.clamp((float) dist * 3f, 0.01f, 4f)));
     }
 
     private static double square(double value) {
