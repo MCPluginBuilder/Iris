@@ -47,6 +47,15 @@ public final class RuntimeProgressMessages {
     public static final TextKey WORLD_CREATE_STAGE_PREGENERATE = TextKey.of("iris.runtime.world_create.stage.pregenerate", "Pregenerating");
     public static final TextKey WORLD_CREATE_STAGE_FINALIZE = TextKey.of("iris.runtime.world_create.stage.finalize", "Finalizing");
     public static final TextKey WORLD_CREATE_STAGE_COMPLETE = TextKey.of("iris.runtime.world_create.stage.complete", "World ready");
+    public static final TextKey WORLD_REPLACE_START = TextKey.of("iris.runtime.world_replace.start", C.YELLOW + "Preparing Iris replacement for {world}. The current world remains active until restart.");
+    public static final TextKey WORLD_REPLACE_PROGRESS = TextKey.of("iris.runtime.world_replace.progress", C.YELLOW + "Replacement for {world}: {stage} ({elapsed}s elapsed)");
+    public static final TextKey WORLD_REPLACE_STAGE_DATAPACKS = TextKey.of("iris.runtime.world_replace.stage.datapacks", "Checking dimension datapacks");
+    public static final TextKey WORLD_REPLACE_STAGE_SEED = TextKey.of("iris.runtime.world_replace.stage.seed", "Preparing the replacement seed");
+    public static final TextKey WORLD_REPLACE_STAGE_PACK = TextKey.of("iris.runtime.world_replace.stage.pack", "Copying and validating the dimension pack");
+    public static final TextKey WORLD_REPLACE_STAGE_PLAYERS = TextKey.of("iris.runtime.world_replace.stage.players", "Recording player entry protection");
+    public static final TextKey WORLD_REPLACE_STAGE_VERIFY = TextKey.of("iris.runtime.world_replace.stage.verify", "Verifying the staged replacement");
+    public static final TextKey WORLD_REPLACE_STAGE_SAVE = TextKey.of("iris.runtime.world_replace.stage.save", "Saving the replacement for restart");
+    public static final TextKey WORLD_REPLACE_STAGE_CLEANUP = TextKey.of("iris.runtime.world_replace.stage.cleanup", "Cleaning up the failed replacement");
     public static final TextKey WORLD_PREGEN_ACTION = TextKey.of("iris.runtime.world_create.pregen.action", "{bar}" + C.GRAY + " " + C.YELLOW + "{percent}%" + C.GRAY + " | " + C.WHITE + "Pregenerating");
     public static final TextKey WORLD_PREGEN_CONSOLE = TextKey.of("iris.runtime.world_create.pregen.console", C.GOLD + "Pregenerating " + C.YELLOW + "{percent}%");
     public static final TextKey CHUNK_TITLE_REGEN = TextKey.of("iris.runtime.chunk_job.title.regen", "Regen");
@@ -140,6 +149,15 @@ public final class RuntimeProgressMessages {
             WORLD_CREATE_STAGE_PREGENERATE,
             WORLD_CREATE_STAGE_FINALIZE,
             WORLD_CREATE_STAGE_COMPLETE,
+            WORLD_REPLACE_START,
+            WORLD_REPLACE_PROGRESS,
+            WORLD_REPLACE_STAGE_DATAPACKS,
+            WORLD_REPLACE_STAGE_SEED,
+            WORLD_REPLACE_STAGE_PACK,
+            WORLD_REPLACE_STAGE_PLAYERS,
+            WORLD_REPLACE_STAGE_VERIFY,
+            WORLD_REPLACE_STAGE_SAVE,
+            WORLD_REPLACE_STAGE_CLEANUP,
             WORLD_PREGEN_ACTION,
             WORLD_PREGEN_CONSOLE,
             CHUNK_TITLE_REGEN,
