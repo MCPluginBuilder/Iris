@@ -102,6 +102,7 @@ public class IrisEngineGenerationRuntimeScopeTest {
         when(context.getComplex()).thenReturn(selected.complex);
         when(context.isNaturalTerrain()).thenReturn(true);
         IrisBiome cave = mock(IrisBiome.class);
+        when(cave.getLoadKey()).thenReturn("cave");
         IrisBiome surface = mock(IrisBiome.class);
         ProceduralStream<IrisBiome> caves = mock(ProceduralStream.class);
         ProceduralStream<IrisBiome> surfaces = mock(ProceduralStream.class);
@@ -139,6 +140,9 @@ public class IrisEngineGenerationRuntimeScopeTest {
         when(router.biomes()).thenReturn(mock(SavedBiomeRuntime.class));
         setField(engine, "generationHistoryRuntimeRouter", router);
         ProceduralStream<IrisBiome> caves = mock(ProceduralStream.class);
+        IrisBiome cave = mock(IrisBiome.class);
+        when(cave.getLoadKey()).thenReturn("cave");
+        when(caves.get(19D, -3D)).thenReturn(cave);
         when(active.complex.getCaveBiomeStream()).thenReturn(caves);
         when(selected.complex.getCaveBiomeStream()).thenReturn(caves);
         doCallRealMethod().when(active.complex).isNaturalTerrainContext();
@@ -175,6 +179,7 @@ public class IrisEngineGenerationRuntimeScopeTest {
         when(context.getComplex()).thenReturn(active.complex);
         when(context.isNaturalTerrain()).thenReturn(false);
         IrisBiome cave = mock(IrisBiome.class);
+        when(cave.getLoadKey()).thenReturn("cave");
         IrisBiome surface = mock(IrisBiome.class);
         IrisRegion region = mock(IrisRegion.class);
         ProceduralStream<IrisBiome> caves = mock(ProceduralStream.class);

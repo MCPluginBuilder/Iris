@@ -331,7 +331,8 @@ public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, 
 
     @BlockCoordinates
     default IrisBiome getCaveBiome(int x, int z) {
-        return getComplex().getCaveBiomeStream().get(x, z);
+        IrisBiome biome = getComplex().getCaveBiomeStream().get(x, z);
+        return biome == null || biome.getLoadKey() == null ? getSurfaceBiome(x, z) : biome;
     }
 
     @BlockCoordinates
