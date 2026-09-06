@@ -96,29 +96,6 @@ public final class GenerationPackRepository {
         }
     }
 
-    public synchronized void releaseArchivedPacks(GenerationManifest manifest) throws IOException {
-        GenerationManifest retained = Objects.requireNonNull(manifest, "manifest");
-        String activeEpochId = retained.activeEpoch().epochId();
-        String pendingEpochId = retained.pendingEpoch().map(GenerationEpoch::epochId).orElse(null);
-        for (GenerationEpoch epoch : retained.epochs()) {
-            String epochId = epoch.epochId();
-            if (epochId.equals(activeEpochId) || epochId.equals(pendingEpochId)) {
-                continue;
-            }
-            try (GenerationPublicationLock ignored = GenerationPublicationLock.acquire(
-                    epochsRoot, ".epoch-" + epochId + ".lock")) {
-                validateExistingAncestors(epochId);
-                Path pack = packRoot(epochId);
-                if (!Files.exists(pack, LinkOption.NOFOLLOW_LINKS)) {
-                    continue;
-                }
-                requireSafeDirectory(pack, "Generation epoch pack is unsafe");
-                AtomicDirectoryPublisher.deleteTree(pack);
-                forceDirectory(epochRoot(epochId));
-            }
-        }
-    }
-
     public Path requireExactPack(
             String epochId,
             String packFingerprint,

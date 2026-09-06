@@ -3,6 +3,7 @@ package art.arcane.iris.engine.history;
 import art.arcane.iris.core.nms.container.BlockPos;
 import art.arcane.iris.core.nms.container.Pair;
 import art.arcane.iris.engine.IrisEngine;
+import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -50,6 +51,8 @@ public final class ArchivedSemanticQueryTest {
         updated.stageUpdate(newPack, fingerprint(newPack), dimension, GenerationRegistryContract.empty(), 32);
         updated.prepareCurrentGenerator(32);
         GenerationHistory archived = GenerationHistory.open(world);
+        assertTrue(Files.exists(archived.paths().packRoot(oldEpoch)));
+        AtomicDirectoryPublisher.deleteTree(archived.paths().packRoot(oldEpoch));
         assertFalse(Files.exists(archived.paths().packRoot(oldEpoch)));
         IrisEngine engine = engine(archived);
 

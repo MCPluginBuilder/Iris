@@ -8,6 +8,7 @@ import art.arcane.iris.engine.framework.EngineMetrics;
 import art.arcane.iris.engine.hydrology.runtime.IrisHydrologyRuntime;
 import art.arcane.iris.engine.object.FloatingIslandBoundarySampler;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.history.FloatingBiomeOverlay;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformBiome;
@@ -22,6 +23,7 @@ public class ChunkContext {
     private boolean naturalTerrain = true;
     private boolean speculativeTerrain;
     private Hunk<PlatformBiome> terrainBiomes;
+    private FloatingBiomeOverlay floatingBiomes;
     private final int x;
     private final int z;
     private final IrisComplex complex;
@@ -139,6 +141,21 @@ public class ChunkContext {
 
     public void setTerrainBiomeOutput(Hunk<PlatformBiome> terrainBiomes) {
         this.terrainBiomes = terrainBiomes;
+    }
+
+    public FloatingBiomeOverlay getFloatingBiomes() {
+        return floatingBiomes;
+    }
+
+    public void setFloatingBiomes(FloatingBiomeOverlay floatingBiomes) {
+        this.floatingBiomes = floatingBiomes;
+    }
+
+    public FloatingBiomeOverlay floatingBiomes(int height) {
+        if (floatingBiomes == null) {
+            floatingBiomes = new FloatingBiomeOverlay(height);
+        }
+        return floatingBiomes;
     }
 
     public void setNaturalBiome(int localX, int y, int localZ, PlatformBiome biome) {

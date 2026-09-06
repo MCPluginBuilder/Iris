@@ -3,6 +3,12 @@ package art.arcane.iris.engine;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.GenerationRuntime.BiomeMaxes;
 import art.arcane.iris.engine.framework.EngineEffects;
+import art.arcane.iris.engine.framework.BiomeEnvironment;
+import art.arcane.iris.engine.history.SavedBiomeRuntime;
+import art.arcane.iris.engine.history.SavedBiomeUnavailableException;
+import art.arcane.iris.engine.object.IrisRegion;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import art.arcane.iris.engine.framework.EngineMode;
 import art.arcane.iris.engine.framework.EngineStage;
 import art.arcane.iris.engine.framework.EngineTarget;
@@ -59,6 +65,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 public class IrisEngineGenerationRuntimeScopeTest {
@@ -86,6 +93,7 @@ public class IrisEngineGenerationRuntimeScopeTest {
         IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
         IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, selected.runtime);
         GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(router.biomes()).thenReturn(mock(SavedBiomeRuntime.class));
         setField(engine, "generationHistoryRuntimeRouter", router);
         doReturn(null).when(engine).getDimensionStackContext();
         doReturn(false).when(engine).answersFromNaturalTerrain(anyInt(), anyInt());
@@ -128,6 +136,7 @@ public class IrisEngineGenerationRuntimeScopeTest {
         RuntimeFixture selected = runtime(2, 2D, 2D, 2D);
         IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
         GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(router.biomes()).thenReturn(mock(SavedBiomeRuntime.class));
         setField(engine, "generationHistoryRuntimeRouter", router);
         ProceduralStream<IrisBiome> caves = mock(ProceduralStream.class);
         when(active.complex.getCaveBiomeStream()).thenReturn(caves);
@@ -147,6 +156,82 @@ public class IrisEngineGenerationRuntimeScopeTest {
         }
         engine.getCaveBiome(19, -3);
         verify(router, times(3)).openCoordinateScope(19, -3);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void unboundContentContextSkipsSavedBiomesAndSelectsTheCoordinateRuntime() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture selected = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        IrisEngine.GenerationRuntimeBinding binding = detachedBinding(engine, selected.runtime);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        SavedBiomeRuntime saved = mock(SavedBiomeRuntime.class);
+        when(router.biomes()).thenReturn(saved);
+        setField(engine, "generationHistoryRuntimeRouter", router);
+        doReturn(null).when(engine).getDimensionStackContext();
+        doReturn(false).when(engine).answersFromNaturalTerrain(anyInt(), anyInt());
+        ChunkContext context = mock(ChunkContext.class);
+        when(context.getComplex()).thenReturn(active.complex);
+        when(context.isNaturalTerrain()).thenReturn(false);
+        IrisBiome cave = mock(IrisBiome.class);
+        IrisBiome surface = mock(IrisBiome.class);
+        IrisRegion region = mock(IrisRegion.class);
+        ProceduralStream<IrisBiome> caves = mock(ProceduralStream.class);
+        ProceduralStream<IrisBiome> surfaces = mock(ProceduralStream.class);
+        ProceduralStream<IrisRegion> regions = mock(ProceduralStream.class);
+        when(selected.complex.getCaveBiomeStream()).thenReturn(caves);
+        when(selected.complex.getTrueBiomeStream()).thenReturn(surfaces);
+        when(selected.complex.getRegionStream()).thenReturn(regions);
+        when(caves.get(19D, -3D)).thenReturn(cave);
+        when(surfaces.get(19D, -3D)).thenReturn(surface);
+        when(regions.get(19D, -3D)).thenReturn(region);
+        when(router.openCoordinateScope(19, -3)).thenAnswer(invocation -> {
+            assertSame(active.complex, engine.getComplex());
+            IrisEngine.GenerationRuntimeScope runtimeScope = engine.openGenerationRuntimeScope(binding);
+            GenerationHistoryRuntimeRouter.CoordinateScope coordinateScope = mock(GenerationHistoryRuntimeRouter.CoordinateScope.class);
+            doAnswer(close -> {
+                runtimeScope.close();
+                return null;
+            }).when(coordinateScope).close();
+            return coordinateScope;
+        });
+
+        try (IrisContext.Scope ignored = IrisContext.open(engine, 73L, context)) {
+            assertSame(cave, engine.getCaveBiome(19, -3));
+            assertSame(surface, engine.getSurfaceBiome(19, -3));
+            assertSame(region, engine.getRegion(19, -3));
+            assertSame(region, engine.getRegion(19, 20, -3));
+            assertSame(active.complex, engine.getComplex());
+        }
+        verify(router, times(4)).openCoordinateScope(19, -3);
+        verifyNoInteractions(saved);
+        assertNull(IrisContext.get());
+    }
+
+    @Test
+    public void gameplayContextWithoutAChunkStillReadsSavedBiomes() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        when(active.target.getWorld().minHeight()).thenReturn(-64);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        SavedBiomeRuntime saved = mock(SavedBiomeRuntime.class);
+        when(router.biomes()).thenReturn(saved);
+        setField(engine, "generationHistoryRuntimeRouter", router);
+        BiomeEnvironment environment = new BiomeEnvironment(4L, mock(IrisBiome.class),
+                mock(IrisRegion.class), mock(IrisDimension.class), mock(IrisData.class));
+        when(saved.resolve(19, -64, -3, true)).thenReturn(Optional.of(environment));
+        when(saved.resolveCaveBase(19, -3)).thenReturn(Optional.of(environment));
+
+        try (IrisContext.Scope ignored = IrisContext.open(engine, 0L, null)) {
+            assertSame(environment.biome(), engine.getCaveBiome(19, -3));
+            assertSame(environment.biome(), engine.getSurfaceBiome(19, -3));
+            assertSame(environment.region(), engine.getRegion(19, -3));
+        }
+        verify(saved).resolveCaveBase(19, -3);
+        verify(saved, times(2)).resolve(19, -64, -3, true);
+        verify(router, never()).openCoordinateScope(anyInt(), anyInt());
+        assertNull(IrisContext.get());
     }
 
     @Test
@@ -426,6 +511,7 @@ public class IrisEngineGenerationRuntimeScopeTest {
         RuntimeFixture active = runtime(1, 1D, 1D, 1D);
         IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
         GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(router.biomes()).thenReturn(mock(SavedBiomeRuntime.class));
         when(router.engine()).thenReturn(engine);
         engine.attachGenerationHistoryRuntimeRouter(router);
 
@@ -441,6 +527,7 @@ public class IrisEngineGenerationRuntimeScopeTest {
         RuntimeFixture active = runtime(1, 1D, 1D, 1D);
         IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
         GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(router.biomes()).thenReturn(mock(SavedBiomeRuntime.class));
         when(router.engine()).thenReturn(engine);
         engine.attachGenerationHistoryRuntimeRouter(router);
 
@@ -457,6 +544,7 @@ public class IrisEngineGenerationRuntimeScopeTest {
         IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
         assertNull(engine.openGenerationHistoryCoordinateScope(0, 0));
         GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        when(router.biomes()).thenReturn(mock(SavedBiomeRuntime.class));
         when(router.engine()).thenReturn(engine);
         engine.attachGenerationHistoryRuntimeRouter(router);
         engine.detachGenerationHistoryRuntimeRouter(router);
@@ -540,6 +628,83 @@ public class IrisEngineGenerationRuntimeScopeTest {
         verify(detached.data).close();
     }
 
+    @Test
+    public void savedBiomesAnswerWithoutOpeningGenerationRoutes() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        when(active.target.getWorld().minHeight()).thenReturn(-64);
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        SavedBiomeRuntime saved = mock(SavedBiomeRuntime.class);
+        when(router.biomes()).thenReturn(saved);
+        setField(engine, "generationHistoryRuntimeRouter", router);
+        BiomeEnvironment environment = new BiomeEnvironment(4L, mock(IrisBiome.class),
+                mock(IrisRegion.class), mock(IrisDimension.class), mock(IrisData.class));
+        when(saved.resolve(19, -44, -3, false)).thenReturn(Optional.of(environment));
+        when(saved.resolve(19, -64, -3, true)).thenReturn(Optional.of(environment));
+        when(saved.resolveCaveBase(19, -3)).thenReturn(Optional.of(environment));
+
+        assertSame(environment, engine.getBiomeEnvironment(19, 20, -3));
+        assertSame(environment, engine.getSurfaceBiomeEnvironment(19, -3));
+        assertSame(environment.biome(), engine.getBiome(19, 20, -3));
+        assertSame(environment.biome(), engine.getBiomeOrMantle(19, 20, -3));
+        assertSame(environment.biome(), engine.getCaveOrMantleBiome(19, 20, -3));
+        assertSame(environment.biome(), engine.getCaveBiome(19, 20, -3));
+        assertSame(environment.biome(), engine.getCaveBiome(19, -3));
+        assertSame(environment.biome(), engine.getSurfaceBiome(19, -3));
+        assertSame(environment.region(), engine.getRegion(19, -3));
+        assertSame(environment.region(), engine.getRegion(19, 20, -3));
+        verify(router, never()).openCoordinateScope(anyInt(), anyInt());
+    }
+
+    @Test
+    public void unavailableSavedBiomesNeverUseTheActiveGenerator() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        GenerationHistoryRuntimeRouter router = mock(GenerationHistoryRuntimeRouter.class);
+        SavedBiomeRuntime saved = mock(SavedBiomeRuntime.class);
+        when(router.biomes()).thenReturn(saved);
+        setField(engine, "generationHistoryRuntimeRouter", router);
+        SavedBiomeUnavailableException failure = new SavedBiomeUnavailableException("Missing historical biome", false);
+        when(saved.resolve(19, 20, -3, false)).thenThrow(failure);
+
+        assertSame(failure, assertThrows(SavedBiomeUnavailableException.class,
+                () -> engine.getBiome(19, 20, -3)));
+        verify(router, never()).openCoordinateScope(anyInt(), anyInt());
+    }
+
+    @Test
+    public void definitionScopesRestoreAndLeaveGenerationRuntimeUnchanged() throws Exception {
+        RuntimeFixture active = runtime(1, 1D, 1D, 1D);
+        RuntimeFixture selected = runtime(2, 2D, 2D, 2D);
+        IrisEngine engine = engine(active.runtime, mock(EngineEffects.class), mock(EngineWorldManager.class));
+        BiomeEnvironment first = new BiomeEnvironment(4L, mock(IrisBiome.class),
+                mock(IrisRegion.class), mock(IrisDimension.class), mock(IrisData.class));
+        BiomeEnvironment second = new BiomeEnvironment(5L, mock(IrisBiome.class),
+                mock(IrisRegion.class), mock(IrisDimension.class), mock(IrisData.class));
+
+        try (BiomeEnvironment.Scope outer = engine.openBiomeEnvironmentScope(first)) {
+            assertSame(first.data(), engine.getData());
+            assertSame(first.dimension(), engine.getDimension());
+            assertSame(active.complex, engine.getComplex());
+            try (BiomeEnvironment.Scope inner = engine.openBiomeEnvironmentScope(second)) {
+                assertSame(second.data(), engine.getData());
+                assertThrows(IllegalStateException.class, outer::close);
+                CompletableFuture.runAsync(() -> assertThrows(IllegalStateException.class, inner::close))
+                        .get(5, TimeUnit.SECONDS);
+            }
+            assertSame(first.data(), engine.getData());
+            try (IrisEngine.GenerationRuntimeScope ignored = engine.openGenerationRuntimeScope(
+                    detachedBinding(engine, selected.runtime))) {
+                assertSame(selected.data, engine.getData());
+                assertSame(selected.dimension, engine.getDimension());
+                assertSame(selected.complex, engine.getComplex());
+            }
+            assertSame(first.data(), engine.getData());
+        }
+        assertSame(active.data, engine.getData());
+        assertSame(active.dimension, engine.getDimension());
+    }
+
     private static IrisEngine engine(
             GenerationRuntime generationRuntime,
             EngineEffects effects,
@@ -549,6 +714,7 @@ public class IrisEngineGenerationRuntimeScopeTest {
         setField(engine, "lifecycleLock", new Object());
         setField(engine, "generationHistoryRuntimeRouterLock", new Object());
         setField(engine, "runtimeAssembly", new ThreadLocal<EngineRuntimeBuilder.RuntimeAssembly>());
+        setField(engine, "biomeEnvironmentScopes", new ThreadLocal<Object>());
         setField(engine, "generationRuntimeScopes", new GenerationRuntimeScopeState());
         Set<GenerationRuntime> detached = Collections.synchronizedSet(
                 Collections.newSetFromMap(new IdentityHashMap<GenerationRuntime, Boolean>()));

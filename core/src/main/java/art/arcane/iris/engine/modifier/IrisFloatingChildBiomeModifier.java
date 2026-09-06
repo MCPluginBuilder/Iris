@@ -50,6 +50,7 @@ import art.arcane.iris.spi.IrisPlatforms;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.spi.PlatformBiome;
 import art.arcane.iris.engine.history.TransitionGenerationPlan;
+import art.arcane.iris.engine.history.FloatingBiomeOverlay;
 import java.util.Optional;
 
 import java.util.IdentityHashMap;
@@ -395,7 +396,7 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
             ChunkContext context
     ) {
         try {
-            IdentityHashMap<IrisFloatingChildBiomes, PlatformBiome> matterByEntry = new IdentityHashMap<>();
+            IdentityHashMap<IrisFloatingChildBiomes, FloatingBiome> matterByEntry = new IdentityHashMap<>();
             for (int k = 0; k <= sample.topIdx; k++) {
                 if (!sample.solidMask[k]) {
                     continue;
@@ -408,16 +409,18 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
                     continue;
                 }
                 IrisFloatingChildBiomes entry = sample.entryAt(k);
-                PlatformBiome matter = matterByEntry.get(entry);
+                FloatingBiome matter = matterByEntry.get(entry);
                 if (matter == null) {
                     IrisBiome target = entry == null ? parent : entry.getRealBiome(parent, data);
                     if (target == null) {
                         continue;
                     }
-                    matter = createSkyBiome(target, wx, wz);
+                    matter = new FloatingBiome(createSkyBiome(target, wx, wz),
+                            new FloatingBiomeOverlay.Identity(target.getLoadKey(),
+                                    context.getRegion().get(wx & 15, wz & 15).getLoadKey()));
                     matterByEntry.put(entry, matter);
                 }
-                PlatformBiome selected = matter;
+                PlatformBiome selected = matter.physical();
                 TransitionGenerationPlan transition = context.getComplex().getTransitionGenerationPlan();
                 if (transition != null) {
                     Optional<String> historical = transition.historicalPhysicalBiomeKeyAt(wx, y + getEngine().getMinHeight(), wz);
@@ -426,6 +429,7 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
                     }
                 }
                 context.setNaturalBiome(wx & 15, y, wz & 15, selected);
+                context.floatingBiomes(chunkHeight).record(wx & 15, y, wz & 15, matter.identity());
                 if (!context.isSpeculativeTerrain()) {
                     getEngine().getMantle().getMantle().set(wx, y, wz, BiomeInjectMatter.get(selected.key()));
                 }
@@ -451,4 +455,8 @@ public class IrisFloatingChildBiomeModifier extends EngineAssignedModifier<Platf
 
         return IrisPlatforms.get().registries().biome(target.getSkyBiomeKey(rng, getEngine(), wx, 0, wz));
     }
+
+    private record FloatingBiome(PlatformBiome physical, FloatingBiomeOverlay.Identity identity) {
+    }
+
 }

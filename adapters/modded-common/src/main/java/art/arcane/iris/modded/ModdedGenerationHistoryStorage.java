@@ -175,7 +175,7 @@ final class ModdedGenerationHistoryStorage {
         GenerationEpoch epoch = history.activeEpoch();
         Path packRoot = normalize(history.activePackRoot());
         validatePack(packRoot, epoch.packFingerprint());
-        validateDimension(packRoot, epoch.dimensionContract());
+        validateDimension(packRoot, epoch);
         return new ActivePack(
                 packRoot,
                 epoch.dimensionContract().dimensionKey(),
@@ -194,8 +194,9 @@ final class ModdedGenerationHistoryStorage {
 
     private static void validateDimension(
             Path packRoot,
-            GenerationEpoch.DimensionContract recordedContract
+            GenerationEpoch epoch
     ) throws IOException {
+        GenerationEpoch.DimensionContract recordedContract = epoch.dimensionContract();
         IrisData data = IrisData.openDatapackCompiler(packRoot.toFile());
         try {
             IrisDimension dimension = data.getDimensionLoader().load(recordedContract.dimensionKey(), false);
@@ -203,10 +204,10 @@ final class ModdedGenerationHistoryStorage {
                 throw new IOException("Immutable generation pack does not contain dimension '"
                         + recordedContract.dimensionKey() + "'.");
             }
-            GenerationEpoch.DimensionContract actualContract = GenerationEpochContractFactory.create(
+            GenerationEpoch.DimensionContract actualContract = GenerationEpochContractFactory.createForEpoch(
                     dimension,
-                    dimension.getLoadKey(),
-                    recordedContract.dimensionTypeKey()
+                    recordedContract.dimensionTypeKey(),
+                    epoch
             );
             if (!recordedContract.equals(actualContract)) {
                 throw new IOException("Immutable generation pack no longer matches its recorded dimension contract.");

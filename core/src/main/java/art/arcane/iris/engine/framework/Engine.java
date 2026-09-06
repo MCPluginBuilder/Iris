@@ -93,6 +93,19 @@ import java.util.stream.Collectors;
 public interface Engine extends DataProvider, Fallible, BlockUpdater, Renderer, Hotloadable {
     IrisComplex getComplex();
 
+    default BiomeEnvironment getBiomeEnvironment(int x, int y, int z) {
+        return new BiomeEnvironment(0L, getBiome(x, y, z), getRegion(x, y, z), getDimension(), getData());
+    }
+
+    default BiomeEnvironment getSurfaceBiomeEnvironment(int x, int z) {
+        return new BiomeEnvironment(0L, getSurfaceBiome(x, z), getRegion(x, z), getDimension(), getData());
+    }
+
+    default BiomeEnvironment.Scope openBiomeEnvironmentScope(BiomeEnvironment environment) {
+        return () -> {};
+    }
+
+
     default @Nullable UpperDimensionContext getUpperContext() {
         return null;
     }

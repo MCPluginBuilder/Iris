@@ -80,6 +80,33 @@ public class GenerationEpochContractFactoryTest {
     }
 
     @Test
+    public void recordedEpochKeepsItsUpperTerrainFingerprintVersion() throws Exception {
+        File pack = temporary.newFolder("recorded-upper-pack");
+        Files.createDirectories(pack.toPath().resolve("objects"));
+        Files.writeString(pack.toPath().resolve("objects/.DS_Store"), "recorded metadata");
+        IrisData data = mock(IrisData.class);
+        IrisDimension dimension = dimension(IrisEnvironment.NORMAL).setUpperDimension("overworld");
+        dimension.setLoader(data);
+        when(data.getDataFolder()).thenReturn(pack);
+        GenerationEpoch.DimensionContract current = GenerationEpochContractFactory.create(
+                dimension, "overworld", "iris:overworld");
+        GenerationEpoch epoch = mock(GenerationEpoch.class);
+        when(epoch.dimensionContract()).thenReturn(current);
+        when(epoch.packFingerprintVersion()).thenReturn(1);
+
+        GenerationEpoch.DimensionContract recorded = GenerationEpochContractFactory.createForEpoch(
+                dimension, "iris:overworld", epoch);
+
+        assertEquals(GenerationPackFingerprint.compute(pack.toPath(), 1), recorded.upperTerrainPackFingerprint());
+        assertNotEquals(current.upperTerrainPackFingerprint(), recorded.upperTerrainPackFingerprint());
+        when(epoch.dimensionContract()).thenReturn(recorded);
+        assertEquals(recorded, GenerationEpochContractFactory.createForEpoch(dimension, "iris:overworld", epoch));
+        Files.writeString(pack.toPath().resolve("objects/.DS_Store"), "changed metadata");
+        assertNotEquals(recorded, GenerationEpochContractFactory.createForEpoch(dimension, "iris:overworld", epoch));
+        assertEquals(current, GenerationEpochContractFactory.create(dimension, "overworld", "iris:overworld"));
+    }
+
+    @Test
     public void upperTerrainMustBeLocalAndPackIdentityDoesNotChangeItsLayout() throws Exception {
         File pack = temporary.newFolder("upper-pack");
         IrisData data = mock(IrisData.class);
@@ -127,7 +154,7 @@ public class GenerationEpochContractFactoryTest {
                         dimension,
                         "overworld",
                         "iris:overworld"
-                )
+        )
         );
     }
 

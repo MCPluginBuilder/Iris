@@ -669,7 +669,7 @@ public final class GenerationHistoryTest {
     }
 
     @Test
-    public void coldRecoveryKeepsStoredClaimsAndHistoricalMetadataButReleasesOldPacks() throws Exception {
+    public void coldRecoveryKeepsStoredClaimsHistoricalMetadataAndFrozenPacks() throws Exception {
         Path world = temporaryFolder.newFolder("cold-recovery-world").toPath();
         Path packA = createPack("cold-recovery-a", "alpha");
         Path packB = createPack("cold-recovery-b", "beta");
@@ -695,7 +695,9 @@ public final class GenerationHistoryTest {
         assertTrue(recovered.semantics(0, 0).isPresent());
         assertTrue(recovered.semantics(1, 0).isPresent());
         assertTrue(recovered.semantics(2, 0).isEmpty());
-        assertFalse(Files.exists(recovered.paths().packRoot(oldEpoch)));
+        assertTrue(Files.isDirectory(recovered.paths().packRoot(oldEpoch)));
+        assertEquals(GenerationPackFingerprint.compute(packA, GenerationPackFingerprint.CURRENT_VERSION),
+                GenerationPackFingerprint.compute(recovered.paths().packRoot(oldEpoch), GenerationPackFingerprint.CURRENT_VERSION));
         assertTrue(Files.isDirectory(recovered.activePackRoot()));
         assertTrue(Files.isDirectory(packA));
         GenerationHistory reopened = GenerationHistory.open(world);

@@ -4,6 +4,7 @@ import art.arcane.iris.engine.framework.EngineMode;
 import art.arcane.iris.engine.framework.EnginePlatformHooks;
 import art.arcane.iris.engine.framework.EngineStage;
 import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
+import art.arcane.iris.engine.history.FloatingBiomeOverlay;
 import art.arcane.iris.engine.history.BoundaryColumnGeometry;
 import art.arcane.iris.engine.history.TerrainBoundarySignatureStore;
 import art.arcane.iris.engine.history.TransitionGenerationPlan;
@@ -12,6 +13,9 @@ import art.arcane.iris.engine.history.TerrainBoundarySignature;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.spi.PlatformBiome;
+import art.arcane.iris.spi.IrisPlatform;
+import art.arcane.iris.spi.IrisPlatforms;
+import art.arcane.iris.spi.PlatformRegistries;
 import art.arcane.iris.spi.PlatformBlockState;
 import art.arcane.iris.util.project.context.ChunkContext;
 import art.arcane.iris.util.project.context.IrisContext;
@@ -19,6 +23,7 @@ import art.arcane.iris.util.project.hunk.Hunk;
 import art.arcane.iris.util.project.stream.ProceduralStream;
 import art.arcane.volmlib.util.collection.KList;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -46,12 +51,42 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public final class ResolvedTerrainProviderTest {
+    @Test
+    public void cachedSpeculativeFloatingIdentityIsPublishedOnlyByActualGeneration() throws Exception {
+        Fixture fixture = new Fixture();
+        fixture.floatingIdentity = new FloatingBiomeOverlay.Identity("floating-child", "region");
+        TransitionGenerationPlan plan = mock(TransitionGenerationPlan.class);
+        when(plan.hasTransitionAtChunk(0, 0)).thenReturn(true);
+        when(plan.newEpochWeightAt(anyInt(), anyInt())).thenReturn(1D);
+        when(fixture.complex.getTransitionGenerationPlan()).thenReturn(plan);
+        fixture.provider.column(0, 0);
+        verify(fixture.router, never()).recordFloatingBiomes(anyInt(), anyInt(), any());
+        IrisPlatform platform = mock(IrisPlatform.class);
+        PlatformRegistries registries = mock(PlatformRegistries.class);
+        when(platform.registries()).thenReturn(registries);
+        when(registries.blockOrNull("minecraft:stone")).thenReturn(fixture.stone);
+        when(registries.blockOrNull("minecraft:air")).thenReturn(fixture.air);
+        when(registries.biome("minecraft:plains")).thenReturn(fixture.biome);
+        ChunkContext context = new ChunkContext(0, 0, fixture.complex, false, ChunkContext.PrefillPlan.NONE, null);
+        try (MockedStatic<IrisPlatforms> platforms = mockStatic(IrisPlatforms.class);
+             IrisContext.Scope ignored = IrisContext.open(fixture.engine, 5L, context)) {
+            platforms.when(IrisPlatforms::get).thenReturn(platform);
+            fixture.provider.generate(fixture.mode, 0, 0, Hunk.newArrayHunk(16, 16, 16),
+                    Hunk.newArrayHunk(16, 16, 16), false, context);
+        }
+        assertEquals(Integer.valueOf(1), fixture.computations.get("0,0"));
+        assertEquals(fixture.floatingIdentity, context.getFloatingBiomes().volumeAt(0, 0, 0));
+        assertEquals(fixture.floatingIdentity, context.getFloatingBiomes().surfaceAt(0, 0));
+        verify(fixture.router).recordFloatingBiomes(0, 0, context.getFloatingBiomes());
+    }
+
     @Test
     public void columnRequestsAreDeterministicAcrossOrderAndNegativeCoordinates() {
         Fixture first = new Fixture();
@@ -352,6 +387,7 @@ public final class ResolvedTerrainProviderTest {
         private final ResolvedTerrainProvider provider;
         private long lastSessionId;
         private EngineStage terrainOverride;
+        private FloatingBiomeOverlay.Identity floatingIdentity;
 
         @SuppressWarnings("unchecked")
         private Fixture() {
@@ -410,6 +446,10 @@ public final class ResolvedTerrainProviderTest {
                         biomes.setRaw(localX, y, localZ, biome);
                     }
                 }
+            }
+            if (floatingIdentity != null) {
+                context.floatingBiomes(16).record(0, 0, 0, floatingIdentity);
+                context.floatingBiomes(16).record(0, 2, 0, floatingIdentity);
             }
         }
 

@@ -31,6 +31,7 @@ import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.util.project.context.IrisContext;
 import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.history.SavedBiomeUnavailableException;
 import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.util.common.director.DirectorExecutor;
 import art.arcane.iris.util.common.plugin.VolmitSender;
@@ -82,21 +83,36 @@ public class CommandWhat implements DirectorExecutor {
 
     @Director(description = "What biome am i in?", descriptionKey = "iris.director.commandwhat.director.what_biome_am_i", origin = DirectorOrigin.PLAYER)
     public void biome() {
+        VolmitSender commandSender = sender();
+        Player player = player();
+        onPlayerThread(player, () -> describeBiome(commandSender, player));
+    }
+
+    private void describeBiome(VolmitSender commandSender, Player player) {
+        Location location = player.getLocation();
         try {
-            IrisBiome b = engine().getBiome(player().getLocation().getBlockX(), player().getLocation().getBlockY() - player().getWorld().getMinHeight(), player().getLocation().getBlockZ());
+            Engine engine = IrisToolbelt.access(location.getWorld()).getEngine();
+            IrisBiome b = engine.getBiome(location.getBlockX(), location.getBlockY() - location.getWorld().getMinHeight(), location.getBlockZ());
             Biome derivative = b.getDerivative();
             NamespacedKey derivativeKey = resolveBiomeKey(derivative);
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IBIOME, MessageArgument.untrusted("value", b.getLoadKey()), MessageArgument.untrusted("value2", derivativeKey == null ? IrisLanguage.plain(RuntimeUiMessages.STATUS_UNREGISTERED) : derivativeKey.getKey())));
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IBIOME, MessageArgument.untrusted("value", b.getLoadKey()), MessageArgument.untrusted("value2", derivativeKey == null ? IrisLanguage.plain(RuntimeUiMessages.STATUS_UNREGISTERED) : derivativeKey.getKey())));
 
+        } catch (SavedBiomeUnavailableException e) {
+            if (e.getCause() != null) {
+                Iris.reportError(e);
+            }
+            commandSender.sendMessage(e.isLoading()
+                    ? "Saved biome data is loading. Run the command again shortly."
+                    : e.getMessage());
         } catch (Throwable e) {
             Iris.reportError(e);
-            Biome biome = player().getLocation().getBlock().getBiome();
+            Biome biome = location.getBlock().getBiome();
             NamespacedKey key = resolveBiomeKey(biome);
-            sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_NON_IRIS_BIOME, MessageArgument.untrusted("value", key == null ? IrisLanguage.plain(RuntimeUiMessages.STATUS_UNREGISTERED) : key)));
+            commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_NON_IRIS_BIOME, MessageArgument.untrusted("value", key == null ? IrisLanguage.plain(RuntimeUiMessages.STATUS_UNREGISTERED) : key)));
 
             if (key == null || key.getKey().equals("custom")) {
                 try {
-                    sender().sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_DATA_PACK_BIOME_ID, MessageArgument.untrusted("value", INMS.get().getTrueBiomeBaseKey(player().getLocation())), MessageArgument.untrusted("value2", INMS.get().getTrueBiomeBaseId(INMS.get().getTrueBiomeBase(player().getLocation())))));
+                    commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_DATA_PACK_BIOME_ID, MessageArgument.untrusted("value", INMS.get().getTrueBiomeBaseKey(location)), MessageArgument.untrusted("value2", INMS.get().getTrueBiomeBaseId(INMS.get().getTrueBiomeBase(location)))));
                 } catch (Throwable ee) {
                     Iris.reportError(ee);
                 }
@@ -118,6 +134,13 @@ public class CommandWhat implements DirectorExecutor {
                 IrisRegion r = EngineBukkitOps.getRegion(engine, chunk);
                 commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IREGION, MessageArgument.untrusted("value", r.getLoadKey()), MessageArgument.untrusted("value2", r.getName())));
 
+            } catch (SavedBiomeUnavailableException e) {
+                if (e.getCause() != null) {
+                    Iris.reportError(e);
+                }
+                commandSender.sendMessage(e.isLoading()
+                        ? "Saved biome data is loading. Run the command again shortly."
+                        : e.getMessage());
             } catch (Throwable e) {
                 Iris.reportError(e);
                 commandSender.sendMessage(IrisLanguage.text(BukkitCommandMessagesExtended.COMMAND_WHAT_IRIS_WORLDS_ONLY));

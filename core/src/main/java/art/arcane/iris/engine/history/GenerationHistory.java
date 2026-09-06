@@ -36,6 +36,7 @@ public final class GenerationHistory {
     private final GenerationBoundaryStore boundaries;
     private final TerrainBoundarySignatureStore terrainSignatures;
     private final GenerationSemanticIndex semantics;
+    private final SavedBiomeStore savedBiomes;
     private final GenerationKernelRegistry kernels;
     private final GenerationAdmission admission;
     private final Map<Long, GenerationBoundary> boundaryCache;
@@ -56,10 +57,15 @@ public final class GenerationHistory {
         this.boundaries = new GenerationBoundaryStore(paths.dimensionRoot());
         this.terrainSignatures = new TerrainBoundarySignatureStore(paths.dimensionRoot());
         this.semantics = GenerationSemanticIndex.loadRequired(paths.dimensionRoot());
+        this.savedBiomes = SavedBiomeStore.open(paths.dimensionRoot());
         this.admission = new GenerationAdmission(paths.dimensionRoot());
         this.boundaryCache = boundedCache(MAXIMUM_CACHED_BOUNDARIES);
         this.terrainSignatureCache = boundedCache(MAXIMUM_CACHED_TERRAIN_SIGNATURES);
         validateReferencedState();
+    }
+
+    public SavedBiomeStore savedBiomes() {
+        return savedBiomes;
     }
 
     public static GenerationHistory create(
@@ -507,7 +513,6 @@ public final class GenerationHistory {
                         promoteSavedBoundary();
                     }
                 }
-                packs.releaseArchivedPacks(store.manifest());
             }
         }
     }
@@ -530,6 +535,7 @@ public final class GenerationHistory {
             return SavedTerrainChunk.hasTerrain(SavedTerrainChunk.readStatus(paths.dimensionRoot(), chunkX, chunkZ));
         });
         semantics.discardUnstoredClaims(inventory, selected);
+        savedBiomes.discardUnstoredClaims(inventory, selected);
         ownership.discardUnstoredClaims(inventory, selected);
         return inventory;
     }

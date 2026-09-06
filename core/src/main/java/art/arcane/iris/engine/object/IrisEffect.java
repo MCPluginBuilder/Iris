@@ -37,6 +37,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 import org.bukkit.Location;
+import org.bukkit.HeightMap;
+import org.bukkit.World;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
@@ -242,24 +244,7 @@ public class IrisEffect {
             if (particleType != null) {
                 Location part = p.getLocation().clone().add(p.getLocation().getDirection().clone().multiply(RNG.r.i(particleDistance) + particleAway)).clone().add(p.getLocation().getDirection().clone().rotateAroundY(Math.toRadians(90)).multiply(RNG.r.d(-particleDistanceWidth, particleDistanceWidth)));
 
-                part.setY(Math.round(g.getHeight(part.getBlockX(), part.getBlockZ())) + 1);
-                part.add(RNG.r.d(), 0, RNG.r.d());
-                int offset = p.getWorld().getMinHeight();
-                if (extra != 0) {
-                    p.spawnParticle(particleType, part.getX(), part.getY() + offset + RNG.r.i(particleOffset),
-                            part.getZ(),
-                            particleCount,
-                            randomAltX ? RNG.r.d(-particleAltX, particleAltX) : particleAltX,
-                            randomAltY ? RNG.r.d(-particleAltY, particleAltY) : particleAltY,
-                            randomAltZ ? RNG.r.d(-particleAltZ, particleAltZ) : particleAltZ,
-                            extra);
-                } else {
-                    p.spawnParticle(particleType, part.getX(), part.getY() + offset + RNG.r.i(particleOffset), part.getZ(),
-                            particleCount,
-                            randomAltX ? RNG.r.d(-particleAltX, particleAltX) : particleAltX,
-                            randomAltY ? RNG.r.d(-particleAltY, particleAltY) : particleAltY,
-                            randomAltZ ? RNG.r.d(-particleAltZ, particleAltZ) : particleAltZ);
-                }
+                applyParticles(p, particleType, part);
             }
 
             if (commandRegistry != null) {
@@ -283,6 +268,41 @@ public class IrisEffect {
                         true, false, false));
             }
         });
+    }
+
+    void applyParticles(Player player, Particle particle, Location location) {
+        World world = location.getWorld();
+        if (J.isOwnedByCurrentRegion(world, location.getBlockX() >> 4, location.getBlockZ() >> 4)) {
+            sampleParticleSurface(player, particle, location);
+        } else {
+            J.runAt(location, () -> sampleParticleSurface(player, particle, location));
+        }
+    }
+
+    private void sampleParticleSurface(Player player, Particle particle, Location location) {
+        World world = location.getWorld();
+        if (!world.isChunkLoaded(location.getBlockX() >> 4, location.getBlockZ() >> 4)) {
+            return;
+        }
+        location.setY(world.getHighestBlockYAt(location.getBlockX(), location.getBlockZ(), HeightMap.OCEAN_FLOOR) + 1);
+        location.add(RNG.r.d(), 0, RNG.r.d());
+        BukkitFx.run(player, () -> emitParticles(player, particle, location));
+    }
+
+    private void emitParticles(Player player, Particle particle, Location location) {
+        if (player.getWorld() != location.getWorld()) {
+            return;
+        }
+        double xOffset = randomAltX ? RNG.r.d(-particleAltX, particleAltX) : particleAltX;
+        double yOffset = randomAltY ? RNG.r.d(-particleAltY, particleAltY) : particleAltY;
+        double zOffset = randomAltZ ? RNG.r.d(-particleAltZ, particleAltZ) : particleAltZ;
+        if (extra != 0) {
+            player.spawnParticle(particle, location.getX(), location.getY() + RNG.r.i(particleOffset),
+                    location.getZ(), particleCount, xOffset, yOffset, zOffset, extra);
+        } else {
+            player.spawnParticle(particle, location.getX(), location.getY() + RNG.r.i(particleOffset),
+                    location.getZ(), particleCount, xOffset, yOffset, zOffset);
+        }
     }
 
     public void apply(Entity p) {

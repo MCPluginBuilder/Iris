@@ -24,6 +24,7 @@ import art.arcane.iris.core.localization.IrisMessages;
 import art.arcane.iris.core.localization.ModdedCommandMessages;
 import art.arcane.iris.core.localization.RuntimeUiMessages;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.history.SavedBiomeUnavailableException;
 import art.arcane.iris.engine.framework.GenerationSessionException;
 import art.arcane.iris.engine.framework.GenerationSessionLease;
 import art.arcane.iris.engine.object.IrisBiome;
@@ -194,6 +195,13 @@ public final class ModdedWhatCommands {
                     MessageArgument.untrusted("biome", nativeBiome.key()),
                     MessageArgument.trusted("id", nativeBiome.id())));
             return 1;
+        } catch (SavedBiomeUnavailableException error) {
+            if (error.getCause() != null) {
+                ModdedIrisLog.error("Iris saved biome lookup failed in {}",
+                        source.getLevel().dimension().identifier(), error);
+            }
+            IrisModdedCommands.fail(source, error.getMessage());
+            return 0;
         } catch (Throwable error) {
             logLookupFailure(source, "biome", error,
                     ModdedCommandMessages.IRIS_MODDED_COMMANDS_BIOME_LOOKUP_FAILED_2);
@@ -223,6 +231,13 @@ public final class ModdedWhatCommands {
                     MessageArgument.untrusted("region", region.getLoadKey()),
                     MessageArgument.untrusted("name", region.getName())));
             return 1;
+        } catch (SavedBiomeUnavailableException error) {
+            if (error.getCause() != null) {
+                ModdedIrisLog.error("Iris saved biome lookup failed in {}",
+                        source.getLevel().dimension().identifier(), error);
+            }
+            IrisModdedCommands.fail(source, error.getMessage());
+            return 0;
         } catch (Throwable error) {
             logLookupFailure(source, "region", error,
                     ModdedCommandMessages.IRIS_MODDED_COMMANDS_REGION_LOOKUP_FAILED_2);

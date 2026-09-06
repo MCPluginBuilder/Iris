@@ -22,6 +22,7 @@ import art.arcane.iris.engine.EngineBackgroundTasks.BackgroundTaskDrain;
 import art.arcane.iris.engine.EngineRuntimeBuilder.RuntimeAssembly;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.BiomeEnvironment;
 import art.arcane.iris.engine.framework.EngineEffects;
 import art.arcane.iris.engine.framework.EngineMetrics;
 import art.arcane.iris.engine.framework.EngineMode;
@@ -128,6 +129,9 @@ public class IrisEngine implements Engine {
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     final ThreadLocal<RuntimeAssembly> runtimeAssembly = new ThreadLocal<>();
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    final ThreadLocal<BiomeEnvironmentBinding> biomeEnvironmentScopes = new ThreadLocal<>();
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     final GenerationRuntimeScopeState generationRuntimeScopes = new GenerationRuntimeScopeState();
@@ -543,9 +547,86 @@ public class IrisEngine implements Engine {
         }
     }
 
+    @Override
+    public BiomeEnvironment getBiomeEnvironment(int x, int y, int z) {
+        Optional<BiomeEnvironment> saved = resolveSavedBiomeEnvironment(x, y, z, false);
+        if (saved.isPresent()) {
+            return saved.get();
+        }
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a biome environment")) {
+            return Engine.super.getBiomeEnvironment(x, y, z);
+        }
+    }
+
+    @Override
+    public BiomeEnvironment getSurfaceBiomeEnvironment(int x, int z) {
+        Optional<BiomeEnvironment> saved = resolveSavedBiomeEnvironment(x, 0, z, true);
+        if (saved.isPresent()) {
+            return saved.get();
+        }
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a surface biome environment")) {
+            return Engine.super.getSurfaceBiomeEnvironment(x, z);
+        }
+    }
+
+    @Override
+    public BiomeEnvironment.Scope openBiomeEnvironmentScope(BiomeEnvironment environment) {
+        BiomeEnvironmentBinding binding = new BiomeEnvironmentBinding(
+                Objects.requireNonNull(environment, "environment"), biomeEnvironmentScopes.get());
+        biomeEnvironmentScopes.set(binding);
+        return binding;
+    }
+
+    private Optional<BiomeEnvironment> resolveSavedBiomeEnvironment(int x, int y, int z, boolean surface) {
+        if (!usesSavedBiomeEnvironment()) {
+            return Optional.empty();
+        }
+        return generationHistoryRuntimeRouter.biomes().resolve(x, y + getWorld().minHeight(), z, surface);
+    }
+
+    private boolean usesSavedBiomeEnvironment() {
+        if (hasGenerationRuntimeScope() || generationHistoryRuntimeRouter == null) {
+            return false;
+        }
+        IrisContext context = IrisContext.get();
+        return context == null || context.getEngine() != this || context.getChunkContext() == null;
+    }
+
+    @BlockCoordinates
+    @Override
+    public IrisBiome getBiome(int x, int y, int z) {
+        Optional<BiomeEnvironment> saved = resolveSavedBiomeEnvironment(x, y, z, false);
+        if (saved.isPresent()) {
+            return saved.get().biome();
+        }
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a biome")) {
+            return Engine.super.getBiome(x, y, z);
+        }
+    }
+
+    @BlockCoordinates
+    @Override
+    public IrisBiome getBiomeOrMantle(int x, int y, int z) {
+        Optional<BiomeEnvironment> saved = resolveSavedBiomeEnvironment(x, y, z, false);
+        if (saved.isPresent()) {
+            return saved.get().biome();
+        }
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a biome or mantle biome")) {
+            return Engine.super.getBiomeOrMantle(x, y, z);
+        }
+    }
+
     @BlockCoordinates
     @Override
     public IrisRegion getRegion(int x, int z) {
+        Optional<BiomeEnvironment> saved = resolveSavedBiomeEnvironment(x, 0, z, true);
+        if (saved.isPresent()) {
+            return saved.get().region();
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
                      openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a region")) {
             return Engine.super.getRegion(x, z);
@@ -554,7 +635,24 @@ public class IrisEngine implements Engine {
 
     @BlockCoordinates
     @Override
+    public IrisRegion getRegion(int x, int y, int z) {
+        Optional<BiomeEnvironment> saved = resolveSavedBiomeEnvironment(x, y, z, false);
+        if (saved.isPresent()) {
+            return saved.get().region();
+        }
+        try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
+                     openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a vertical region")) {
+            return Engine.super.getRegion(x, y, z);
+        }
+    }
+
+    @BlockCoordinates
+    @Override
     public IrisBiome getCaveOrMantleBiome(int x, int y, int z) {
+        Optional<BiomeEnvironment> saved = resolveSavedBiomeEnvironment(x, y, z, false);
+        if (saved.isPresent()) {
+            return saved.get().biome();
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope ignored =
                      openGenerationHistoryCoordinateScopeUnchecked(x, z, "resolve a cave or mantle biome")) {
             return Engine.super.getCaveOrMantleBiome(x, y, z);
@@ -564,6 +662,12 @@ public class IrisEngine implements Engine {
     @BlockCoordinates
     @Override
     public IrisBiome getCaveBiome(int x, int z) {
+        if (usesSavedBiomeEnvironment()) {
+            Optional<BiomeEnvironment> saved = generationHistoryRuntimeRouter.biomes().resolveCaveBase(x, z);
+            if (saved.isPresent()) {
+                return saved.get().biome();
+            }
+        }
         if (usesScopedNaturalTerrain()) {
             return Engine.super.getCaveBiome(x, z);
         }
@@ -587,6 +691,10 @@ public class IrisEngine implements Engine {
             int z,
             IrisDimensionCarvingResolver.State state
     ) {
+        Optional<BiomeEnvironment> saved = resolveSavedBiomeEnvironment(x, y, z, false);
+        if (saved.isPresent()) {
+            return saved.get().biome();
+        }
         if (usesScopedNaturalTerrain()) {
             return Engine.super.getCaveBiome(x, y, z, state);
         }
@@ -599,6 +707,10 @@ public class IrisEngine implements Engine {
     @BlockCoordinates
     @Override
     public IrisBiome getSurfaceBiome(int x, int z) {
+        Optional<BiomeEnvironment> saved = resolveSavedBiomeEnvironment(x, 0, z, true);
+        if (saved.isPresent()) {
+            return saved.get().biome();
+        }
         if (usesScopedNaturalTerrain()) {
             return Engine.super.getSurfaceBiome(x, z);
         }
@@ -1183,6 +1295,10 @@ public class IrisEngine implements Engine {
 
     @Override
     public IrisData getData() {
+        BiomeEnvironmentBinding environment = biomeEnvironmentScopes.get();
+        if (environment != null && !hasGenerationRuntimeScope()) {
+            return environment.environment.data();
+        }
         RuntimeAssembly assembly = runtimeAssembly.get();
         if (assembly != null) {
             return assembly.target.getData();
@@ -1193,6 +1309,10 @@ public class IrisEngine implements Engine {
 
     @Override
     public IrisDimension getDimension() {
+        BiomeEnvironmentBinding environment = biomeEnvironmentScopes.get();
+        if (environment != null && !hasGenerationRuntimeScope()) {
+            return environment.environment.dimension();
+        }
         RuntimeAssembly assembly = runtimeAssembly.get();
         if (assembly != null) {
             return assembly.target.getDimension();
@@ -1604,6 +1724,38 @@ public class IrisEngine implements Engine {
                 return;
             }
             state.close(owner, previous, installed);
+            closed = true;
+        }
+    }
+
+
+    private final class BiomeEnvironmentBinding implements BiomeEnvironment.Scope {
+        private final BiomeEnvironment environment;
+        private final BiomeEnvironmentBinding previous;
+        private final Thread owner = Thread.currentThread();
+        private boolean closed;
+
+        private BiomeEnvironmentBinding(BiomeEnvironment environment, BiomeEnvironmentBinding previous) {
+            this.environment = environment;
+            this.previous = previous;
+        }
+
+        @Override
+        public void close() {
+            if (Thread.currentThread() != owner) {
+                throw new IllegalStateException("Biome environment scope must close on its owning thread.");
+            }
+            if (closed) {
+                return;
+            }
+            if (biomeEnvironmentScopes.get() != this) {
+                throw new IllegalStateException("Biome environment scopes must close in reverse order.");
+            }
+            if (previous == null) {
+                biomeEnvironmentScopes.remove();
+            } else {
+                biomeEnvironmentScopes.set(previous);
+            }
             closed = true;
         }
     }
