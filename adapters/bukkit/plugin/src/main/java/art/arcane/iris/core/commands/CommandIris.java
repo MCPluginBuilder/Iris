@@ -257,6 +257,8 @@ public class CommandIris implements DirectorExecutor {
             sender().sendMessage(C.GREEN + "Staged Iris replacement for " + staged.worldKey()
                     + seedDetail + ". Restart once to publish it. The current dimension is retained until Iris "
                     + "verifies the replacement.");
+        } catch (LifecycleOperationCoordinator.BusyException busy) {
+            sender().sendMessage(C.YELLOW + busy.getMessage());
         } catch (Throwable failure) {
             Iris.reportError("Failed to stage Iris world replacement for " + worldKey + ".", failure);
             String detail = failure.getMessage() == null || failure.getMessage().isBlank()
