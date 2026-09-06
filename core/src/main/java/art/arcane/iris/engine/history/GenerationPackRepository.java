@@ -15,6 +15,8 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
@@ -92,29 +94,6 @@ public final class GenerationPackRepository {
         } finally {
             if (Files.exists(stage, LinkOption.NOFOLLOW_LINKS)) {
                 AtomicDirectoryPublisher.deleteTree(stage);
-            }
-        }
-    }
-
-    public synchronized void releaseArchivedPacks(GenerationManifest manifest) throws IOException {
-        GenerationManifest retained = Objects.requireNonNull(manifest, "manifest");
-        String activeEpochId = retained.activeEpoch().epochId();
-        String pendingEpochId = retained.pendingEpoch().map(GenerationEpoch::epochId).orElse(null);
-        for (GenerationEpoch epoch : retained.epochs()) {
-            String epochId = epoch.epochId();
-            if (epochId.equals(activeEpochId) || epochId.equals(pendingEpochId)) {
-                continue;
-            }
-            try (GenerationPublicationLock ignored = GenerationPublicationLock.acquire(
-                    epochsRoot, ".epoch-" + epochId + ".lock")) {
-                validateExistingAncestors(epochId);
-                Path pack = packRoot(epochId);
-                if (!Files.exists(pack, LinkOption.NOFOLLOW_LINKS)) {
-                    continue;
-                }
-                requireSafeDirectory(pack, "Generation epoch pack is unsafe");
-                AtomicDirectoryPublisher.deleteTree(pack);
-                forceDirectory(epochRoot(epochId));
             }
         }
     }
@@ -220,6 +199,7 @@ public final class GenerationPackRepository {
                     + normalizedSource + " and " + normalizedTarget);
         }
 
+        List<Path> copiedFiles = new ArrayList<>();
         Files.walkFileTree(normalizedSource, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) throws IOException {
@@ -250,11 +230,8 @@ public final class GenerationPackRepository {
                     return FileVisitResult.CONTINUE;
                 }
                 Path destination = copyDestination(normalizedSource, normalizedTarget, file);
-                Files.createDirectories(Objects.requireNonNull(destination.getParent(), "Pack entry parent"));
                 Files.copy(file, destination, StandardCopyOption.COPY_ATTRIBUTES);
-                try (FileChannel channel = FileChannel.open(destination, StandardOpenOption.WRITE)) {
-                    channel.force(true);
-                }
+                copiedFiles.add(destination);
                 return FileVisitResult.CONTINUE;
             }
 
@@ -263,6 +240,11 @@ public final class GenerationPackRepository {
                 throw new IOException("Unable to copy pack entry: " + file, failure);
             }
         });
+        for (Path copiedFile : copiedFiles) {
+            try (FileChannel channel = FileChannel.open(copiedFile, StandardOpenOption.WRITE)) {
+                channel.force(true);
+            }
+        }
     }
 
     private static Path copyDestination(Path source, Path target, Path entry) throws IOException {

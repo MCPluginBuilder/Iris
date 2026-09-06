@@ -5,8 +5,11 @@ import art.arcane.volmlib.util.localization.LocalizationSnapshot;
 import art.arcane.volmlib.util.localization.PluginLanguageEditor;
 import art.arcane.volmlib.util.localization.PluginLanguageService;
 import art.arcane.volmlib.util.localization.PluralSelector;
+import art.arcane.volmlib.util.localization.RemoteLanguageCatalog;
 import art.arcane.volmlib.util.localization.TextValue;
 import art.arcane.volmlib.util.localization.VolmitLocales;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -14,11 +17,16 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.net.InetSocketAddress;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 import static org.junit.Assert.assertArrayEquals;
@@ -98,13 +106,51 @@ public class IrisLanguageEditorTest {
 
     @Test
     public void incompleteDownloadedLocaleCanBeEditedWithoutBeingSelected() throws Exception {
-        Files.writeString(IrisLanguage.remote(directory).cacheFile("fr_FR"), "{\"locale\":\"fr_FR\",\"messages\":{}}");
-        PluginLanguageEditor.Document original = editor.load("fr_FR").get(5, TimeUnit.SECONDS);
-        TextValue value = new TextValue("Langue {locale}");
-        PluginLanguageEditor.Document saved = editor.save(new PluginLanguageEditor.Edit("fr_FR", IrisMessages.COMMAND_RELOAD_SUCCESS.id(),
-                original.snapshot().value(IrisMessages.COMMAND_RELOAD_SUCCESS), value)).get(5, TimeUnit.SECONDS);
-        assertEquals(value, saved.snapshot().value(IrisMessages.COMMAND_RELOAD_SUCCESS));
-        assertEquals("en_US", languages.defaultLocale());
-        assertEquals("en_US", IrisLanguage.activeLocale());
+        byte[] complete = Files.readAllBytes(Path.of("src/main/resources/languages/fr_FR.json"));
+        AtomicInteger requests = new AtomicInteger();
+        Field remoteField = IrisLanguage.class.getDeclaredField("remote");
+        remoteField.setAccessible(true);
+        RemoteLanguageCatalog previous = IrisLanguage.remote(directory);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        try (RemoteLanguageCatalog catalog = RemoteLanguageCatalog.load(new RemoteLanguageCatalog.Options(
+                "Iris",
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/"),
+                "languages",
+                ".json",
+                "iris-language-source.properties",
+                directory.toPath().resolve("languages/downloaded"),
+                IrisLanguage.class.getClassLoader()
+        ))) {
+            server.createContext(catalog.sourceUri("fr_FR").getPath(),
+                    exchange -> respond(exchange, complete, requests));
+            server.start();
+            remoteField.set(null, catalog);
+            Path cache = catalog.cacheFile("fr_FR");
+            Files.writeString(cache, "{\"locale\":\"fr_FR\",\"messages\":{}}");
+
+            PluginLanguageEditor.Document original = editor.load("fr_FR").get(5, TimeUnit.SECONDS);
+            TextValue value = new TextValue("Langue {locale}");
+            PluginLanguageEditor.Document saved = editor.save(new PluginLanguageEditor.Edit("fr_FR", IrisMessages.COMMAND_RELOAD_SUCCESS.id(),
+                    original.snapshot().value(IrisMessages.COMMAND_RELOAD_SUCCESS), value)).get(5, TimeUnit.SECONDS);
+
+            assertEquals(value, saved.snapshot().value(IrisMessages.COMMAND_RELOAD_SUCCESS));
+            assertEquals("en_US", languages.defaultLocale());
+            assertEquals("en_US", IrisLanguage.activeLocale());
+            assertArrayEquals(complete, Files.readAllBytes(cache));
+            assertEquals(1, requests.get());
+        } finally {
+            remoteField.set(null, previous);
+            server.stop(0);
+        }
+    }
+
+    private static void respond(HttpExchange exchange, byte[] response, AtomicInteger requests) throws IOException {
+        requests.incrementAndGet();
+        try {
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+        } finally {
+            exchange.close();
+        }
     }
 }

@@ -18,6 +18,10 @@
 
 package art.arcane.iris.engine;
 
+import art.arcane.iris.core.loader.IrisData;
+import art.arcane.iris.engine.framework.BiomeEnvironment;
+import art.arcane.iris.engine.history.SavedBiomeUnavailableException;
+
 import art.arcane.iris.engine.data.cache.Cache;
 import art.arcane.iris.engine.object.IrisMarker;
 import art.arcane.iris.engine.object.IrisPosition;
@@ -28,13 +32,16 @@ import art.arcane.iris.util.common.scheduling.J;
 import art.arcane.volmlib.util.collection.KMap;
 import art.arcane.volmlib.util.collection.KSet;
 import art.arcane.volmlib.util.matter.MatterMarker;
+import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import org.bukkit.Chunk;
 import org.bukkit.World;
 
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * Resolves the mantle spawn markers of a chunk into spawners. On Folia the mantle read runs
@@ -49,80 +56,10 @@ final class MarkerSpawnScanner {
         this.manager = manager;
     }
 
-    Map<IrisPosition, KSet<IrisSpawner>> getSpawnersFromMarkers(Chunk c) {
-        Map<IrisPosition, KSet<IrisSpawner>> p = new KMap<>();
-        Set<IrisPosition> b = new KSet<>();
-
-        if (J.isFolia()) {
-            if (!manager.getMantle().isChunkLoaded(c.getX(), c.getZ())) {
-                manager.chunkMaintenance.warmupMantleChunkAsync(c.getX(), c.getZ());
-            }
-            return p;
-        }
-
-        manager.getMantle().iterateChunk(c.getX(), c.getZ(), MatterMarker.class, (x, y, z, t) -> {
-            if (t.getTag().equals("cave_floor") || t.getTag().equals("cave_ceiling")) {
-                return;
-            }
-
-            IrisMarker mark = manager.getData().getMarkerLoader().load(t.getTag());
-            if (mark == null) {
-                return;
-            }
-
-            IrisPosition pos = new IrisPosition((c.getX() << 4) + x, y, (c.getZ() << 4) + z);
-
-            if (isMarkerObstructed(c, pos, mark.isEmptyAbove())) {
-                b.add(pos);
-                return;
-            }
-
-            for (String i : mark.getSpawners()) {
-                IrisSpawner m = manager.getData().getSpawnerLoader().load(i);
-                if (m == null) {
-                    IrisLogging.error("Cannot load spawner: " + i + " for marker on " + manager.getName());
-                    continue;
-                }
-                if (m.isCompatExcluded()) {
-                    continue;
-                }
-                m.setReferenceMarker(mark);
-
-                // This is so fucking incorrect its a joke
-                //noinspection ConstantConditions
-                if (m != null) {
-                    p.computeIfAbsent(pos, (k) -> new KSet<>()).add(m);
-                }
-            }
-        });
-
-        for (IrisPosition i : b) {
-            manager.getEngine().getMantle().getMantle().remove(i.getX(), i.getY(), i.getZ(), MatterMarker.class);
-        }
-
-        return p;
-    }
-
-    void forEachMarkerSpawner(Chunk c, BiConsumer<IrisPosition, KSet<IrisSpawner>> consumer) {
-        if (c == null || consumer == null) {
-            return;
-        }
-
-        if (!J.isFolia()) {
-            int minY = manager.getEngine().getWorld().minHeight();
-            getSpawnersFromMarkers(c).forEach((relative, spawners) -> {
-                if (spawners.isEmpty()) {
-                    return;
-                }
-
-                consumer.accept(new IrisPosition(relative.getX(), relative.getY() + minY, relative.getZ()), spawners);
-            });
-            return;
-        }
-
-        int chunkX = c.getX();
-        int chunkZ = c.getZ();
-        World world = c.getWorld();
+    void scanMarkerSpawners(Chunk chunk, boolean initialOnly, Consumer<List<PreparedMarkerSpawn>> consumer) {
+        int chunkX = chunk.getX();
+        int chunkZ = chunk.getZ();
+        World world = chunk.getWorld();
         long key = Cache.key(chunkX, chunkZ);
         if (!markerScanQueue.add(key)) {
             return;
@@ -130,57 +67,82 @@ final class MarkerSpawnScanner {
 
         J.a(manager.managedTask("bukkit_world_manager_marker_scan", () -> {
             try {
-                Map<IrisPosition, MarkerSpawnData> markerData = collectMarkerSpawnData(chunkX, chunkZ);
-                if (markerData.isEmpty()) {
+                if (initialOnly && manager.getMantle().hasFlag(chunkX, chunkZ, MantleFlag.INITIAL_SPAWNED_MARKER)) {
+                    markerScanQueue.remove(key);
                     return;
                 }
-
-                J.runRegion(world, chunkX, chunkZ, manager.managedTask("bukkit_world_manager_marker_scan_region", () -> {
-                    if (!world.isChunkLoaded(chunkX, chunkZ) || !Chunks.isSafe(world, chunkX, chunkZ)) {
-                        return;
-                    }
-
-                    Chunk chunk = world.getChunkAt(chunkX, chunkZ);
-                    int minY = manager.getEngine().getWorld().minHeight();
-                    markerData.forEach((relative, data) -> {
-                        if (data.spawners.isEmpty()) {
-                            return;
-                        }
-
-                        if (isMarkerObstructed(chunk, relative, data.requiresEmptyAbove)) {
-                            removeMarkerAsync(relative);
-                            return;
-                        }
-
-                        consumer.accept(new IrisPosition(relative.getX(), relative.getY() + minY, relative.getZ()), data.spawners);
-                    });
-                }));
-            } catch (Throwable e) {
-                IrisLogging.reportError(e);
-            } finally {
+                Map<IrisPosition, MarkerSpawnData> markerData = collectMarkerSpawnData(chunkX, chunkZ);
+                boolean accepted = J.runRegion(world, chunkX, chunkZ,
+                        manager.managedTask("bukkit_world_manager_marker_scan_region", () -> {
+                            try {
+                                if (!world.isChunkLoaded(chunkX, chunkZ) || !Chunks.isSafe(world, chunkX, chunkZ)) {
+                                    return;
+                                }
+                                Chunk loaded = world.getChunkAt(chunkX, chunkZ);
+                                int minimumY = manager.getEngine().getWorld().minHeight();
+                                List<PreparedMarkerSpawn> prepared = new ArrayList<>(markerData.size());
+                                for (Map.Entry<IrisPosition, MarkerSpawnData> entry : markerData.entrySet()) {
+                                    IrisPosition position = entry.getKey();
+                                    MarkerSpawnData data = entry.getValue();
+                                    if (data.spawners.isEmpty()) {
+                                        continue;
+                                    }
+                                    if (isMarkerObstructed(loaded, position, data.requiresEmptyAbove)) {
+                                        removeMarkerAsync(position);
+                                        continue;
+                                    }
+                                    prepared.add(new PreparedMarkerSpawn(new IrisPosition(position.getX(),
+                                            position.getY() + minimumY, position.getZ()), data.spawners, data.environment));
+                                }
+                                consumer.accept(List.copyOf(prepared));
+                            } finally {
+                                markerScanQueue.remove(key);
+                            }
+                        }, () -> markerScanQueue.remove(key)));
+                if (!accepted) {
+                    markerScanQueue.remove(key);
+                }
+            } catch (SavedBiomeUnavailableException e) {
                 markerScanQueue.remove(key);
+            } catch (Throwable e) {
+                markerScanQueue.remove(key);
+                IrisLogging.reportError(e);
             }
         }, () -> markerScanQueue.remove(key)));
     }
 
     private Map<IrisPosition, MarkerSpawnData> collectMarkerSpawnData(int chunkX, int chunkZ) {
+        if (manager.getEngine() instanceof IrisEngine engine) {
+            engine.getGenerationHistoryRuntimeRouter().ifPresent(router -> router.biomes().prepareChunk(chunkX, chunkZ));
+        }
         Map<IrisPosition, MarkerSpawnData> markerData = new KMap<>();
         manager.getMantle().iterateChunk(chunkX, chunkZ, MatterMarker.class, (x, y, z, t) -> {
             if (t.getTag().equals("cave_floor") || t.getTag().equals("cave_ceiling")) {
                 return;
             }
 
-            IrisMarker mark = manager.getData().getMarkerLoader().load(t.getTag());
+            BiomeEnvironment environment;
+            try {
+                environment = manager.getEngine().getBiomeEnvironment((chunkX << 4) + x, y,
+                        (chunkZ << 4) + z);
+            } catch (SavedBiomeUnavailableException e) {
+                if (e.isLoading()) {
+                    throw e;
+                }
+                return;
+            }
+            IrisData definitions = environment.data();
+            IrisMarker mark = definitions.getMarkerLoader().load(t.getTag());
             if (mark == null) {
                 return;
             }
 
             IrisPosition position = new IrisPosition((chunkX << 4) + x, y, (chunkZ << 4) + z);
-            MarkerSpawnData data = markerData.computeIfAbsent(position, k -> new MarkerSpawnData());
+            MarkerSpawnData data = markerData.computeIfAbsent(position, k -> new MarkerSpawnData(environment));
             data.requiresEmptyAbove = data.requiresEmptyAbove || mark.isEmptyAbove();
 
             for (String i : mark.getSpawners()) {
-                IrisSpawner spawner = manager.getData().getSpawnerLoader().load(i);
+                IrisSpawner spawner = definitions.getSpawnerLoader().load(i);
                 if (spawner == null) {
                     IrisLogging.error("Cannot load spawner: " + i + " for marker on " + manager.getName());
                     continue;
@@ -223,8 +185,16 @@ final class MarkerSpawnScanner {
         }));
     }
 
+    record PreparedMarkerSpawn(IrisPosition position, KSet<IrisSpawner> spawners, BiomeEnvironment environment) {
+    }
+
     private static final class MarkerSpawnData {
         private final KSet<IrisSpawner> spawners = new KSet<>();
+        private final BiomeEnvironment environment;
         private boolean requiresEmptyAbove;
+
+        private MarkerSpawnData(BiomeEnvironment environment) {
+            this.environment = environment;
+        }
     }
 }

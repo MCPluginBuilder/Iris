@@ -20,13 +20,13 @@ package art.arcane.iris.modded;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.framework.Engine;
+import art.arcane.iris.engine.framework.BiomeEnvironment;
+import art.arcane.iris.engine.history.SavedBiomeUnavailableException;
 import art.arcane.iris.engine.framework.EngineAssignedComponent;
 import art.arcane.iris.engine.framework.EngineEffects;
-import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisCommand;
 import art.arcane.iris.engine.object.IrisCommandRegistry;
 import art.arcane.iris.engine.object.IrisEffect;
-import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.volmlib.util.math.RNG;
 import net.minecraft.core.Holder;
@@ -36,6 +36,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
@@ -193,18 +194,21 @@ public final class ModdedEngineEffects extends EngineAssignedComponent implement
             return;
         }
 
-        samplePlayer(state);
+        try {
+            samplePlayer(state);
+        } catch (SavedBiomeUnavailableException unavailable) {
+            state.environment = null;
+            state.sampled(false);
+            return;
+        }
         if (!IrisSettings.get().getWorld().isEffectSystem()) {
             return;
         }
 
-        IrisRegion region = state.region();
-        if (region != null) {
-            applyEffects(level, player, region.getEffects());
-        }
-        IrisBiome biome = state.biome();
-        if (biome != null) {
-            applyEffects(level, player, biome.getEffects());
+        BiomeEnvironment environment = state.environment;
+        try (BiomeEnvironment.Scope ignored = getEngine().openBiomeEnvironmentScope(environment)) {
+            applyEffects(level, player, environment.region().getEffects());
+            applyEffects(level, player, environment.biome().getEffects());
         }
     }
 
@@ -219,14 +223,14 @@ public final class ModdedEngineEffects extends EngineAssignedComponent implement
             return;
         }
 
-        state.sampled(true);
-        state.lastPosition(player.getX(), player.getY(), player.getZ());
-        state.lastSample(now);
         int blockX = floor(player.getX());
         int blockY = floor(player.getY()) - getEngine().getWorld().minHeight();
         int blockZ = floor(player.getZ());
-        state.biome(getEngine().getBiome(blockX, blockY, blockZ));
-        state.region(getEngine().getRegion(blockX, blockY, blockZ));
+        BiomeEnvironment environment = getEngine().getBiomeEnvironment(blockX, blockY, blockZ);
+        state.environment = environment;
+        state.sampled(true);
+        state.lastPosition(player.getX(), player.getY(), player.getZ());
+        state.lastSample(now);
     }
 
     private void applyEffects(ServerLevel level, ServerPlayer player, Iterable<IrisEffect> effects) {
@@ -299,9 +303,12 @@ public final class ModdedEngineEffects extends EngineAssignedComponent implement
         double sideways = RNG.r.d(-effect.getParticleDistanceWidth(), effect.getParticleDistanceWidth());
         double surfaceX = player.getX() + direction.x * forward + direction.z * sideways;
         double surfaceZ = player.getZ() + direction.z * forward - direction.x * sideways;
-        int surfaceY = getEngine().getHeight(floor(surfaceX), floor(surfaceZ));
+        if (level.getChunkSource().getChunkNow(floor(surfaceX) >> 4, floor(surfaceZ) >> 4) == null) {
+            return;
+        }
+        int surfaceY = level.getHeight(Heightmap.Types.OCEAN_FLOOR, floor(surfaceX), floor(surfaceZ));
         double x = surfaceX + RNG.r.d();
-        double y = surfaceY + 1.0D + level.getMinY() + RNG.r.i(effect.getParticleOffset());
+        double y = surfaceY + RNG.r.i(effect.getParticleOffset());
         double z = surfaceZ + RNG.r.d();
         double altX = randomized(effect.getParticleAltX(), effect.isRandomAltX());
         double altY = randomized(effect.getParticleAltY(), effect.isRandomAltY());
@@ -421,8 +428,7 @@ public final class ModdedEngineEffects extends EngineAssignedComponent implement
 
     private static final class PlayerState {
         private ServerPlayer player;
-        private IrisBiome biome;
-        private IrisRegion region;
+        private BiomeEnvironment environment;
         private double lastX;
         private double lastY;
         private double lastZ;
@@ -444,22 +450,6 @@ public final class ModdedEngineEffects extends EngineAssignedComponent implement
 
         private void player(ServerPlayer player) {
             this.player = player;
-        }
-
-        private IrisBiome biome() {
-            return biome;
-        }
-
-        private void biome(IrisBiome biome) {
-            this.biome = biome;
-        }
-
-        private IrisRegion region() {
-            return region;
-        }
-
-        private void region(IrisRegion region) {
-            this.region = region;
         }
 
         private double lastX() {

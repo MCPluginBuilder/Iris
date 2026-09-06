@@ -600,7 +600,8 @@ public final class IrisWorldGeneratorResolver {
             throw new IllegalStateException("Immutable Iris generation pack at " + packRoot
                     + " does not contain dimension " + dimensionKey + ".");
         }
-        GenerationEpoch.DimensionContract actualContract = captureDimensionContract(data, dimension);
+        GenerationEpoch.DimensionContract actualContract = GenerationEpochContractFactory.createForEpoch(
+                dimension, dimensionTypeKey(data, dimension), epoch);
         if (!epoch.dimensionContract().equals(actualContract)) {
             throw new IllegalStateException("Immutable Iris generation pack dimension contract changed at "
                     + packRoot + ".");
@@ -612,7 +613,15 @@ public final class IrisWorldGeneratorResolver {
             IrisData data,
             IrisDimension dimension
     ) {
-        String dimensionTypeKey = IrisPlatforms.get()
+        return GenerationEpochContractFactory.create(
+                dimension,
+                dimension.getLoadKey(),
+                dimensionTypeKey(data, dimension)
+        );
+    }
+
+    private static String dimensionTypeKey(IrisData data, IrisDimension dimension) {
+        return IrisPlatforms.get()
                 .registries()
                 .generationRegistry()
                 .dimensionTypeResourceKey(
@@ -620,11 +629,6 @@ public final class IrisWorldGeneratorResolver {
                         dimension.getLoadKey(),
                         dimension.getDimensionTypeKey()
                 );
-        return GenerationEpochContractFactory.create(
-                dimension,
-                dimension.getLoadKey(),
-                dimensionTypeKey
-        );
     }
 
     private static File requireActivePack(GenerationHistory history) {

@@ -20,18 +20,15 @@ package art.arcane.iris.engine;
 
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.data.cache.Cache;
-import art.arcane.iris.engine.object.IrisSpawner;
 import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.plugin.Chunks;
 import art.arcane.iris.util.common.scheduling.J;
-import art.arcane.volmlib.util.collection.KList;
 import art.arcane.volmlib.util.mantle.flag.MantleFlag;
 import art.arcane.volmlib.util.mantle.runtime.Mantle;
 import art.arcane.volmlib.util.math.PowerOfTwoCoordinates;
 import art.arcane.volmlib.util.math.Position2;
-import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.matter.Matter;
 import org.bukkit.Chunk;
 import org.bukkit.World;
@@ -280,37 +277,9 @@ final class WorldChunkMaintenance {
             EngineBukkitOps.updateChunk(manager.getEngine(), chunk);
         }
 
-        if (!manager.entitySpawner.isEntitySpawningEnabledForCurrentWorld()) {
-            return;
+        if (manager.entitySpawner.isEntitySpawningEnabledForCurrentWorld()) {
+            manager.entitySpawner.spawnInitially(chunk);
         }
-
-        if (!IrisSettings.get().getWorld().isMarkerEntitySpawningSystem()) {
-            return;
-        }
-
-        if (!J.isFolia() && !manager.getMantle().isChunkLoaded(chunkX, chunkZ)) {
-            warmupMantleChunkAsync(chunkX, chunkZ);
-            return;
-        }
-
-        raiseInitialSpawnMarkerFlag(world, chunkX, chunkZ, () -> {
-            int delay = RNG.r.i(5, 200);
-            J.runRegion(world, chunkX, chunkZ, manager.managedTask("bukkit_world_manager_initial_spawn_followup", () -> {
-                if (!world.isChunkLoaded(chunkX, chunkZ)) {
-                    return;
-                }
-                manager.entitySpawner.spawnIn(world.getChunkAt(chunkX, chunkZ), true);
-            }), delay);
-
-            Chunk markerChunk = world.getChunkAt(chunkX, chunkZ);
-            manager.markerScanner.forEachMarkerSpawner(markerChunk, (block, spawners) -> {
-                IrisSpawner s = new KList<>(spawners).getRandom();
-                if (s == null) {
-                    return;
-                }
-                manager.entitySpawner.spawn(block, s, true);
-            });
-        });
     }
 
     void raiseInitialSpawnMarkerFlag(World world, int chunkX, int chunkZ, Runnable onFirstRaise) {

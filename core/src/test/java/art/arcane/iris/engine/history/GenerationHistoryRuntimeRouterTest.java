@@ -1,7 +1,10 @@
 package art.arcane.iris.engine.history;
 
+import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.IrisComplex;
+import art.arcane.iris.engine.object.IrisBiome;
+import art.arcane.iris.engine.object.IrisRegion;
 import art.arcane.iris.engine.framework.GenerationSessionManager;
 import art.arcane.iris.engine.mantle.EngineMantle;
 import art.arcane.iris.util.common.data.B;
@@ -40,6 +43,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -177,10 +181,14 @@ public final class GenerationHistoryRuntimeRouterTest {
     }
 
     @Test
-    public void historicalRoutesWorkAfterArchivedPacksAreReleased() throws Exception {
+    public void historicalTerrainRoutesWorkWhenFrozenPackFixturesAreMissing() throws Exception {
         Path world = temporaryFolder.newFolder("router-archived-world").toPath();
         GenerationHistory history = createThreeActivationHistory(world, "router-archived");
-        new GenerationPackRepository(world).releaseArchivedPacks(history.manifest());
+        for (long activationId : List.of(1L, 2L)) {
+            Path archivedPack = history.paths().packRoot(history.manifest().activation(activationId).orElseThrow().epochId());
+            assertTrue(Files.isDirectory(archivedPack));
+            AtomicDirectoryPublisher.deleteTree(archivedPack);
+        }
         assertFalse(Files.exists(history.paths().packRoot(history.manifest().activation(1L).orElseThrow().epochId())));
         IrisEngine engine = mock(IrisEngine.class);
         FakeRuntimeFactory runtimes = new FakeRuntimeFactory();
@@ -568,6 +576,18 @@ public final class GenerationHistoryRuntimeRouterTest {
         GenerationHistory history = createHistory(world, pack);
         IrisEngine engine = mock(IrisEngine.class);
         IrisComplex complex = mock(IrisComplex.class);
+        IrisBiome biome = new IrisBiome();
+        biome.setLoadKey("alpha");
+        IrisRegion region = new IrisRegion();
+        region.setLoadKey("alpha");
+        when(engine.getMinHeight()).thenReturn(-64);
+        when(engine.getHeight()).thenReturn(384);
+        when(engine.getSurfaceBiome(anyInt(), anyInt())).thenReturn(biome);
+        when(engine.getCaveBiome(anyInt(), anyInt())).thenReturn(biome);
+        when(engine.getBiome(anyInt(), anyInt(), anyInt())).thenReturn(biome);
+        when(engine.getBiomeOrMantle(anyInt(), anyInt(), anyInt())).thenReturn(biome);
+        when(engine.getRegion(anyInt(), anyInt())).thenReturn(region);
+        when(engine.getRegion(anyInt(), anyInt(), anyInt())).thenReturn(region);
         EngineMantle engineMantle = mock(EngineMantle.class);
         @SuppressWarnings("unchecked")
         Mantle<Matter> mantle = mock(Mantle.class);
@@ -596,6 +616,7 @@ public final class GenerationHistoryRuntimeRouterTest {
         ChunkGenerationSemantics semantics = history.semantics(4, -3).orElseThrow();
         assertTrue(semantics.sealed());
         assertEquals(1L, semantics.activationId());
+        assertEquals("alpha", history.savedBiomes().get(4, -3).orElseThrow().biomeAt(0, 0, 0).biomeKey());
         router.close();
     }
 

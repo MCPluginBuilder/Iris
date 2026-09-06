@@ -20,6 +20,7 @@ package art.arcane.iris.modded;
 
 import art.arcane.iris.nativegen.NativeTransitionColumn;
 import art.arcane.iris.engine.history.TerrainBoundarySignature;
+import art.arcane.iris.engine.history.NativeBiomeSpawnSelection;
 import java.util.Optional;
 import art.arcane.iris.nativegen.NativeGenerationWriteGuard;
 import art.arcane.iris.core.loader.IrisData;
@@ -920,6 +921,11 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     public WeightedList<MobSpawnSettings.SpawnerData> getMobsAt(
             Holder<Biome> biome, StructureManager structureManager, MobCategory category, BlockPos pos) {
         Engine current = engine();
+        NativeBiomeSpawnSelection selection = NativeBiomeSpawnSelection.at(current, pos.getX(), pos.getY(), pos.getZ(),
+                biome.unwrapKey().map(key -> key.identifier().toString()).orElse(""));
+        if (selection.mode() == NativeBiomeSpawnSelection.Mode.LOADING) {
+            return WeightedList.of(List.of());
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope historyScope = openHistoryCoordinateScope(
                      current, pos.getX(), pos.getZ(), "modded_mob_spawn_table");
              GenerationSessionLease lease = requireGenerationLease(current, "modded_mob_spawn_table");
@@ -933,8 +939,15 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             }
 
             Registry<Biome> registry = structureManager.registryAccess().lookupOrThrow(Registries.BIOME);
-            spawnTables.initializeVanillaSpawnBiomes(registry);
-            Holder<Biome> vanillaSpawnBiome = spawnTables.vanillaSpawnBiome(biome.value());
+            Holder<Biome> vanillaSpawnBiome;
+            if (selection.mode() == NativeBiomeSpawnSelection.Mode.RETAINED) {
+                vanillaSpawnBiome = spawnTables.resolveBiomeHolder(registry, selection.derivativeKey());
+            } else if (selection.mode() == NativeBiomeSpawnSelection.Mode.CURRENT) {
+                spawnTables.initializeVanillaSpawnBiomes(registry);
+                vanillaSpawnBiome = spawnTables.vanillaSpawnBiome(biome.value());
+            } else {
+                vanillaSpawnBiome = null;
+            }
             if (vanillaSpawnBiome == null) {
                 return explicitSpawns;
             }
@@ -951,6 +964,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
             return spawnTables.mergedSpawnTable(
                     current,
                     biome.value(),
+                    vanillaSpawnBiome.value(),
                     category,
                     vanillaSpawns,
                     explicitSpawns

@@ -22,11 +22,12 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.gui.PregeneratorJob;
 import art.arcane.iris.core.tools.IrisToolbelt;
 import art.arcane.iris.engine.object.IRare;
+import art.arcane.iris.engine.framework.BiomeEnvironment;
+import art.arcane.iris.engine.history.SavedBiomeUnavailableException;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisEntitySpawn;
 import art.arcane.iris.engine.object.IrisPosition;
 import art.arcane.iris.engine.object.IrisSpawner;
-import art.arcane.iris.engine.platform.EngineBukkitOps;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.plugin.Chunks;
@@ -44,6 +45,8 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 
 import java.util.List;
+import java.util.Optional;
+import art.arcane.iris.engine.MarkerSpawnScanner.PreparedMarkerSpawn;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -266,6 +269,10 @@ final class WorldEntitySpawner {
     }
 
     void spawnIn(Chunk c, boolean initial) {
+        if (initial) {
+            spawnInitially(c);
+            return;
+        }
         if (manager.getEngine().isClosed()) {
             return;
         }
@@ -280,17 +287,11 @@ final class WorldEntitySpawner {
         }
 
         if (IrisSettings.get().getWorld().isMarkerEntitySpawningSystem()) {
-            manager.markerScanner.forEachMarkerSpawner(c, (block, spawners) -> {
-                IrisSpawner s = new KList<>(spawners).getRandom();
-                if (s == null) {
-                    return;
+            manager.markerScanner.scanMarkerSpawners(c, false, markers -> {
+                for (PreparedMarkerSpawn marker : markers) {
+                    spawnPreparedMarker(marker, false);
                 }
-
-                spawn(block, s, false);
-                J.runRegion(c.getWorld(), c.getX(), c.getZ(), manager.managedTask(
-                        "bukkit_world_manager_marker_spawn_followup",
-                        () -> manager.chunkMaintenance.raiseInitialSpawnMarkerFlag(c.getWorld(), c.getX(), c.getZ(),
-                                () -> spawn(block, s, true))));
+                prepareInitialSpawn(c, markers);
             });
         }
 
@@ -298,26 +299,91 @@ final class WorldEntitySpawner {
             return;
         }
 
+        try {
+            BiomeEnvironment environment = manager.getEngine().getSurfaceBiomeEnvironment(
+                    (c.getX() << 4) + 8, (c.getZ() << 4) + 8);
+            try (BiomeEnvironment.Scope ignored = manager.getEngine().openBiomeEnvironmentScope(environment)) {
+                spawnAmbient(c, initial, environment);
+            }
+        } catch (SavedBiomeUnavailableException e) {
+            return;
+        }
+    }
+
+    void spawnInitially(Chunk chunk) {
+        if (manager.getEngine().isClosed() || !isEntitySpawningEnabledForCurrentWorld()) {
+            return;
+        }
+        if (IrisSettings.get().getWorld().isMarkerEntitySpawningSystem()) {
+            manager.markerScanner.scanMarkerSpawners(chunk, true, markers -> prepareInitialSpawn(chunk, markers));
+        } else if (IrisSettings.get().getWorld().isAmbientEntitySpawningSystem()) {
+            prepareInitialSpawn(chunk, List.of());
+        }
+    }
+
+    void prepareInitialSpawn(Chunk chunk, List<PreparedMarkerSpawn> markers) {
+        Optional<BiomeEnvironment> environment = Optional.empty();
+        if (IrisSettings.get().getWorld().isAmbientEntitySpawningSystem()) {
+            try {
+                environment = Optional.of(manager.getEngine().getSurfaceBiomeEnvironment(
+                        (chunk.getX() << 4) + 8, (chunk.getZ() << 4) + 8));
+            } catch (SavedBiomeUnavailableException e) {
+                if (e.isLoading()) {
+                    return;
+                }
+            }
+        }
+        Optional<BiomeEnvironment> preparedEnvironment = environment;
+        manager.chunkMaintenance.raiseInitialSpawnMarkerFlag(chunk.getWorld(), chunk.getX(), chunk.getZ(), () -> {
+            for (PreparedMarkerSpawn marker : markers) {
+                spawnPreparedMarker(marker, true);
+            }
+            if (preparedEnvironment.isPresent()) {
+                J.runRegion(chunk.getWorld(), chunk.getX(), chunk.getZ(),
+                        manager.managedTask("bukkit_world_manager_initial_spawn_followup", () -> {
+                            if (!chunk.getWorld().isChunkLoaded(chunk.getX(), chunk.getZ())) {
+                                return;
+                            }
+                            BiomeEnvironment selected = preparedEnvironment.get();
+                            try (BiomeEnvironment.Scope ignored = manager.getEngine().openBiomeEnvironmentScope(selected)) {
+                                spawnAmbient(chunk, true, selected);
+                            }
+                        }), RNG.r.i(5, 200));
+            }
+        });
+    }
+
+    private void spawnPreparedMarker(PreparedMarkerSpawn marker, boolean initial) {
+        IrisSpawner spawner = new KList<>(marker.spawners()).getRandom();
+        if (spawner == null || manager.getEngine().isClosed()) {
+            return;
+        }
+        try (BiomeEnvironment.Scope ignored = manager.getEngine().openBiomeEnvironmentScope(marker.environment())) {
+            spawnMarker(marker.position(), spawner, initial);
+        }
+    }
+
+    private void spawnAmbient(Chunk c, boolean initial, BiomeEnvironment environment) {
         //@builder
         // Excluded spawners cannot spawn anything on this Minecraft version, so they never enter the selection pool.
         Predicate<IrisSpawner> filter = i -> !i.isCompatExcluded() && i.canSpawn(manager.getEngine(), c.getX(), c.getZ());
         ChunkCounter counter = new ChunkCounter(c.getEntities());
 
-        IrisBiome biome = EngineBukkitOps.getSurfaceBiome(manager.getEngine(), c);
-        IrisEntitySpawn v = spawnRandomly(Stream.concat(manager.getData().getSpawnerLoader()
-                                .loadAll(manager.getDimension().getEntitySpawners())
+        IrisBiome biome = environment.biome();
+        IrisEntitySpawn v = spawnRandomly(Stream.concat(environment.data().getSpawnerLoader()
+                                .loadAll(environment.dimension().getEntitySpawners())
                                 .shuffleCopy(RNG.r)
                                 .stream()
                                 .filter(filter)
                                 .filter((i) -> i.isValid(biome)),
-                        Stream.concat(manager.getData()
+                        Stream.concat(environment.data()
                                         .getSpawnerLoader()
-                                        .loadAll(manager.getEngine().getRegion(PowerOfTwoCoordinates.chunkToBlock(c.getX()), PowerOfTwoCoordinates.chunkToBlock(c.getZ())).getEntitySpawners())
+                                        .loadAll(environment.region().getEntitySpawners())
                                         .shuffleCopy(RNG.r)
                                         .stream()
                                         .filter(filter),
-                                manager.getData().getSpawnerLoader()
-                                        .loadAll(manager.getEngine().getSurfaceBiome(PowerOfTwoCoordinates.chunkToBlock(c.getX()), PowerOfTwoCoordinates.chunkToBlock(c.getZ())).getEntitySpawners())
+                                environment.data().getSpawnerLoader()
+                                        .loadAll(environment.biome().getEntitySpawners())
                                         .shuffleCopy(RNG.r)
                                         .stream()
                                         .filter(filter)))
@@ -353,15 +419,7 @@ final class WorldEntitySpawner {
         }
     }
 
-    void spawn(IrisPosition block, IrisSpawner spawner, boolean initial) {
-        if (manager.getEngine().isClosed()) {
-            return;
-        }
-
-        if (spawner == null) {
-            return;
-        }
-
+    private void spawnMarker(IrisPosition block, IrisSpawner spawner, boolean initial) {
         KList<IrisEntitySpawn> s = initial ? spawner.getInitialSpawns() : spawner.getSpawns();
         if (s.isEmpty()) {
             return;

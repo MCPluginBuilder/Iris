@@ -18,6 +18,7 @@ import art.arcane.iris.engine.framework.NativeStructureGenerationPolicy;
 import art.arcane.iris.engine.IrisEngine;
 import art.arcane.iris.engine.history.GenerationHistoryRuntimeRouter;
 import art.arcane.iris.engine.history.NativeTerrainReceipt;
+import art.arcane.iris.engine.history.NativeBiomeSpawnSelection;
 import art.arcane.iris.engine.history.SavedTerrainChunk;
 import org.bukkit.NamespacedKey;
 import org.bukkit.persistence.PersistentDataType;
@@ -929,11 +930,17 @@ public class IrisChunkGenerator extends CustomChunkGenerator implements LongPred
 
     @Override
     public WeightedList<MobSpawnSettings.SpawnerData> getMobsAt(Holder<Biome> holder, StructureManager structuremanager, MobCategory enumcreaturetype, BlockPos blockposition) {
+        NativeBiomeSpawnSelection selection = NativeBiomeSpawnSelection.at(
+                engine, blockposition.getX(), blockposition.getY(), blockposition.getZ(),
+                holder.unwrapKey().map(key -> key.identifier().toString()).orElse(""));
+        if (selection.mode() == NativeBiomeSpawnSelection.Mode.LOADING) {
+            return WeightedList.of(List.of());
+        }
         try (GenerationHistoryRuntimeRouter.CoordinateScope route = openHistoryCoordinateScope(
                      blockposition.getX(), blockposition.getZ(), "bukkit_nms_mob_spawns");
              GenerationSessionLease lease = requireGenerationLease("bukkit_nms_mob_spawns");
              IrisContext.Scope ignored = IrisContext.open(engine, lease.sessionId(), null)) {
-            return getMobsAtWithActiveRuntime(holder, structuremanager, enumcreaturetype, blockposition);
+            return getMobsAtWithActiveRuntime(holder, structuremanager, enumcreaturetype, blockposition, selection);
         }
     }
 
@@ -941,9 +948,14 @@ public class IrisChunkGenerator extends CustomChunkGenerator implements LongPred
             Holder<Biome> holder,
             StructureManager structuremanager,
             MobCategory enumcreaturetype,
-            BlockPos blockposition
+            BlockPos blockposition,
+            NativeBiomeSpawnSelection selection
     ) {
-        Holder<Biome> vanillaSpawnBiome = customBiomeSource.getVanillaSpawnBiome(holder);
+        Holder<Biome> vanillaSpawnBiome = switch (selection.mode()) {
+            case RETAINED -> customBiomeSource.getRetainedVanillaSpawnBiome(selection.derivativeKey());
+            case CURRENT -> customBiomeSource.getVanillaSpawnBiome(holder);
+            case NONE, LOADING -> null;
+        };
         if (vanillaSpawnBiome == null) {
             return delegate.getMobsAt(holder, structuremanager, enumcreaturetype, blockposition);
         }
@@ -964,7 +976,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator implements LongPred
         }
 
         int spawnRuntimeId = engine.getCacheID();
-        SpawnTableKey key = new SpawnTableKey(spawnRuntimeId, holder.value(), enumcreaturetype);
+        SpawnTableKey key = new SpawnTableKey(spawnRuntimeId, holder.value(), vanillaSpawnBiome.value(), enumcreaturetype);
         return mergedSpawnTables.computeIfAbsent(key, ignored -> mergeSpawnTables(vanillaSpawns, explicitSpawns));
     }
 
@@ -1611,7 +1623,7 @@ public class IrisChunkGenerator extends CustomChunkGenerator implements LongPred
         }
     }
 
-    private record SpawnTableKey(int runtimeId, Biome biome, MobCategory category) {
+    private record SpawnTableKey(int runtimeId, Biome biome, Biome vanillaBiome, MobCategory category) {
     }
 
     private record ReachableStructureCache(IrisDimension dimension, int runtimeId, Set<String> keys) {

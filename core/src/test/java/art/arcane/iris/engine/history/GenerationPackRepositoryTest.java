@@ -4,6 +4,7 @@ import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.mockito.MockedStatic;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -12,11 +13,13 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mockStatic;
 
 public class GenerationPackRepositoryTest {
     @Rule
@@ -67,6 +70,50 @@ public class GenerationPackRepositoryTest {
                 GenerationPackFingerprint.CURRENT_VERSION,
                 source
         ));
+    }
+
+    @Test
+    public void finderMetadataCreatedDuringPublicationDoesNotChangeVersionTwoIdentity() throws Exception {
+        Path dimensionRoot = temporaryFolder.newFolder("finder-world").toPath();
+        Path source = createPack("finder-source", "{}");
+        String fingerprint = fingerprint(source);
+        GenerationPackRepository repository = new GenerationPackRepository(dimensionRoot);
+        String epochId = digest('b');
+        AtomicBoolean injected = new AtomicBoolean();
+
+        try (MockedStatic<GenerationPackFingerprint> ignored = mockStatic(GenerationPackFingerprint.class, invocation -> {
+            if (invocation.getMethod().getName().equals("compute")) {
+                Path pack = invocation.getArgument(0);
+                if (pack.getFileName().toString().startsWith(".pack-")) {
+                    Files.writeString(pack.resolve(".DS_Store"), "root metadata");
+                    Files.writeString(pack.resolve("dimensions/.DS_Store"), "nested metadata");
+                    injected.set(true);
+                }
+            }
+            return invocation.callRealMethod();
+        })) {
+            Path published = repository.publish(epochId, fingerprint, 2, source);
+            assertTrue(injected.get());
+            assertTrue(Files.isRegularFile(published.resolve("dimensions/.DS_Store")));
+            assertEquals(published, repository.requireExactPack(epochId, fingerprint, 2));
+            Files.writeString(published.resolve("dimensions/main.json"), "{\"changed\":true}");
+            assertThrows(IOException.class, () -> repository.requireExactPack(epochId, fingerprint, 2));
+        }
+    }
+
+    @Test
+    public void versionOnePublicationsKeepTheirOriginalMetadataContract() throws Exception {
+        Path dimensionRoot = temporaryFolder.newFolder("version-one-world").toPath();
+        Path source = createPack("version-one-source", "{}");
+        Files.writeString(source.resolve("dimensions/.DS_Store"), "original metadata");
+        String fingerprint = GenerationPackFingerprint.compute(source, 1);
+        GenerationPackRepository repository = new GenerationPackRepository(dimensionRoot);
+        String epochId = digest('a');
+
+        Path published = repository.publish(epochId, fingerprint, 1, source);
+        assertEquals(published, repository.requireExactPack(epochId, fingerprint, 1));
+        Files.writeString(published.resolve("dimensions/.DS_Store"), "changed metadata");
+        assertThrows(IOException.class, () -> repository.requireExactPack(epochId, fingerprint, 1));
     }
 
     @Test
@@ -149,7 +196,7 @@ public class GenerationPackRepositoryTest {
     }
 
     @Test
-    public void releasesOnlyArchivedPacksAndCanRepublishTheirSnapshot() throws Exception {
+    public void publicationAndActivationRetainEveryFrozenPack() throws Exception {
         Path dimensionRoot = temporaryFolder.newFolder("retention-world").toPath();
         Path firstSource = createPack("retention-first", "{\"version\":1}");
         Path secondSource = createPack("retention-second", "{\"version\":2}");
@@ -167,18 +214,17 @@ public class GenerationPackRepositoryTest {
         repository.publish(pending.epochId(), pending.packFingerprint(), pending.packFingerprintVersion(), pendingSource);
         store.preparePendingActivation(pending, 256);
 
-        repository.releaseArchivedPacks(store.manifest());
-        repository.releaseArchivedPacks(store.manifest());
-
-        assertFalse(Files.exists(repository.packRoot(first.epochId())));
+        assertTrue(Files.isDirectory(repository.packRoot(first.epochId())));
+        assertEquals(first.packFingerprint(), fingerprint(repository.packRoot(first.epochId())));
         assertTrue(Files.isRegularFile(repository.epochRoot(first.epochId()).resolve("epoch.json")));
         assertTrue(Files.isDirectory(repository.packRoot(second.epochId())));
         assertTrue(Files.isDirectory(repository.packRoot(pending.epochId())));
         assertTrue(Files.isRegularFile(firstSource.resolve("dimensions/main.json")));
         assertEquals(store.manifest(), GenerationHistoryStore.open(repository.generationRoot()).manifest());
-        Path republished = repository.publish(first.epochId(), first.packFingerprint(), first.packFingerprintVersion(), firstSource);
-        assertEquals(Files.readString(firstSource.resolve("dimensions/main.json")),
-                Files.readString(republished.resolve("dimensions/main.json")));
+        Files.writeString(firstSource.resolve("dimensions/main.json"), "{\"version\":99}");
+        assertEquals("{\"version\":1}", Files.readString(repository.packRoot(first.epochId()).resolve("dimensions/main.json")));
+        assertEquals(repository.packRoot(first.epochId()), repository.requireExactPack(
+                first.epochId(), first.packFingerprint(), first.packFingerprintVersion()));
     }
 
     private static GenerationEpoch epoch(String fingerprint) {

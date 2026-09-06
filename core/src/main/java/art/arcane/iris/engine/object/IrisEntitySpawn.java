@@ -42,6 +42,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.experimental.Accessors;
 import org.bukkit.Chunk;
+import org.bukkit.HeightMap;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -80,9 +81,9 @@ public class IrisEntitySpawn implements IRare {
             for (int id = 0; id < spawns; id++) {
                 int x = (c.getX() * 16) + rng.i(16);
                 int z = (c.getZ() * 16) + rng.i(16);
-                World world = BukkitWorldBinding.tryBind(gen.getWorld()) ? BukkitWorldBinding.world(gen.getWorld()) : null;
-                int h = gen.getHeight(x, z, true) + (world == null ? -64 : world.getMinHeight());
-                int hf = gen.getHeight(x, z, false) + (world == null ? -64 : world.getMinHeight());
+                World world = c.getWorld();
+                int h = world.getHighestBlockYAt(x, z, HeightMap.OCEAN_FLOOR);
+                int hf = world.getHighestBlockYAt(x, z, HeightMap.WORLD_SURFACE);
                 Location l = switch (getReferenceSpawner().getGroup()) {
                     case NORMAL -> new Location(c.getWorld(), x, hf + 1, z);
                     case CAVE -> findCaveSpawnLocation(gen, c, rng);

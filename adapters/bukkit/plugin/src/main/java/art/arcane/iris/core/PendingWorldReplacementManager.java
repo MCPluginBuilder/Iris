@@ -15,6 +15,7 @@ import art.arcane.iris.core.lifecycle.WorldReplacementJournal;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Phase;
 import art.arcane.iris.core.lifecycle.WorldReplacementJournal.Transaction;
 import art.arcane.iris.core.lifecycle.WorldReplacementSeed;
+import art.arcane.iris.core.localization.RuntimeProgressMessages;
 import art.arcane.iris.core.pack.PackValidationRegistry;
 import art.arcane.iris.core.runtime.WorldRuntimeControlService;
 import art.arcane.iris.core.service.StudioSVC;
@@ -115,7 +116,7 @@ public final class PendingWorldReplacementManager implements Listener {
         return worldKey;
     }
 
-    public synchronized StagedReplacement stageReplacement(
+    public StagedReplacement stageReplacement(
             VolmitSender sender,
             NamespacedKey worldKey,
             IrisDimension dimension,
@@ -128,132 +129,142 @@ public final class PendingWorldReplacementManager implements Listener {
         OptionalLong seedSelection = requestedSeed == null
                 ? OptionalLong.empty()
                 : OptionalLong.of(requestedSeed.longValue());
-        IrisStartupValidation.requireWorldReplacementStagingReady();
-        if (!WorldReplacementBootstrapMarker.wasBootstrappedThisProcess()) {
-            throw new IOException("Exact world replacement requires a full Paper-family startup bootstrap.");
-        }
-        PackValidationRegistry.requireLoadable(requiredDimension.getLoader().getDataFolder().getName());
         LifecycleOperationCoordinator coordinator = LifecycleOperationCoordinator.get();
         try (LifecycleOperationCoordinator.Lease ignored = coordinator.acquire(
                 LifecycleOperationCoordinator.Domain.WORLD_MUTATION,
                 LifecycleOperationCoordinator.OperationKind.WORLD_REPLACE,
                 requiredWorldKey.toString()
-        )) {
-            if (findTransaction(requiredWorldSlotKey) != null) {
-                throw new IOException("A replacement is already pending for " + requiredWorldKey + ".");
-            }
-            ExactWorldSlotPathPolicy.Target target = resolveTarget(requiredWorldSlotKey);
-            requireCompatibleEnvironment(target.slotKind(), requiredDimension.getEnvironment());
-            requireVanillaSlotEnabled(target.slotKind());
-            UUID transactionId = UUID.randomUUID();
-            ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transactionId);
-            WorldReplacementFilesystem.requireExistingTarget(paths);
-            String worldName = WorldReplacementJournal.logicalWorldName(target.levelRoot(), requiredWorldSlotKey);
-            DatapackInstallResult datapacks = ServerConfigurator.installDataPacksIfChanged(true);
-            if (!datapacks.succeeded()) {
-                throw new IOException("Iris could not compile the dimension datapacks.");
-            }
+        ); WorldReplacementProgress progress = WorldReplacementProgress.start(
+                requiredSender, requiredWorldKey.toString())) {
+            synchronized (this) {
+                IrisStartupValidation.requireWorldReplacementStagingReady();
+                if (!WorldReplacementBootstrapMarker.wasBootstrappedThisProcess()) {
+                    throw new IOException("Exact world replacement requires a full Paper-family startup bootstrap.");
+                }
+                PackValidationRegistry.requireLoadable(requiredDimension.getLoader().getDataFolder().getName());
+                if (findTransaction(requiredWorldSlotKey) != null) {
+                    throw new IOException("A replacement is already pending for " + requiredWorldKey + ".");
+                }
+                ExactWorldSlotPathPolicy.Target target = resolveTarget(requiredWorldSlotKey);
+                requireCompatibleEnvironment(target.slotKind(), requiredDimension.getEnvironment());
+                requireVanillaSlotEnabled(target.slotKind());
+                UUID transactionId = UUID.randomUUID();
+                ReplacementPaths paths = WorldReplacementFilesystem.paths(target, transactionId);
+                WorldReplacementFilesystem.requireExistingTarget(paths);
+                String worldName = WorldReplacementJournal.logicalWorldName(target.levelRoot(), requiredWorldSlotKey);
+                progress.stage(RuntimeProgressMessages.WORLD_REPLACE_STAGE_DATAPACKS);
+                DatapackInstallResult datapacks = ServerConfigurator.installDataPacksIfChanged(true);
+                if (!datapacks.succeeded()) {
+                    throw new IOException("Iris could not compile the dimension datapacks.");
+                }
 
-            boolean targetPresent = true;
-            WorldGeneratorSnapshot originalConfiguration = BukkitWorldConfiguration.snapshot(
-                    ServerProperties.BUKKIT_YML,
-                    worldName
-            );
-            Transaction transaction = null;
-            boolean journalWritten = false;
-            boolean configurationApplied = false;
-            try {
-                Files.createDirectory(paths.stage());
-                long effectiveSeed = WorldReplacementSeed.stageAuthoritativeSeed(
-                        paths.target(),
-                        paths.stage(),
-                        seedSelection
-                );
-                IrisDimension installed = Iris.service(StudioSVC.class).installIntoWorld(
-                        requiredSender,
-                        requiredDimension,
-                        paths.stage().toFile(),
-                        effectiveSeed
-                );
-                if (installed == null) {
-                    throw new IOException("Iris could not stage the dimension pack.");
-                }
-                requireCompatibleEnvironment(target.slotKind(), installed.getEnvironment());
-                if (target.slotKind() == SlotKind.VANILLA_OVERWORLD) {
-                    WorldReplacementEntryGuard.stage(target.levelRoot(), paths.stage(), transactionId);
-                }
-                File stagedPack = IrisWorldStorage.requireActiveGenerationPackRoot(
-                        paths.stage().toFile(),
-                        effectiveSeed
-                );
-                IrisWorldGeneratorResolver.requireSnapshotLoadable(stagedPack);
-                String packFingerprint = WorldReplacementFilesystem.fingerprintPack(stagedPack.toPath());
-                transaction = new Transaction(
-                        transactionId,
-                        requiredWorldSlotKey,
-                        worldName,
-                        target.levelRoot(),
-                        installed.getLoadKey(),
-                        effectiveSeed,
-                        packFingerprint,
-                        originalConfiguration,
-                        targetPresent,
-                        Phase.PREPARED
-                );
-                writeTransaction(transaction);
-                journalWritten = true;
-                GeneratorReplacement replacement = BukkitWorldConfiguration.replaceIfMatching(
+                boolean targetPresent = true;
+                WorldGeneratorSnapshot originalConfiguration = BukkitWorldConfiguration.snapshot(
                         ServerProperties.BUKKIT_YML,
-                        worldName,
-                        originalConfiguration,
-                        installed.getLoadKey(),
-                        effectiveSeed
+                        worldName
                 );
-                if (!replacement.applied()) {
-                    throw new IOException("bukkit.yml changed while the replacement was being staged.");
-                }
-                configurationApplied = true;
-                transaction = transaction.withPhase(Phase.ARMED);
-                writeTransaction(transaction);
-                return new StagedReplacement(
-                        requiredWorldKey,
-                        worldName,
-                        installed.getLoadKey(),
-                        effectiveSeed,
-                        targetPresent,
-                        datapacks.restartRequired()
-                );
-            } catch (Throwable failure) {
-                if (configurationApplied && transaction != null) {
-                    try {
-                        WorldGeneratorSnapshot replacement = WorldReplacementBootstrap.replacementSnapshot(transaction);
-                        if (!BukkitWorldConfiguration.restoreIfMatching(
-                                ServerProperties.BUKKIT_YML,
-                                worldName,
-                                replacement,
-                                originalConfiguration
-                        )) {
-                            failure.addSuppressed(new IOException(
-                                    "bukkit.yml changed before the failed replacement could be restored."));
-                        }
-                    } catch (Throwable restoreFailure) {
-                        failure.addSuppressed(restoreFailure);
+                Transaction transaction = null;
+                boolean journalWritten = false;
+                boolean configurationApplied = false;
+                try {
+                    Files.createDirectory(paths.stage());
+                    progress.stage(RuntimeProgressMessages.WORLD_REPLACE_STAGE_SEED);
+                    long effectiveSeed = WorldReplacementSeed.stageAuthoritativeSeed(
+                            paths.target(),
+                            paths.stage(),
+                            seedSelection
+                    );
+                    progress.stage(RuntimeProgressMessages.WORLD_REPLACE_STAGE_PACK);
+                    IrisDimension installed = Iris.service(StudioSVC.class).installIntoWorld(
+                            requiredSender,
+                            requiredDimension,
+                            paths.stage().toFile(),
+                            effectiveSeed
+                    );
+                    if (installed == null) {
+                        throw new IOException("Iris could not stage the dimension pack.");
                     }
-                }
-                if (!configurationApplied || configurationMatches(originalConfiguration, worldName)) {
-                    try {
-                        WorldReplacementFilesystem.discardStage(paths);
-                        if (journalWritten) {
-                            deleteJournal(transactionId);
-                        }
-                    } catch (Throwable cleanupFailure) {
-                        failure.addSuppressed(cleanupFailure);
+                    requireCompatibleEnvironment(target.slotKind(), installed.getEnvironment());
+                    if (target.slotKind() == SlotKind.VANILLA_OVERWORLD) {
+                        progress.stage(RuntimeProgressMessages.WORLD_REPLACE_STAGE_PLAYERS);
+                        WorldReplacementEntryGuard.stage(target.levelRoot(), paths.stage(), transactionId);
                     }
+                    progress.stage(RuntimeProgressMessages.WORLD_REPLACE_STAGE_VERIFY);
+                    File stagedPack = IrisWorldStorage.requireActiveGenerationPackRoot(
+                            paths.stage().toFile(),
+                            effectiveSeed
+                    );
+                    IrisWorldGeneratorResolver.requireSnapshotLoadable(stagedPack);
+                    String packFingerprint = WorldReplacementFilesystem.fingerprintPack(stagedPack.toPath());
+                    transaction = new Transaction(
+                            transactionId,
+                            requiredWorldSlotKey,
+                            worldName,
+                            target.levelRoot(),
+                            installed.getLoadKey(),
+                            effectiveSeed,
+                            packFingerprint,
+                            originalConfiguration,
+                            targetPresent,
+                            Phase.PREPARED
+                    );
+                    progress.stage(RuntimeProgressMessages.WORLD_REPLACE_STAGE_SAVE);
+                    writeTransaction(transaction);
+                    journalWritten = true;
+                    GeneratorReplacement replacement = BukkitWorldConfiguration.replaceIfMatching(
+                            ServerProperties.BUKKIT_YML,
+                            worldName,
+                            originalConfiguration,
+                            installed.getLoadKey(),
+                            effectiveSeed
+                    );
+                    if (!replacement.applied()) {
+                        throw new IOException("bukkit.yml changed while the replacement was being staged.");
+                    }
+                    configurationApplied = true;
+                    transaction = transaction.withPhase(Phase.ARMED);
+                    writeTransaction(transaction);
+                    return new StagedReplacement(
+                            requiredWorldKey,
+                            worldName,
+                            installed.getLoadKey(),
+                            effectiveSeed,
+                            targetPresent,
+                            datapacks.restartRequired()
+                    );
+                } catch (Throwable failure) {
+                    progress.stage(RuntimeProgressMessages.WORLD_REPLACE_STAGE_CLEANUP);
+                    if (configurationApplied && transaction != null) {
+                        try {
+                            WorldGeneratorSnapshot replacement = WorldReplacementBootstrap.replacementSnapshot(transaction);
+                            if (!BukkitWorldConfiguration.restoreIfMatching(
+                                    ServerProperties.BUKKIT_YML,
+                                    worldName,
+                                    replacement,
+                                    originalConfiguration
+                            )) {
+                                failure.addSuppressed(new IOException(
+                                        "bukkit.yml changed before the failed replacement could be restored."));
+                            }
+                        } catch (Throwable restoreFailure) {
+                            failure.addSuppressed(restoreFailure);
+                        }
+                    }
+                    if (!configurationApplied || configurationMatches(originalConfiguration, worldName)) {
+                        try {
+                            WorldReplacementFilesystem.discardStage(paths);
+                            if (journalWritten) {
+                                deleteJournal(transactionId);
+                            }
+                        } catch (Throwable cleanupFailure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    if (failure instanceof IOException ioFailure) {
+                        throw ioFailure;
+                    }
+                    throw new IOException("Failed to stage replacement for " + requiredWorldKey + ".", failure);
                 }
-                if (failure instanceof IOException ioFailure) {
-                    throw ioFailure;
-                }
-                throw new IOException("Failed to stage replacement for " + requiredWorldKey + ".", failure);
             }
         }
     }

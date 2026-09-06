@@ -30,10 +30,46 @@ public class GenerationPackFingerprintTest {
 
         String fingerprint = GenerationPackFingerprint.compute(
                 pack,
-                GenerationPackFingerprint.CURRENT_VERSION
+                1
         );
 
         assertEquals("ad7d39c2b95bd3001248778911ce6bbd6b4cbdcece28145838c2b923a0bf73b3", fingerprint);
+        Files.writeString(pack.resolve("objects/.DS_Store"), "finder");
+        assertEquals("b36c630e300a9939fabe3fbd02f546f2a76b31d2ebccbf9106a13fb7d8b8eb98",
+                GenerationPackFingerprint.compute(pack, 1));
+        assertEquals(fingerprint, GenerationPackFingerprint.compute(pack, 2));
+    }
+
+    @Test
+    public void versionTwoIgnoresFinderMetadataAtEveryDepth() throws Exception {
+        Path source = temporaryFolder.newFolder("metadata-source").toPath();
+        Files.createDirectories(source.resolve("objects/trees"));
+        Files.writeString(source.resolve("objects/trees/oak.json"), "{}");
+        Files.writeString(source.resolve("objects/.DS_Store"), "source metadata");
+        Path target = temporaryFolder.getRoot().toPath().resolve("metadata-copy");
+        GenerationPackRepository.copyPackTree(source, target);
+        String expected = GenerationPackFingerprint.compute(source, 2);
+
+        Files.writeString(target.resolve(".DS_Store"), "root metadata");
+        Files.writeString(target.resolve("objects/.DS_Store"), "destination metadata");
+        Files.writeString(target.resolve("objects/trees/.DS_Store"), "nested metadata");
+
+        assertEquals(expected, GenerationPackFingerprint.compute(target, 2));
+        assertNotEquals(GenerationPackFingerprint.compute(source, 1),
+                GenerationPackFingerprint.compute(target, 1));
+        Files.writeString(target.resolve("objects/trees/oak.json"), "{\"changed\":true}");
+        assertNotEquals(expected, GenerationPackFingerprint.compute(target, 2));
+    }
+
+    @Test
+    public void versionTwoStillIncludesOtherNestedHiddenResources() throws Exception {
+        Path pack = temporaryFolder.newFolder("nested-hidden-pack").toPath();
+        Files.createDirectories(pack.resolve("objects"));
+        Files.writeString(pack.resolve("objects/.hidden"), "first");
+        String first = GenerationPackFingerprint.compute(pack, 2);
+        Files.writeString(pack.resolve("objects/.hidden"), "second");
+
+        assertNotEquals(first, GenerationPackFingerprint.compute(pack, 2));
     }
 
     @Test
@@ -51,7 +87,7 @@ public class GenerationPackFingerprintTest {
     @Test
     public void unsupportedVersionsAndSymbolicLinksFailClosed() throws Exception {
         Path pack = temporaryFolder.newFolder("unsafe-pack").toPath();
-        assertThrows(IOException.class, () -> GenerationPackFingerprint.compute(pack, 2));
+        assertThrows(IOException.class, () -> GenerationPackFingerprint.compute(pack, 3));
 
         Path target = temporaryFolder.newFile("outside.json").toPath();
         try {
