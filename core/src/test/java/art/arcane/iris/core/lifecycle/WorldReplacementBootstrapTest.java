@@ -64,11 +64,25 @@ public class WorldReplacementBootstrapTest {
     }
 
     @Test
-    public void rejectsNestedMetadataAddedAfterImmutableEpochPublication() throws Exception {
+    public void acceptsFinderMetadataAddedAfterImmutableEpochPublication() throws Exception {
         Transaction transaction = stagedTransaction(Phase.ARMED, true, "original");
         configureReplacement(transaction);
         Path dimensions = activePackRoot(paths(transaction).stage()).resolve("dimensions");
         Files.writeString(dimensions.resolve(".DS_Store"), "Finder metadata");
+
+        WorldReplacementBootstrap.ReconcileResult result = reconcile();
+
+        assertEquals(1, result.published());
+        assertEquals("replacement", replacementContent(target.worldDirectory()));
+        assertEquals(Phase.PUBLISHED, loadSingle().phase());
+    }
+
+    @Test
+    public void rejectsNestedResourceAddedAfterImmutableEpochPublication() throws Exception {
+        Transaction transaction = stagedTransaction(Phase.ARMED, true, "original");
+        configureReplacement(transaction);
+        Path dimensions = activePackRoot(paths(transaction).stage()).resolve("dimensions");
+        Files.writeString(dimensions.resolve(".hidden-resource"), "changed resource");
 
         assertThrows(IOException.class, this::reconcile);
 

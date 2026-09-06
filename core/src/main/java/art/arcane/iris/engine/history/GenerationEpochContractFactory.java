@@ -52,6 +52,27 @@ public final class GenerationEpochContractFactory {
             String dimensionTypeKey,
             int dimensionTypeFingerprintSchema
     ) {
+        return createContract(dimension, dimensionKey, dimensionTypeKey,
+                dimensionTypeFingerprintSchema, GenerationPackFingerprint.CURRENT_VERSION);
+    }
+
+    public static GenerationEpoch.DimensionContract createForEpoch(
+            IrisDimension dimension,
+            String dimensionTypeKey,
+            GenerationEpoch epoch
+    ) {
+        GenerationEpoch recorded = Objects.requireNonNull(epoch, "epoch");
+        return createContract(dimension, dimension.getLoadKey(), dimensionTypeKey,
+                recorded.dimensionContract().dimensionTypeFingerprintSchema(), recorded.packFingerprintVersion());
+    }
+
+    private static GenerationEpoch.DimensionContract createContract(
+            IrisDimension dimension,
+            String dimensionKey,
+            String dimensionTypeKey,
+            int dimensionTypeFingerprintSchema,
+            int packFingerprintVersion
+    ) {
         requireSupportedDimensionTypeFingerprintSchema(dimensionTypeFingerprintSchema);
         IrisDimension requiredDimension = Objects.requireNonNull(dimension, "dimension");
         IrisEnvironment environment = Objects.requireNonNull(
@@ -83,7 +104,7 @@ public final class GenerationEpochContractFactory {
                 upperDimensionKey,
                 upperTerrainEnabled ? requiredDimension.getUpperDimensionGap() : 0,
                 upperTerrainEnabled
-                        ? requireUpperTerrainPackFingerprint(requiredDimension, upperDimensionKey)
+                        ? requireUpperTerrainPackFingerprint(requiredDimension, upperDimensionKey, packFingerprintVersion)
                         : NO_UPPER_TERRAIN_FINGERPRINT,
                 dimensionTypeFingerprintSchema,
                 fingerprintDimensionType(dimensionType, dimensionTypeFingerprintSchema)
@@ -151,7 +172,8 @@ public final class GenerationEpochContractFactory {
 
     private static String requireUpperTerrainPackFingerprint(
             IrisDimension dimension,
-            String upperDimensionKey
+            String upperDimensionKey,
+            int packFingerprintVersion
     ) {
         IrisData data = Objects.requireNonNull(
                 dimension.getLoader(),
@@ -167,7 +189,7 @@ public final class GenerationEpochContractFactory {
         try {
             return GenerationPackFingerprint.compute(
                     data.getDataFolder().toPath(),
-                    GenerationPackFingerprint.CURRENT_VERSION
+                    packFingerprintVersion
             );
         } catch (IOException failure) {
             throw new IllegalStateException("Unable to fingerprint the immutable upper terrain pack.", failure);

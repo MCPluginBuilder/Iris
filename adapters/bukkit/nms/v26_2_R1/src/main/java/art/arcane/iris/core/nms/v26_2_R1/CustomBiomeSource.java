@@ -333,6 +333,10 @@ public class CustomBiomeSource extends BiomeSource {
         return Collections.unmodifiableMap(spawnBiomes);
     }
 
+    Holder<Biome> getRetainedVanillaSpawnBiome(String derivativeKey) {
+        return resolveBiomeHolder(biomeRegistry, derivativeKey);
+    }
+
     Holder<Biome> getVanillaSpawnBiome(Holder<Biome> biome) {
         if (biome == null) {
             return null;

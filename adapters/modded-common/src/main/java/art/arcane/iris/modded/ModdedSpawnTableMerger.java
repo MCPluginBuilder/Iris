@@ -137,10 +137,11 @@ final class ModdedSpawnTableMerger {
     WeightedList<MobSpawnSettings.SpawnerData> mergedSpawnTable(
             Engine engine,
             Biome biome,
+            Biome vanillaBiome,
             MobCategory category,
             WeightedList<MobSpawnSettings.SpawnerData> vanillaSpawns,
             WeightedList<MobSpawnSettings.SpawnerData> explicitSpawns) {
-        SpawnTableKey key = new SpawnTableKey(engine.getCacheID(), biome, category);
+        SpawnTableKey key = new SpawnTableKey(engine.getCacheID(), biome, vanillaBiome, category);
         return mergedSpawnTables.computeIfAbsent(
                 key,
                 ignored -> NativeSpawnTableMerger.merge(vanillaSpawns, explicitSpawns)
@@ -153,7 +154,7 @@ final class ModdedSpawnTableMerger {
         initializedRuntimeIdentities.remove(runtimeIdentity);
     }
 
-    private Holder<Biome> resolveBiomeHolder(Registry<Biome> registry, String key) {
+    Holder<Biome> resolveBiomeHolder(Registry<Biome> registry, String key) {
         if (key == null || key.isBlank()) {
             return null;
         }
@@ -176,6 +177,6 @@ final class ModdedSpawnTableMerger {
     private record SpawnBiomeKey(int runtimeIdentity, Biome biome) {
     }
 
-    private record SpawnTableKey(int runtimeIdentity, Biome biome, MobCategory category) {
+    private record SpawnTableKey(int runtimeIdentity, Biome biome, Biome vanillaBiome, MobCategory category) {
     }
 }

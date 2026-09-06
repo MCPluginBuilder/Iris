@@ -23,6 +23,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
 
     private final IrisEngine engine;
     private final GenerationHistory history;
+    private final SavedBiomeRuntime biomes;
     private final GenerationBoundarySignatureSampler signatureSampler;
     private final ActivationRuntimeFactory runtimeFactory;
     private final LinkedHashMap<Long, RuntimeCacheEntry> bindings;
@@ -54,6 +55,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         this.inactive = stateLock.newCondition();
         this.operationDepth = ThreadLocal.withInitial(() -> 0);
         this.scopedRoute = new ThreadLocal<>();
+        this.biomes = new SavedBiomeRuntime(engine, history);
 
         GenerationActivation active = history.activeActivation();
         GenerationEpoch epoch = requireEpoch(active);
@@ -79,6 +81,10 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
             }
             throw propagate(failure, "Unable to attach the generation-history runtime router.");
         }
+    }
+
+    public SavedBiomeRuntime biomes() {
+        return biomes;
     }
 
     public static GenerationHistoryRuntimeRouter attach(
@@ -297,6 +303,14 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         route.naturalTerrain = captured;
     }
 
+    public void recordFloatingBiomes(int chunkX, int chunkZ, FloatingBiomeOverlay overlay) {
+        RuntimeRoute route = scopedRoute.get();
+        if (route == null || route.chunkX() != chunkX || route.chunkZ() != chunkZ) {
+            throw new IllegalStateException("Floating biomes must be captured inside their chunk generation route.");
+        }
+        route.floatingBiomes = overlay;
+    }
+
     public void preloadActiveRuntimes() throws IOException {
         enterOperation();
         try {
@@ -386,6 +400,11 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
             engine.detachGenerationHistoryRuntimeRouter(this);
         } catch (Throwable detachFailure) {
             failure = detachFailure;
+        }
+        try {
+            biomes.close();
+        } catch (Throwable biomeFailure) {
+            failure = appendFailure(failure, biomeFailure);
         }
         try {
             retireBindings(retired);
@@ -620,18 +639,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         if (failure != null) {
             throw new IllegalStateException("Failed to retire cached generation runtimes.", failure);
         }
-        if (!retired.isEmpty()) {
-            stateLock.lock();
-            try {
-                if (bindings.size() == 1 && retiringBindings.isEmpty()) {
-                    new GenerationPackRepository(history.paths().dimensionRoot()).releaseArchivedPacks(history.manifest());
-                }
-            } catch (IOException cleanupFailure) {
-                throw new IllegalStateException("Unable to release archived generation packs after runtime retirement.", cleanupFailure);
-            } finally {
-                stateLock.unlock();
-            }
-        }
+
     }
 
     private void requireBindingContract(
@@ -897,7 +905,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
                         + activation.activationId() + " pack " + expectedPack + ".");
             }
             binding.target().getData().bindGenerationRegistryContract(epoch.registryContract());
-            requireDimensionContract(binding.target().getDimension(), epoch.dimensionContract(), actualPack);
+            requireDimensionContract(binding.target().getDimension(), epoch, actualPack);
         }
 
         @Override
@@ -917,7 +925,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
                     throw new IOException("Immutable generation pack does not contain dimension '"
                             + epoch.dimensionContract().dimensionKey() + "': " + packRoot);
                 }
-                requireDimensionContract(dimension, epoch.dimensionContract(), packRoot);
+                requireDimensionContract(dimension, epoch, packRoot);
                 TransitionGenerationPlan plan = activation.isInitial()
                         ? null
                         : history.transitionPlan(activation.activationId());
@@ -947,15 +955,16 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
 
         private static void requireDimensionContract(
                 IrisDimension dimension,
-                GenerationEpoch.DimensionContract recorded,
+                GenerationEpoch epoch,
                 Path packRoot
         ) throws IOException {
+            GenerationEpoch.DimensionContract recorded = epoch.dimensionContract();
             GenerationEpoch.DimensionContract loaded;
             try {
-                loaded = GenerationEpochContractFactory.create(
+                loaded = GenerationEpochContractFactory.createForEpoch(
                         dimension,
-                        dimension.getLoadKey(),
-                        recorded.dimensionTypeKey()
+                        recorded.dimensionTypeKey(),
+                        epoch
                 );
             } catch (RuntimeException failure) {
                 throw new IOException("Unable to validate immutable generation dimension at " + packRoot + ".", failure);
@@ -976,6 +985,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
         private final GenerationTransitionGate.Participation participation;
         private int activeScopes;
         private volatile SavedTerrainChunk naturalTerrain;
+        private volatile FloatingBiomeOverlay floatingBiomes;
         private boolean closed;
 
         private RuntimeRoute(
@@ -1044,6 +1054,7 @@ public final class GenerationHistoryRuntimeRouter implements AutoCloseable {
                     stage,
                     caveSpace
             );
+            router.biomes.capture(SavedBiomeCapture.capture(router.engine, stage, router.biomes, floatingBiomes));
             return router.history.claimGeneratedSemantics(stage, semantics);
         }
 

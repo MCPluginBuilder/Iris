@@ -23,6 +23,7 @@ import art.arcane.iris.spi.IrisServices;
 import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.core.link.Identifier;
 import art.arcane.iris.core.loader.IrisRegistrant;
+import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.service.EntityRiseSVC;
 import art.arcane.iris.core.service.ExternalDataSVC;
 import art.arcane.iris.engine.framework.Engine;
@@ -507,6 +508,7 @@ public class IrisEntity extends IrisRegistrant {
         }
 
         private static void bindLoot(IrisEntity entity, Engine gen, Lootable l, Location finalAt, RNG rng) {
+            IrisData definitions = gen.getData();
             l.setLootTable(new LootTable() {
                 @Override
                 public NamespacedKey getKey() {
@@ -518,7 +520,7 @@ public class IrisEntity extends IrisRegistrant {
                     KList<ItemStack> items = new KList<>();
 
                     for (String fi : entity.getLoot().getTables()) {
-                        IrisLootTable i = gen.getData().getLootLoader().load(fi);
+                        IrisLootTable i = definitions.getLootLoader().load(fi);
                         items.addAll(i.getLoot(gen.isStudio(), gen.getSeedManager().getLoot(), InventorySlotType.STORAGE, finalAt.getWorld(), finalAt.getBlockX(), finalAt.getBlockY(), finalAt.getBlockZ()));
                     }
 

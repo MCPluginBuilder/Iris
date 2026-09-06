@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.Objects;
 
 public final class GenerationPackFingerprint {
-    public static final int CURRENT_VERSION = 1;
+    public static final int CURRENT_VERSION = 2;
     private static final int BUFFER_BYTES = 64 * 1_024;
 
     private GenerationPackFingerprint() {
@@ -31,23 +31,31 @@ public final class GenerationPackFingerprint {
 
     public static String compute(Path packRoot, int version) throws IOException {
         requireSupported(version);
-        return computeVersionOne(packRoot);
+        return switch (version) {
+            case 1 -> computeVersionOne(packRoot);
+            case 2 -> computeTree(packRoot, true);
+            default -> throw new IOException("Unsupported Iris generation pack fingerprint version " + version + ".");
+        };
     }
 
     public static void requireSupported(int version) throws IOException {
-        if (version != 1) {
+        if (version != 1 && version != 2) {
             throw new IOException("Unsupported Iris generation pack fingerprint version " + version + ".");
         }
     }
 
     private static String computeVersionOne(Path packRoot) throws IOException {
+        return computeTree(packRoot, false);
+    }
+
+    private static String computeTree(Path packRoot, boolean ignoreFinderMetadata) throws IOException {
         Path root = Objects.requireNonNull(packRoot, "packRoot").toAbsolutePath().normalize();
         if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(root)) {
             throw new IOException("Generation pack fingerprint root is missing or unsafe: " + root);
         }
         Path realRoot = root.toRealPath(LinkOption.NOFOLLOW_LINKS);
         List<FingerprintEntry> entries = new ArrayList<>();
-        collectTree(realRoot, entries);
+        collectTree(realRoot, entries, ignoreFinderMetadata);
         entries.sort(Comparator.comparing(FingerprintEntry::relativePath));
         MessageDigest digest = sha256();
         byte[] buffer = new byte[BUFFER_BYTES];
@@ -75,7 +83,11 @@ public final class GenerationPackFingerprint {
         return HexFormat.of().formatHex(digest.digest());
     }
 
-    private static void collectTree(Path root, List<FingerprintEntry> entries) throws IOException {
+    private static void collectTree(
+            Path root,
+            List<FingerprintEntry> entries,
+            boolean ignoreFinderMetadata
+    ) throws IOException {
         Files.walkFileTree(root, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult preVisitDirectory(
@@ -98,7 +110,8 @@ public final class GenerationPackFingerprint {
                 Path relativePath = root.relativize(file);
                 String fileName = file.getFileName().toString();
                 if ((relativePath.getNameCount() == 1 && PackDirectoryResolver.isHiddenName(fileName))
-                        || fileName.endsWith(".code-workspace")) {
+                        || fileName.endsWith(".code-workspace")
+                        || (ignoreFinderMetadata && fileName.equals(".DS_Store"))) {
                     return FileVisitResult.CONTINUE;
                 }
                 if (attributes.isSymbolicLink() || Files.isSymbolicLink(file)) {

@@ -22,7 +22,7 @@ import art.arcane.iris.core.IrisSettings;
 import art.arcane.iris.engine.object.IrisBiome;
 import art.arcane.iris.engine.object.IrisEffect;
 import art.arcane.iris.engine.object.IrisRegion;
-import art.arcane.iris.engine.platform.EngineBukkitOps;
+import art.arcane.iris.engine.history.SavedBiomeUnavailableException;
 import art.arcane.iris.platform.bukkit.BukkitWorldBinding;
 import art.arcane.iris.spi.IrisLogging;
 import art.arcane.iris.util.common.scheduling.J;
@@ -35,6 +35,7 @@ import org.bukkit.entity.Player;
 public class EnginePlayer {
     private final Engine engine;
     private final Player player;
+    private BiomeEnvironment environment;
     private IrisBiome biome;
     private IrisRegion region;
     private Location lastLocation;
@@ -56,6 +57,12 @@ public class EnginePlayer {
             return;
         }
 
+        try (BiomeEnvironment.Scope ignored = engine.openBiomeEnvironmentScope(environment)) {
+            applyEffects();
+        }
+    }
+
+    private void applyEffects() {
         if (region != null) {
             for (IrisEffect effect : region.getEffects()) {
                 try {
@@ -92,15 +99,22 @@ public class EnginePlayer {
             boolean sampled = lastLocation != null;
             double distanceSquared = sampled ? current.distanceSquared(lastLocation) : 0D;
             if (needsSample(sampled, ticksSinceLastSample(), distanceSquared)) {
+                BiomeEnvironment sampledEnvironment = engine.getBiomeEnvironment(current.getBlockX(),
+                        current.getBlockY() - engine.getWorld().minHeight(), current.getBlockZ());
+                environment = sampledEnvironment;
+                biome = sampledEnvironment.biome();
+                region = sampledEnvironment.region();
                 lastLocation = current;
                 lastSample = M.ms();
-                biome = EngineBukkitOps.getBiome(engine, current);
-                region = EngineBukkitOps.getRegion(engine, current);
             }
             return false;
+        } catch (SavedBiomeUnavailableException e) {
+            environment = null;
+            biome = null;
+            region = null;
+            lastLocation = null;
         } catch (Throwable e) {
             IrisLogging.reportError(e);
-
         }
         return true;
     }

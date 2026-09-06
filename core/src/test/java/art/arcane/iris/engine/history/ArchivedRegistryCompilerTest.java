@@ -1,6 +1,7 @@
 package art.arcane.iris.engine.history;
 
 import art.arcane.iris.core.IrisDatapackCompiler;
+import art.arcane.iris.core.pack.AtomicDirectoryPublisher;
 import art.arcane.iris.core.loader.IrisData;
 import art.arcane.iris.core.nms.datapack.v1217.DataFixerV1217;
 import art.arcane.iris.engine.object.IrisDimension;
@@ -47,7 +48,8 @@ public class ArchivedRegistryCompilerTest {
             String oldEpoch = history.activeEpoch().epochId();
             history.stageUpdate(secondPack, second.fingerprint(), second.dimension(), second.registry(), 256);
             history.promotePending(List.of());
-            new GenerationPackRepository(world).releaseArchivedPacks(history.manifest());
+            assertTrue(Files.isDirectory(history.paths().packRoot(oldEpoch)));
+            AtomicDirectoryPublisher.deleteTree(history.paths().packRoot(oldEpoch));
             assertFalse(Files.exists(history.paths().packRoot(oldEpoch)));
             List<File> packs = List.of(history.activePackRoot().toFile());
 
